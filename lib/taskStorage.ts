@@ -5,6 +5,7 @@ export type StoredTask = {
   title: string;
   day: string;
   completed: boolean;
+  completedAt: string | null;
 };
 
 type TaskRow = {
@@ -12,6 +13,7 @@ type TaskRow = {
   title: string;
   day: string;
   completed: number;
+  completed_at: string | null;
 };
 
 export async function getTasks(): Promise<StoredTask[]> {
@@ -20,7 +22,7 @@ export async function getTasks(): Promise<StoredTask[]> {
   const db = await getDb();
 
   const rows = await db.getAllAsync<TaskRow>(`
-    SELECT id, title, day, completed
+    SELECT id, title, day, completed, completed_at
     FROM tasks
     ORDER BY created_at DESC;
   `);
@@ -30,6 +32,7 @@ export async function getTasks(): Promise<StoredTask[]> {
     title: row.title,
     day: row.day,
     completed: row.completed === 1,
+    completedAt: row.completed_at,
   }));
 }
 
@@ -42,8 +45,8 @@ export async function insertTask(title: string, day: string): Promise<StoredTask
 
   await db.runAsync(
     `
-    INSERT INTO tasks (id, title, day, completed, created_at)
-    VALUES (?, ?, ?, 0, ?);
+    INSERT INTO tasks (id, title, day, completed, created_at, completed_at)
+    VALUES (?, ?, ?, 0, ?, NULL);
     `,
     [id, title.trim(), day, now]
   );
@@ -53,10 +56,11 @@ export async function insertTask(title: string, day: string): Promise<StoredTask
     title: title.trim(),
     day,
     completed: false,
+    completedAt: null,
   };
 }
 
-export async function markTaskComplete(id: number): Promise<void> {
+export async function markTaskComplete(id: number): Promise<string> {
   await migrateDb();
 
   const db = await getDb();
@@ -70,4 +74,6 @@ export async function markTaskComplete(id: number): Promise<void> {
     `,
     [now, id]
   );
+
+  return now;
 }

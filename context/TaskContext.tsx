@@ -1,17 +1,17 @@
 import React, {
-    createContext,
-    useCallback,
-    useContext,
-    useEffect,
-    useMemo,
-    useState,
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
 } from 'react';
 
 import {
-    getTasks,
-    insertTask,
-    markTaskComplete,
-    type StoredTask,
+  getTasks,
+  insertTask,
+  markTaskComplete,
+  type StoredTask,
 } from '@/lib/taskStorage';
 
 export type Task = StoredTask;
@@ -69,18 +69,20 @@ export function TaskProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const completeTask = useCallback(async (id: number) => {
-    try {
-      await markTaskComplete(id);
+  try {
+    const completedAt = await markTaskComplete(id);
 
-      setTasks((currentTasks) =>
-        currentTasks.map((task) =>
-          task.id === id ? { ...task, completed: true } : task
-        )
-      );
-    } catch (error) {
-      console.error('Failed to complete task:', error);
-    }
-  }, []);
+    setTasks((currentTasks) =>
+      currentTasks.map((task) =>
+        task.id === id
+          ? { ...task, completed: true, completedAt }
+          : task
+      )
+    );
+  } catch (error) {
+    console.error('Failed to complete task:', error);
+  }
+}, []);
 
   const getActiveTasksByDay = useCallback(
     (day: string) => {
