@@ -1,3 +1,4 @@
+import { TaskProvider } from '@/context/TaskContext';
 import { Link, Tabs } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
 import React from 'react';
@@ -11,6 +12,7 @@ export default function TabLayout() {
   const colorScheme = useColorScheme();
 
   return (
+    <TaskProvider>
     <Tabs
       screenOptions={{
         tabBarActiveTintColor: Colors[colorScheme].tint,
@@ -87,5 +89,6 @@ export default function TabLayout() {
         }}
       />
     </Tabs>
+    </TaskProvider>
   );
 }

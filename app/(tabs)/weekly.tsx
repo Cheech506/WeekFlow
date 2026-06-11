@@ -2,44 +2,27 @@ import { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, TextInput } from 'react-native';
 
 import { Text, View } from '@/components/Themed';
+import { useTasks } from '@/context/TaskContext';
 
-type WeeklyTask = {
-  id: number;
-  title: string;
-  day: string;
-  completed: boolean;
-};
-
-const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+const days = [
+  'Monday',
+  'Tuesday',
+  'Wednesday',
+  'Thursday',
+  'Friday',
+  'Saturday',
+  'Sunday',
+];
 
 export default function WeeklyScreen() {
   const [taskText, setTaskText] = useState('');
   const [selectedDay, setSelectedDay] = useState('Monday');
 
-  const [tasks, setTasks] = useState<WeeklyTask[]>([
-    { id: 1, title: 'Example weekly task', day: 'Monday', completed: false },
-  ]);
+  const { addTask, completeTask, getActiveTasksByDay } = useTasks();
 
-  function addTask() {
-    if (!taskText.trim()) return;
-
-    setTasks([
-      {
-        id: Date.now(),
-        title: taskText.trim(),
-        day: selectedDay,
-        completed: false,
-      },
-      ...tasks,
-    ]);
-
+  function handleAddTask() {
+    addTask(taskText, selectedDay);
     setTaskText('');
-  }
-
-  function completeTask(id: number) {
-    setTasks(tasks.map((task) =>
-      task.id === id ? { ...task, completed: true } : task
-    ));
   }
 
   return (
@@ -53,11 +36,15 @@ export default function WeeklyScreen() {
           placeholder="Add a task for this week..."
           value={taskText}
           onChangeText={setTaskText}
-          onSubmitEditing={addTask}
+          onSubmitEditing={handleAddTask}
           returnKeyType="done"
         />
 
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.dayPicker}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.dayPicker}
+        >
           {days.map((day) => (
             <Pressable
               key={day}
@@ -79,13 +66,13 @@ export default function WeeklyScreen() {
           ))}
         </ScrollView>
 
-        <Pressable style={styles.addButton} onPress={addTask}>
+        <Pressable style={styles.addButton} onPress={handleAddTask}>
           <Text style={styles.addButtonText}>Add to {selectedDay}</Text>
         </Pressable>
       </View>
 
       {days.map((day) => {
-        const dayTasks = tasks.filter((task) => task.day === day && !task.completed);
+        const dayTasks = getActiveTasksByDay(day);
 
         return (
           <View key={day} style={styles.daySection}>
@@ -98,7 +85,10 @@ export default function WeeklyScreen() {
                 <View key={task.id} style={styles.taskCard}>
                   <Text style={styles.taskTitle}>{task.title}</Text>
 
-                  <Pressable style={styles.doneButton} onPress={() => completeTask(task.id)}>
+                  <Pressable
+                    style={styles.doneButton}
+                    onPress={() => completeTask(task.id)}
+                  >
                     <Text style={styles.doneButtonText}>Done</Text>
                   </Pressable>
                 </View>

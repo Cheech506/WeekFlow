@@ -2,57 +2,46 @@ import { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, TextInput } from 'react-native';
 
 import { Text, View } from '@/components/Themed';
+import { useTasks } from '@/context/TaskContext';
 
-type Task = {
-  id: number;
-  title: string;
-  completed: boolean;
-};
+const dayNames = [
+  'Sunday',
+  'Monday',
+  'Tuesday',
+  'Wednesday',
+  'Thursday',
+  'Friday',
+  'Saturday',
+];
 
 export default function DailyScreen() {
   const [taskText, setTaskText] = useState('');
+  const { addTask, completeTask, getActiveTasksByDay, tasks } = useTasks();
 
-  const [tasks, setTasks] = useState<Task[]>([
-    { id: 1, title: 'Example daily task', completed: false },
-  ]);
+  const today = dayNames[new Date().getDay()];
+  const activeTasks = getActiveTasksByDay(today);
+  const completedTodayCount = tasks.filter(
+    (task) => task.day === today && task.completed
+  ).length;
 
-  function addTask() {
-    if (!taskText.trim()) return;
-
-    const newTask: Task = {
-      id: Date.now(),
-      title: taskText.trim(),
-      completed: false,
-    };
-
-    setTasks([newTask, ...tasks]);
+  function handleAddTask() {
+    addTask(taskText, today);
     setTaskText('');
   }
-
-  function completeTask(id: number) {
-    setTasks(
-      tasks.map((task) =>
-        task.id === id ? { ...task, completed: true } : task
-      )
-    );
-  }
-
-  const activeTasks = tasks.filter((task) => !task.completed);
-  const completedCount = tasks.filter((task) => task.completed).length;
 
   return (
     <ScrollView style={styles.page} contentContainerStyle={styles.content}>
       <View style={styles.header}>
         <Text style={styles.title}>Daily Tasks</Text>
         <Text style={styles.subtitle}>
-          Write down what needs to get done today.
+          Today is {today}. Write down what needs to get done.
         </Text>
       </View>
 
       <View style={styles.progressCard}>
         <Text style={styles.progressTitle}>Today&apos;s Progress</Text>
         <Text style={styles.progressText}>
-          {completedCount} completed • {activeTasks.length} left
+          {completedTodayCount} completed • {activeTasks.length} left
         </Text>
       </View>
 
@@ -62,11 +51,11 @@ export default function DailyScreen() {
           placeholder="Add a task for today..."
           value={taskText}
           onChangeText={setTaskText}
-          onSubmitEditing={addTask}
+          onSubmitEditing={handleAddTask}
           returnKeyType="done"
         />
 
-        <Pressable style={styles.addButton} onPress={addTask}>
+        <Pressable style={styles.addButton} onPress={handleAddTask}>
           <Text style={styles.addButtonText}>Add Task</Text>
         </Pressable>
       </View>
@@ -84,7 +73,7 @@ export default function DailyScreen() {
             <View key={task.id} style={styles.taskCard}>
               <View style={styles.taskTextWrap}>
                 <Text style={styles.taskTitle}>{task.title}</Text>
-                <Text style={styles.taskMeta}>Daily task</Text>
+                <Text style={styles.taskMeta}>{task.day}</Text>
               </View>
 
               <Pressable
