@@ -1,67 +1,103 @@
-import React, { createContext, useContext, useMemo, useState } from 'react';
+import React, {
+    createContext,
+    useCallback,
+    useContext,
+    useEffect,
+    useMemo,
+    useState,
+} from 'react';
 
-export type Task = {
-  id: number;
-  title: string;
-  day: string;
-  completed: boolean;
-};
+import {
+    getTasks,
+    insertTask,
+    markTaskComplete,
+    type StoredTask,
+} from '@/lib/taskStorage';
+
+export type Task = StoredTask;
 
 type TaskContextValue = {
   tasks: Task[];
-  addTask: (title: string, day: string) => void;
-  completeTask: (id: number) => void;
+  isLoading: boolean;
+  addTask: (title: string, day: string) => Promise<void>;
+  completeTask: (id: number) => Promise<void>;
   getActiveTasksByDay: (day: string) => Task[];
 };
 
 const TaskContext = createContext<TaskContextValue | null>(null);
 
-const starterTasks: Task[] = [
-  {
-    id: 1,
-    title: 'Example weekly task',
-    day: 'Monday',
-    completed: false,
-  },
-];
-
 export function TaskProvider({ children }: { children: React.ReactNode }) {
-  const [tasks, setTasks] = useState<Task[]>(starterTasks);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
 
-  function addTask(title: string, day: string) {
+  useEffect(() => {
+    let mounted = true;
+
+    async function loadTasks() {
+      try {
+        const storedTasks = await getTasks();
+
+        if (mounted) {
+          setTasks(storedTasks);
+        }
+      } catch (error) {
+        console.error('Failed to load tasks:', error);
+      } finally {
+        if (mounted) {
+          setIsLoading(false);
+        }
+      }
+    }
+
+    loadTasks();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const addTask = useCallback(async (title: string, day: string) => {
     if (!title.trim()) return;
 
-    setTasks((currentTasks) => [
-      {
-        id: Date.now(),
-        title: title.trim(),
-        day,
-        completed: false,
-      },
-      ...currentTasks,
-    ]);
-  }
+    try {
+      const newTask = await insertTask(title, day);
 
-  function completeTask(id: number) {
-    setTasks((currentTasks) =>
-      currentTasks.map((task) =>
-        task.id === id ? { ...task, completed: true } : task
-      )
-    );
-  }
+      setTasks((currentTasks) => [newTask, ...currentTasks]);
+    } catch (error) {
+      console.error('Failed to add task:', error);
+    }
+  }, []);
 
-  function getActiveTasksByDay(day: string) {
-    return tasks.filter((task) => task.day === day && !task.completed);
-  }
+  const completeTask = useCallback(async (id: number) => {
+    try {
+      await markTaskComplete(id);
+
+      setTasks((currentTasks) =>
+        currentTasks.map((task) =>
+          task.id === id ? { ...task, completed: true } : task
+        )
+      );
+    } catch (error) {
+      console.error('Failed to complete task:', error);
+    }
+  }, []);
+
+  const getActiveTasksByDay = useCallback(
+    (day: string) => {
+      return tasks.filter((task) => task.day === day && !task.completed);
+    },
+    [tasks]
+  );
 
   const value = useMemo(
     () => ({
       tasks,
+      isLoading,
       addTask,
       completeTask,
       getActiveTasksByDay,
     }),
-    [tasks]
+    [tasks, isLoading, addTask, completeTask, getActiveTasksByDay]
   );
 
   return <TaskContext.Provider value={value}>{children}</TaskContext.Provider>;
