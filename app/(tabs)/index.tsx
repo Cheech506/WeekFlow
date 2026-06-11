@@ -7,43 +7,28 @@ import {
 } from 'react-native';
 
 import { Text, View } from '@/components/Themed';
+import { useGoals } from '@/context/GoalContext';
 
-type Goal = {
-  id: number;
-  title: string;
-  completed: boolean;
-};
+function formatGoalDate(value: string) {
+  const date = new Date(value);
+
+  return date.toLocaleDateString([], {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+}
 
 export default function TwelveWeekGoalsScreen() {
   const [goalText, setGoalText] = useState('');
-  const [goals, setGoals] = useState<Goal[]>([
-    { id: 1, title: 'Build first version of task app', completed: false },
-    { id: 2, title: 'Create weekly planning screen', completed: false },
-    { id: 3, title: 'Add completed task history', completed: false },
-  ]);
-
-  function addGoal() {
-    if (!goalText.trim()) return;
-
-    const newGoal: Goal = {
-      id: Date.now(),
-      title: goalText.trim(),
-      completed: false,
-    };
-
-    setGoals([newGoal, ...goals]);
-    setGoalText('');
-  }
-
-  function toggleGoal(id: number) {
-    setGoals(
-      goals.map((goal) =>
-        goal.id === id ? { ...goal, completed: !goal.completed } : goal
-      )
-    );
-  }
+  const { goals, isLoading, addGoal, toggleGoal } = useGoals();
 
   const completedCount = goals.filter((goal) => goal.completed).length;
+
+  async function handleAddGoal() {
+    await addGoal(goalText);
+    setGoalText('');
+  }
 
   return (
     <ScrollView style={styles.page} contentContainerStyle={styles.content}>
@@ -67,39 +52,59 @@ export default function TwelveWeekGoalsScreen() {
           placeholder="Add a 12 week goal..."
           value={goalText}
           onChangeText={setGoalText}
-          onSubmitEditing={addGoal}
+          onSubmitEditing={handleAddGoal}
           returnKeyType="done"
         />
 
-        <Pressable style={styles.addButton} onPress={addGoal}>
+        <Pressable style={styles.addButton} onPress={handleAddGoal}>
           <Text style={styles.addButtonText}>Add Goal</Text>
         </Pressable>
       </View>
 
       <View style={styles.goalList}>
-        {goals.map((goal) => (
-          <Pressable
-            key={goal.id}
-            style={styles.goalCard}
-            onPress={() => toggleGoal(goal.id)}
-          >
-            <Text style={styles.checkbox}>
-              {goal.completed ? '✅' : '⬜'}
+        {isLoading ? (
+          <View style={styles.emptyCard}>
+            <Text style={styles.emptyTitle}>Loading goals...</Text>
+          </View>
+        ) : goals.length === 0 ? (
+          <View style={styles.emptyCard}>
+            <Text style={styles.emptyTitle}>No goals yet</Text>
+            <Text style={styles.emptyText}>
+              Add a 12 week goal to start planning the bigger picture.
             </Text>
-
-            <View style={styles.goalTextWrap}>
-              <Text
-                style={[
-                  styles.goalTitle,
-                  goal.completed && styles.goalCompleted,
-                ]}
-              >
-                {goal.title}
+          </View>
+        ) : (
+          goals.map((goal) => (
+            <Pressable
+              key={goal.id}
+              style={styles.goalCard}
+              onPress={() => toggleGoal(goal.id)}
+            >
+              <Text style={styles.checkbox}>
+                {goal.completed ? '✅' : '⬜'}
               </Text>
-              <Text style={styles.goalMeta}>Tap to mark complete</Text>
-            </View>
-          </Pressable>
-        ))}
+
+              <View style={styles.goalTextWrap}>
+                <Text
+                  style={[
+                    styles.goalTitle,
+                    goal.completed && styles.goalCompleted,
+                  ]}
+                >
+                  {goal.title}
+                </Text>
+
+                <Text style={styles.goalMeta}>
+                  {formatGoalDate(goal.startDate)} → {formatGoalDate(goal.endDate)}
+                </Text>
+
+                <Text style={styles.goalMeta}>
+                  Tap to {goal.completed ? 'mark active' : 'mark complete'}
+                </Text>
+              </View>
+            </Pressable>
+          ))
+        )}
       </View>
     </ScrollView>
   );
@@ -186,7 +191,7 @@ const styles = StyleSheet.create({
   },
   goalTitle: {
     fontSize: 17,
-    fontWeight: '600',
+    fontWeight: '700',
     color: '#111827',
   },
   goalCompleted: {
@@ -196,6 +201,23 @@ const styles = StyleSheet.create({
   goalMeta: {
     marginTop: 4,
     fontSize: 13,
+    color: '#6b7280',
+  },
+  emptyCard: {
+    padding: 18,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    backgroundColor: 'white',
+  },
+  emptyTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    marginBottom: 4,
+    color: '#111827',
+  },
+  emptyText: {
+    fontSize: 14,
     color: '#6b7280',
   },
 });

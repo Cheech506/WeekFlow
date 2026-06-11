@@ -7,11 +7,13 @@ import { Pressable } from 'react-native';
 import { useClientOnlyValue } from '@/components/useClientOnlyValue';
 import { useColorScheme } from '@/components/useColorScheme';
 import Colors from '@/constants/Colors';
+import { GoalProvider } from '@/context/GoalContext';
 
 export default function TabLayout() {
   const colorScheme = useColorScheme();
 
   return (
+    <GoalProvider>
     <TaskProvider>
     <Tabs
       screenOptions={{
@@ -107,5 +109,6 @@ export default function TabLayout() {
       />
     </Tabs>
     </TaskProvider>
+    </GoalProvider>
   );
 }

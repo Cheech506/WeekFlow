@@ -24,5 +24,15 @@ export async function migrateDb() {
       created_at TEXT NOT NULL,
       completed_at TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS goals (
+      id INTEGER PRIMARY KEY NOT NULL,
+      title TEXT NOT NULL,
+      completed INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      completed_at TEXT,
+      start_date TEXT NOT NULL,
+      end_date TEXT NOT NULL
+    );
   `);
 }
