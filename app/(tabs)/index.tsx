@@ -21,7 +21,7 @@ function formatGoalDate(value: string) {
 
 export default function TwelveWeekGoalsScreen() {
   const [goalText, setGoalText] = useState('');
-  const { goals, isLoading, addGoal, toggleGoal } = useGoals();
+  const { goals, isLoading, addGoal, toggleGoal, deleteGoal } = useGoals();
 
   const completedCount = goals.filter((goal) => goal.completed).length;
 
@@ -75,34 +75,44 @@ export default function TwelveWeekGoalsScreen() {
           </View>
         ) : (
           goals.map((goal) => (
-            <Pressable
-              key={goal.id}
-              style={styles.goalCard}
-              onPress={() => toggleGoal(goal.id)}
-            >
-              <Text style={styles.checkbox}>
-                {goal.completed ? '✅' : '⬜'}
-              </Text>
+            <View key={goal.id} style={styles.goalCard}>
+              <Pressable
+                style={styles.goalMain}
+                onPress={() => toggleGoal(goal.id)}
+              >
+                <Text style={styles.checkbox}>
+                  {goal.completed ? '✅' : '⬜'}
+                </Text>
 
-              <View style={styles.goalTextWrap}>
-                <Text
-                  style={[
-                    styles.goalTitle,
-                    goal.completed && styles.goalCompleted,
-                  ]}
+                <View style={styles.goalTextWrap}>
+                  <Text
+                    style={[
+                      styles.goalTitle,
+                      goal.completed && styles.goalCompleted,
+                    ]}
+                  >
+                    {goal.title}
+                  </Text>
+
+                  <Text style={styles.goalMeta}>
+                    {formatGoalDate(goal.startDate)} → {formatGoalDate(goal.endDate)}
+                  </Text>
+
+                  <Text style={styles.goalMeta}>
+                    Tap to {goal.completed ? 'mark active' : 'mark complete'}
+                  </Text>
+                </View>
+              </Pressable>
+
+              <View style={styles.goalActions}>
+                <Pressable
+                  style={styles.deleteButton}
+                  onPress={() => deleteGoal(goal.id)}
                 >
-                  {goal.title}
-                </Text>
-
-                <Text style={styles.goalMeta}>
-                  {formatGoalDate(goal.startDate)} → {formatGoalDate(goal.endDate)}
-                </Text>
-
-                <Text style={styles.goalMeta}>
-                  Tap to {goal.completed ? 'mark active' : 'mark complete'}
-                </Text>
+                  <Text style={styles.deleteButtonText}>Delete</Text>
+                </Pressable>
               </View>
-            </Pressable>
+            </View>
           ))
         )}
       </View>
@@ -176,11 +186,18 @@ const styles = StyleSheet.create({
   goalCard: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     padding: 16,
     borderRadius: 14,
     borderWidth: 1,
     borderColor: '#e5e7eb',
     backgroundColor: 'white',
+    gap: 12,
+  },
+  goalMain: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   checkbox: {
     fontSize: 24,
@@ -188,6 +205,10 @@ const styles = StyleSheet.create({
   },
   goalTextWrap: {
     flex: 1,
+  },
+  goalActions: {
+    alignItems: 'flex-end',
+    backgroundColor: 'transparent',
   },
   goalTitle: {
     fontSize: 17,
@@ -202,6 +223,16 @@ const styles = StyleSheet.create({
     marginTop: 4,
     fontSize: 13,
     color: '#6b7280',
+  },
+  deleteButton: {
+    backgroundColor: '#dc2626',
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+  },
+  deleteButtonText: {
+    color: 'white',
+    fontWeight: '700',
   },
   emptyCard: {
     padding: 18,

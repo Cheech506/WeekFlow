@@ -106,3 +106,17 @@ export async function updateGoalCompletion(
 
   return completedAt;
 }
+
+export async function deleteGoalById(id: number): Promise<void> {
+  await migrateDb();
+
+  const db = await getDb();
+
+  await db.runAsync(
+    `
+    DELETE FROM goals
+    WHERE id = ?;
+    `,
+    [id]
+  );
+}

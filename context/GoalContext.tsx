@@ -8,6 +8,7 @@ import React, {
 } from 'react';
 
 import {
+    deleteGoalById,
     getGoals,
     insertGoal,
     updateGoalCompletion,
@@ -21,6 +22,7 @@ type GoalContextValue = {
   isLoading: boolean;
   addGoal: (title: string) => Promise<void>;
   toggleGoal: (id: number) => Promise<void>;
+  deleteGoal: (id: number) => Promise<void>;
 };
 
 const GoalContext = createContext<GoalContextValue | null>(null);
@@ -94,14 +96,27 @@ export function GoalProvider({ children }: { children: React.ReactNode }) {
     [goals]
   );
 
+  const deleteGoal = useCallback(async (id: number) => {
+    try {
+      await deleteGoalById(id);
+
+      setGoals((currentGoals) =>
+        currentGoals.filter((goal) => goal.id !== id)
+      );
+    } catch (error) {
+      console.error('Failed to delete goal:', error);
+    }
+  }, []);
+
   const value = useMemo(
     () => ({
       goals,
       isLoading,
       addGoal,
       toggleGoal,
+      deleteGoal,
     }),
-    [goals, isLoading, addGoal, toggleGoal]
+    [goals, isLoading, addGoal, toggleGoal, deleteGoal]
   );
 
   return <GoalContext.Provider value={value}>{children}</GoalContext.Provider>;
