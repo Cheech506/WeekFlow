@@ -18,7 +18,7 @@ export default function WeeklyScreen() {
   const [taskText, setTaskText] = useState('');
   const [selectedDay, setSelectedDay] = useState('Monday');
 
-  const { addTask, completeTask, getActiveTasksByDay } = useTasks();
+  const { addTask, completeTask, deleteTask, getActiveTasksByDay } = useTasks();
 
   function handleAddTask() {
     addTask(taskText, selectedDay);
@@ -83,14 +83,25 @@ export default function WeeklyScreen() {
             ) : (
               dayTasks.map((task) => (
                 <View key={task.id} style={styles.taskCard}>
-                  <Text style={styles.taskTitle}>{task.title}</Text>
+                  <View style={styles.taskTextWrap}>
+                    <Text style={styles.taskTitle}>{task.title}</Text>
+                  </View>
 
-                  <Pressable
-                    style={styles.doneButton}
-                    onPress={() => completeTask(task.id)}
-                  >
-                    <Text style={styles.doneButtonText}>Done</Text>
-                  </Pressable>
+                  <View style={styles.taskActions}>
+                    <Pressable
+                      style={styles.doneButton}
+                      onPress={() => completeTask(task.id)}
+                    >
+                      <Text style={styles.doneButtonText}>Done</Text>
+                    </Pressable>
+
+                    <Pressable
+                      style={styles.deleteButton}
+                      onPress={() => deleteTask(task.id)}
+                    >
+                      <Text style={styles.deleteButtonText}>Delete</Text>
+                    </Pressable>
+                  </View>
                 </View>
               ))
             )}
@@ -173,6 +184,9 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   taskCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     padding: 16,
     borderRadius: 14,
     borderWidth: 1,
@@ -180,6 +194,14 @@ const styles = StyleSheet.create({
     backgroundColor: 'white',
     gap: 12,
     marginBottom: 10,
+  },
+  taskTextWrap: {
+  flex: 1,
+  },
+  taskActions: {
+    gap: 8,
+    alignItems: 'flex-end',
+    backgroundColor: 'transparent',
   },
   taskTitle: {
     fontSize: 17,
@@ -201,4 +223,15 @@ const styles = StyleSheet.create({
     opacity: 0.55,
     fontSize: 14,
   },
+  deleteButton: {
+  alignSelf: 'flex-start',
+  backgroundColor: '#dc2626',
+  paddingVertical: 8,
+  paddingHorizontal: 14,
+  borderRadius: 10,
+},
+deleteButtonText: {
+  color: 'white',
+  fontWeight: '700',
+},
 });

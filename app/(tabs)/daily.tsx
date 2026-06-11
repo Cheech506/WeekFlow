@@ -16,7 +16,7 @@ const dayNames = [
 
 export default function DailyScreen() {
   const [taskText, setTaskText] = useState('');
-  const { addTask, completeTask, getActiveTasksByDay, tasks } = useTasks();
+  const { addTask, completeTask, deleteTask, getActiveTasksByDay, tasks } = useTasks();
 
   const today = dayNames[new Date().getDay()];
   const activeTasks = getActiveTasksByDay(today);
@@ -76,12 +76,21 @@ export default function DailyScreen() {
                 <Text style={styles.taskMeta}>{task.day}</Text>
               </View>
 
-              <Pressable
-                style={styles.doneButton}
-                onPress={() => completeTask(task.id)}
-              >
-                <Text style={styles.doneButtonText}>Done</Text>
-              </Pressable>
+              <View style={styles.taskActions}>
+                <Pressable
+                  style={styles.doneButton}
+                  onPress={() => completeTask(task.id)}
+                >
+                  <Text style={styles.doneButtonText}>Done</Text>
+                </Pressable>
+
+                <Pressable
+                  style={styles.deleteButton}
+                  onPress={() => deleteTask(task.id)}
+                >
+                  <Text style={styles.deleteButtonText}>Delete</Text>
+                </Pressable>
+              </View>
             </View>
           ))
         )}
@@ -176,6 +185,11 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#6b7280',
   },
+  taskActions: {
+  gap: 8,
+  alignItems: 'flex-end',
+  backgroundColor: 'transparent',
+  },
   doneButton: {
     backgroundColor: '#16a34a',
     paddingVertical: 8,
@@ -203,4 +217,14 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#6b7280',
   },
+  deleteButton: {
+  backgroundColor: '#dc2626',
+  paddingVertical: 8,
+  paddingHorizontal: 14,
+  borderRadius: 10,
+},
+deleteButtonText: {
+  color: 'white',
+  fontWeight: '700',
+},
 });

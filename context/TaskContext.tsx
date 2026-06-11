@@ -8,6 +8,7 @@ import React, {
 } from 'react';
 
 import {
+  deleteTaskById,
   getTasks,
   insertTask,
   markTaskComplete,
@@ -21,6 +22,7 @@ type TaskContextValue = {
   isLoading: boolean;
   addTask: (title: string, day: string) => Promise<void>;
   completeTask: (id: number) => Promise<void>;
+  deleteTask: (id: number) => Promise<void>;
   getActiveTasksByDay: (day: string) => Task[];
 };
 
@@ -69,20 +71,32 @@ export function TaskProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const completeTask = useCallback(async (id: number) => {
-  try {
-    const completedAt = await markTaskComplete(id);
+    try {
+      const completedAt = await markTaskComplete(id);
 
-    setTasks((currentTasks) =>
-      currentTasks.map((task) =>
-        task.id === id
-          ? { ...task, completed: true, completedAt }
-          : task
-      )
-    );
-  } catch (error) {
-    console.error('Failed to complete task:', error);
-  }
-}, []);
+      setTasks((currentTasks) =>
+        currentTasks.map((task) =>
+          task.id === id
+            ? { ...task, completed: true, completedAt }
+            : task
+        )
+      );
+    } catch (error) {
+      console.error('Failed to complete task:', error);
+    }
+  }, []);
+
+  const deleteTask = useCallback(async (id: number) => {
+    try {
+      await deleteTaskById(id);
+
+      setTasks((currentTasks) =>
+        currentTasks.filter((task) => task.id !== id)
+      );
+    } catch (error) {
+      console.error('Failed to delete task:', error);
+    }
+  }, []);
 
   const getActiveTasksByDay = useCallback(
     (day: string) => {
@@ -97,9 +111,10 @@ export function TaskProvider({ children }: { children: React.ReactNode }) {
       isLoading,
       addTask,
       completeTask,
+      deleteTask,
       getActiveTasksByDay,
     }),
-    [tasks, isLoading, addTask, completeTask, getActiveTasksByDay]
+    [tasks, isLoading, addTask, completeTask, deleteTask, getActiveTasksByDay]
   );
 
   return <TaskContext.Provider value={value}>{children}</TaskContext.Provider>;

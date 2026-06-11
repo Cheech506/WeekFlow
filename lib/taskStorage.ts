@@ -77,3 +77,17 @@ export async function markTaskComplete(id: number): Promise<string> {
 
   return now;
 }
+
+export async function deleteTaskById(id: number): Promise<void> {
+  await migrateDb();
+
+  const db = await getDb();
+
+  await db.runAsync(
+    `
+    DELETE FROM tasks
+    WHERE id = ?;
+    `,
+    [id]
+  );
+}
