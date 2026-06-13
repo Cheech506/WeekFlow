@@ -56,6 +56,24 @@ export default function TabLayout() {
       />
 
       <Tabs.Screen
+        name="inbox"
+        options={{
+          title: 'Inbox',
+          tabBarIcon: ({ color }) => (
+            <SymbolView
+              name={{
+              ios: 'tray',
+              android: 'code',
+              web: 'code',
+              }}
+              tintColor={color}
+              size={28}
+            />
+          ),
+        }}
+      />
+
+      <Tabs.Screen
         name="daily"
         options={{
           title: 'Daily',

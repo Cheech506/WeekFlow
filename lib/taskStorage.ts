@@ -91,3 +91,18 @@ export async function deleteTaskById(id: number): Promise<void> {
     [id]
   );
 }
+
+export async function updateTaskDayById(id: number, day: string): Promise<void> {
+  await migrateDb();
+
+  const db = await getDb();
+
+  await db.runAsync(
+    `
+    UPDATE tasks
+    SET day = ?
+    WHERE id = ?;
+    `,
+    [day, id]
+  );
+}
