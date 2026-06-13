@@ -4,6 +4,8 @@ export type StoredTask = {
   id: number;
   title: string;
   day: string;
+  notes: string | null;
+  priority: number;
   completed: boolean;
   completedAt: string | null;
 };
@@ -12,6 +14,8 @@ type TaskRow = {
   id: number;
   title: string;
   day: string;
+  notes: string | null;
+  priority: number;
   completed: number;
   completed_at: string | null;
 };
@@ -22,7 +26,7 @@ export async function getTasks(): Promise<StoredTask[]> {
   const db = await getDb();
 
   const rows = await db.getAllAsync<TaskRow>(`
-    SELECT id, title, day, completed, completed_at
+    SELECT id, title, day, notes, priority, completed, completed_at
     FROM tasks
     ORDER BY created_at DESC;
   `);
@@ -31,30 +35,51 @@ export async function getTasks(): Promise<StoredTask[]> {
     id: row.id,
     title: row.title,
     day: row.day,
+    notes: row.notes,
+    priority: row.priority ?? 0,
     completed: row.completed === 1,
     completedAt: row.completed_at,
   }));
 }
 
-export async function insertTask(title: string, day: string): Promise<StoredTask> {
+export async function insertTask(
+  title: string,
+  day: string,
+  notes: string | null = null,
+  priority: number = 0
+): Promise<StoredTask> {
   await migrateDb();
 
   const db = await getDb();
   const now = new Date().toISOString();
   const id = Date.now();
 
+  const cleanTitle = title.trim();
+  const cleanNotes = notes?.trim() ? notes.trim() : null;
+
   await db.runAsync(
     `
-    INSERT INTO tasks (id, title, day, completed, created_at, completed_at)
-    VALUES (?, ?, ?, 0, ?, NULL);
+    INSERT INTO tasks (
+      id,
+      title,
+      day,
+      notes,
+      priority,
+      completed,
+      created_at,
+      completed_at
+    )
+    VALUES (?, ?, ?, ?, ?, 0, ?, NULL);
     `,
-    [id, title.trim(), day, now]
+    [id, cleanTitle, day, cleanNotes, priority, now]
   );
 
   return {
     id,
-    title: title.trim(),
+    title: cleanTitle,
     day,
+    notes: cleanNotes,
+    priority,
     completed: false,
     completedAt: null,
   };

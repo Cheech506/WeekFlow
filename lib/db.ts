@@ -10,6 +10,25 @@ export async function getDb() {
   return dbPromise;
 }
 
+async function ensureColumn(
+  db: SQLite.SQLiteDatabase,
+  tableName: string,
+  columnName: string,
+  columnDefinition: string
+) {
+  const columns = await db.getAllAsync<{ name: string }>(
+    `PRAGMA table_info(${tableName});`
+  );
+
+  const columnExists = columns.some((column) => column.name === columnName);
+
+  if (!columnExists) {
+    await db.execAsync(
+      `ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnDefinition};`
+    );
+  }
+}
+
 export async function migrateDb() {
   const db = await getDb();
 
@@ -20,6 +39,8 @@ export async function migrateDb() {
       id INTEGER PRIMARY KEY NOT NULL,
       title TEXT NOT NULL,
       day TEXT NOT NULL,
+      notes TEXT,
+      priority INTEGER NOT NULL DEFAULT 0,
       completed INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       completed_at TEXT
@@ -35,4 +56,7 @@ export async function migrateDb() {
       end_date TEXT NOT NULL
     );
   `);
+
+  await ensureColumn(db, 'tasks', 'notes', 'TEXT');
+  await ensureColumn(db, 'tasks', 'priority', 'INTEGER NOT NULL DEFAULT 0');
 }

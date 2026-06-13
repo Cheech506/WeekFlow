@@ -16,6 +16,8 @@ const days = [
 
 export default function InboxScreen() {
   const [taskText, setTaskText] = useState('');
+  const [notesText, setNotesText] = useState('');
+  const [priority, setPriority] = useState(0);
   const {
     addTask,
     completeTask,
@@ -27,9 +29,12 @@ export default function InboxScreen() {
   const inboxTasks = getInboxTasks();
 
   async function handleAddTask() {
-    await addTask(taskText, 'Inbox');
-    setTaskText('');
-  }
+  await addTask(taskText, 'Inbox', notesText, priority);
+
+  setTaskText('');
+  setNotesText('');
+  setPriority(0);
+}
 
   return (
     <ScrollView style={styles.page} contentContainerStyle={styles.content}>
@@ -49,18 +54,48 @@ export default function InboxScreen() {
 
       <View style={styles.addCard}>
         <TextInput
-          style={styles.input}
-          placeholder="Quick add something..."
-          value={taskText}
-          onChangeText={setTaskText}
-          onSubmitEditing={handleAddTask}
-          returnKeyType="done"
+            style={styles.input}
+            placeholder="Quick add something..."
+            value={taskText}
+            onChangeText={setTaskText}
+            onSubmitEditing={handleAddTask}
+            returnKeyType="done"
         />
 
+        <TextInput
+            style={[styles.input, styles.notesInput]}
+            placeholder="Add notes... optional"
+            value={notesText}
+            onChangeText={setNotesText}
+            multiline
+        />
+
+        <View style={styles.priorityPicker}>
+            {[0, 1, 2].map((level) => (
+                <Pressable
+                    key={level}
+                    style={[
+                    styles.priorityButton,
+                    priority === level && styles.priorityButtonSelected,
+                ]}
+                onPress={() => setPriority(level)}
+            >
+                <Text
+                    style={[
+                        styles.priorityButtonText,
+                        priority === level && styles.priorityButtonTextSelected,
+                    ]}
+                >
+                    {level === 0 ? 'Low' : level === 1 ? 'Medium' : 'High'}
+                </Text>
+                </Pressable>
+            ))}
+        </View>
+
         <Pressable style={styles.addButton} onPress={handleAddTask}>
-          <Text style={styles.addButtonText}>Add to Inbox</Text>
+            <Text style={styles.addButtonText}>Add to Inbox</Text>
         </Pressable>
-      </View>
+        </View>
 
       <View style={styles.taskList}>
         {inboxTasks.length === 0 ? (
@@ -75,8 +110,17 @@ export default function InboxScreen() {
             <View key={task.id} style={styles.taskCard}>
               <View style={styles.taskTopRow}>
                 <View style={styles.taskTextWrap}>
-                  <Text style={styles.taskTitle}>{task.title}</Text>
-                  <Text style={styles.taskMeta}>Unscheduled</Text>
+                    <Text style={styles.taskTitle}>{task.title}</Text>
+
+                    <Text style={styles.taskMeta}>Unscheduled</Text>
+
+                    <Text style={styles.taskMeta}>
+                        Priority: {task.priority === 0 ? 'Low' : task.priority === 1 ? 'Medium' : 'High'}
+                    </Text>
+
+                    {task.notes ? (
+                        <Text style={styles.taskNotes}>{task.notes}</Text>
+                    ) : null}
                 </View>
 
                 <View style={styles.taskActions}>
@@ -279,5 +323,46 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: 14,
     color: '#6b7280',
+  },
+
+  notesInput: {
+    minHeight: 80,
+    textAlignVertical: 'top',
+  },
+
+  priorityPicker: {
+    flexDirection: 'row',
+    gap: 8,
+    backgroundColor: 'transparent',
+  },
+
+  priorityButton: {
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    backgroundColor: 'white',
+  },
+
+  priorityButtonSelected: {
+    backgroundColor: '#7c3aed',
+    borderColor: '#7c3aed',
+  },
+
+  priorityButtonText: {
+    fontWeight: '700',
+    color: '#374151',
+  },
+
+  priorityButtonTextSelected: {
+    color: 'white',
+  },
+
+  taskNotes: {
+    marginTop: 6,
+    fontSize: 14,
+    color: '#374151',
+    lineHeight: 20,
   },
 });

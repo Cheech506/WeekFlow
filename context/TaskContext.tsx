@@ -21,7 +21,12 @@ export type Task = StoredTask;
 type TaskContextValue = {
   tasks: Task[];
   isLoading: boolean;
-  addTask: (title: string, day: string) => Promise<void>;
+  addTask: (
+  title: string,
+  day: string,
+  notes?: string | null,
+  priority?: number
+) => Promise<void>;
   completeTask: (id: number) => Promise<void>;
   deleteTask: (id: number) => Promise<void>;
   moveTaskToDay: (id: number, day: string) => Promise<void>;
@@ -61,16 +66,24 @@ export function TaskProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  const addTask = useCallback(async (title: string, day: string) => {
-    if (!title.trim()) return;
+  const addTask = useCallback(
+    async (
+      title: string,
+      day: string,
+      notes: string | null = null,
+      priority: number = 0
+    ) => {
+      if (!title.trim()) return;
 
-    try {
-      const newTask = await insertTask(title, day);
-      setTasks((currentTasks) => [newTask, ...currentTasks]);
-    } catch (error) {
-      console.error('Failed to add task:', error);
-    }
-  }, []);
+      try {
+        const newTask = await insertTask(title, day, notes, priority);
+        setTasks((currentTasks) => [newTask, ...currentTasks]);
+      } catch (error) {
+        console.error('Failed to add task:', error);
+      }
+    },
+    []
+  );
 
   const completeTask = useCallback(async (id: number) => {
     try {
