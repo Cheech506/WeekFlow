@@ -14,6 +14,12 @@ const dayNames = [
   'Saturday',
 ];
 
+function getPriorityLabel(priority: number) {
+  if (priority === 2) return 'High';
+  if (priority === 1) return 'Medium';
+  return 'Low';
+}
+
 export default function DailyScreen() {
   const [taskText, setTaskText] = useState('');
   const { addTask, completeTask, deleteTask, getActiveTasksByDay, tasks } = useTasks();
@@ -73,7 +79,16 @@ export default function DailyScreen() {
             <View key={task.id} style={styles.taskCard}>
               <View style={styles.taskTextWrap}>
                 <Text style={styles.taskTitle}>{task.title}</Text>
+
                 <Text style={styles.taskMeta}>{task.day}</Text>
+
+                <Text style={styles.taskMeta}>
+                  Priority: {getPriorityLabel(task.priority)}
+                </Text>
+
+                {task.notes ? (
+                  <Text style={styles.taskNotes}>{task.notes}</Text>
+                ) : null}
               </View>
 
               <View style={styles.taskActions}>
@@ -227,4 +242,11 @@ deleteButtonText: {
   color: 'white',
   fontWeight: '700',
 },
+
+  taskNotes: {
+    marginTop: 6,
+    fontSize: 14,
+    color: '#374151',
+    lineHeight: 20,
+  },
 });

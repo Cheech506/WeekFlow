@@ -14,6 +14,12 @@ const days = [
   'Sunday',
 ];
 
+function getPriorityLabel(priority: number) {
+  if (priority === 2) return 'High';
+  if (priority === 1) return 'Medium';
+  return 'Low';
+}
+
 export default function WeeklyScreen() {
   const [taskText, setTaskText] = useState('');
   const [selectedDay, setSelectedDay] = useState('Monday');
@@ -85,6 +91,14 @@ export default function WeeklyScreen() {
                 <View key={task.id} style={styles.taskCard}>
                   <View style={styles.taskTextWrap}>
                     <Text style={styles.taskTitle}>{task.title}</Text>
+
+                    <Text style={styles.taskMeta}>
+                      Priority: {getPriorityLabel(task.priority)}
+                    </Text>
+
+                    {task.notes ? (
+                      <Text style={styles.taskNotes}>{task.notes}</Text>
+                    ) : null}
                   </View>
 
                   <View style={styles.taskActions}>
@@ -234,4 +248,17 @@ deleteButtonText: {
   color: 'white',
   fontWeight: '700',
 },
+
+  taskNotes: {
+    marginTop: 6,
+    fontSize: 14,
+    color: '#374151',
+    lineHeight: 20,
+  },
+
+  taskMeta: {
+    marginTop: 4,
+    fontSize: 13,
+    color: '#6b7280',
+  },
 });

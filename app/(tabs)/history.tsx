@@ -17,6 +17,12 @@ function formatCompletedDate(value: string | null) {
   });
 }
 
+function getPriorityLabel(priority: number) {
+  if (priority === 2) return 'High';
+  if (priority === 1) return 'Medium';
+  return 'Low';
+}
+
 export default function HistoryScreen() {
   const { tasks } = useTasks();
 
@@ -57,11 +63,21 @@ export default function HistoryScreen() {
         ) : (
           completedTasks.map((task) => (
             <View key={task.id} style={styles.taskCard}>
-              <Text style={styles.taskTitle}>{task.title}</Text>
-              <Text style={styles.taskMeta}>Assigned day: {task.day}</Text>
-              <Text style={styles.taskMeta}>
-                Completed: {formatCompletedDate(task.completedAt)}
-              </Text>
+                <Text style={styles.taskTitle}>{task.title}</Text>
+
+                <Text style={styles.taskMeta}>Assigned day: {task.day}</Text>
+
+                <Text style={styles.taskMeta}>
+                    Priority: {getPriorityLabel(task.priority)}
+                </Text>
+    
+                {task.notes ? (
+                    <Text style={styles.taskNotes}>{task.notes}</Text>
+                ) : null}
+
+                <Text style={styles.taskMeta}>
+                    Completed: {task.completedAt ? new Date(task.completedAt).toLocaleString() : 'Unknown'}
+                </Text>
             </View>
           ))
         )}
@@ -143,5 +159,13 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: 14,
     color: '#6b7280',
+  },
+
+  taskNotes: {
+    marginTop: 6,
+    marginBottom: 4,
+    fontSize: 14,
+    color: '#374151',
+    lineHeight: 20,
   },
 });
