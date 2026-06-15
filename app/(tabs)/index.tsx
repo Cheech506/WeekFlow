@@ -8,6 +8,7 @@ import {
 
 import { Text, View } from '@/components/Themed';
 import { useGoals } from '@/context/GoalContext';
+import { useTasks } from '@/context/TaskContext';
 
 function formatGoalDate(value: string) {
   const date = new Date(value);
@@ -19,9 +20,17 @@ function formatGoalDate(value: string) {
   });
 }
 
+function getPriorityLabel(priority: number) {
+  if (priority === 2) return 'High';
+  if (priority === 1) return 'Medium';
+  return 'Low';
+}
+
 export default function TwelveWeekGoalsScreen() {
   const [goalText, setGoalText] = useState('');
+
   const { goals, isLoading, addGoal, toggleGoal, deleteGoal } = useGoals();
+  const { tasks } = useTasks();
 
   const completedCount = goals.filter((goal) => goal.completed).length;
 
@@ -74,46 +83,96 @@ export default function TwelveWeekGoalsScreen() {
             </Text>
           </View>
         ) : (
-          goals.map((goal) => (
-            <View key={goal.id} style={styles.goalCard}>
-              <Pressable
-                style={styles.goalMain}
-                onPress={() => toggleGoal(goal.id)}
-              >
-                <Text style={styles.checkbox}>
-                  {goal.completed ? '✅' : '⬜'}
-                </Text>
+          goals.map((goal) => {
+            const linkedTasks = tasks.filter((task) => task.goalId === goal.id);
+            const completedLinkedTasks = linkedTasks.filter(
+              (task) => task.completed
+            ).length;
 
-                <View style={styles.goalTextWrap}>
-                  <Text
-                    style={[
-                      styles.goalTitle,
-                      goal.completed && styles.goalCompleted,
-                    ]}
+            return (
+              <View key={goal.id} style={styles.goalCard}>
+                <View style={styles.goalHeaderRow}>
+                  <Pressable
+                    style={styles.goalMain}
+                    onPress={() => toggleGoal(goal.id)}
                   >
-                    {goal.title}
-                  </Text>
+                    <Text style={styles.checkbox}>
+                      {goal.completed ? '✅' : '⬜'}
+                    </Text>
 
-                  <Text style={styles.goalMeta}>
-                    {formatGoalDate(goal.startDate)} → {formatGoalDate(goal.endDate)}
-                  </Text>
+                    <View style={styles.goalTextWrap}>
+                      <Text
+                        style={[
+                          styles.goalTitle,
+                          goal.completed && styles.goalCompleted,
+                        ]}
+                      >
+                        {goal.title}
+                      </Text>
 
-                  <Text style={styles.goalMeta}>
-                    Tap to {goal.completed ? 'mark active' : 'mark complete'}
-                  </Text>
+                      <Text style={styles.goalMeta}>
+                        {formatGoalDate(goal.startDate)} → {formatGoalDate(goal.endDate)}
+                      </Text>
+
+                      <Text style={styles.goalMeta}>
+                        Tap to {goal.completed ? 'mark active' : 'mark complete'}
+                      </Text>
+                    </View>
+                  </Pressable>
+
+                  <View style={styles.goalActions}>
+                    <Pressable
+                      style={styles.deleteButton}
+                      onPress={() => deleteGoal(goal.id)}
+                    >
+                      <Text style={styles.deleteButtonText}>Delete</Text>
+                    </Pressable>
+                  </View>
                 </View>
-              </Pressable>
 
-              <View style={styles.goalActions}>
-                <Pressable
-                  style={styles.deleteButton}
-                  onPress={() => deleteGoal(goal.id)}
-                >
-                  <Text style={styles.deleteButtonText}>Delete</Text>
-                </Pressable>
+                <View style={styles.linkedTasksSection}>
+                  <Text style={styles.linkedTasksTitle}>
+                    Linked Tasks ({completedLinkedTasks} of {linkedTasks.length} done)
+                  </Text>
+
+                  {linkedTasks.length === 0 ? (
+                    <View style={styles.noLinkedTasksCard}>
+                      <Text style={styles.noLinkedTasksText}>
+                        No tasks linked to this goal yet.
+                      </Text>
+                    </View>
+                  ) : (
+                    linkedTasks.map((task) => (
+                      <View key={task.id} style={styles.linkedTaskCard}>
+                        <View style={styles.linkedTaskTopRow}>
+                          <Text
+                            style={[
+                              styles.linkedTaskTitle,
+                              task.completed && styles.linkedTaskCompleted,
+                            ]}
+                          >
+                            {task.completed ? '✅' : '⬜'} {task.title}
+                          </Text>
+
+                          <Text style={styles.linkedTaskBadge}>
+                            {task.completed ? 'Done' : task.day}
+                          </Text>
+                        </View>
+
+                        <Text style={styles.linkedTaskMeta}>
+                          Priority: {getPriorityLabel(task.priority)}
+                        </Text>
+
+                        {task.notes ? (
+                          <Text style={styles.linkedTaskNotes}>{task.notes}</Text>
+                        ) : null}
+                      </View>
+                    ))
+                  )}
+                </View>
               </View>
-            </View>
-          ))
+            );
+          })
         )}
       </View>
     </ScrollView>
@@ -184,20 +243,25 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   goalCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
     padding: 16,
     borderRadius: 14,
     borderWidth: 1,
     borderColor: '#e5e7eb',
     backgroundColor: 'white',
+    gap: 14,
+  },
+  goalHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'transparent',
     gap: 12,
   },
   goalMain: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
+    backgroundColor: 'transparent',
   },
   checkbox: {
     fontSize: 24,
@@ -205,6 +269,7 @@ const styles = StyleSheet.create({
   },
   goalTextWrap: {
     flex: 1,
+    backgroundColor: 'transparent',
   },
   goalActions: {
     alignItems: 'flex-end',
@@ -221,6 +286,74 @@ const styles = StyleSheet.create({
   },
   goalMeta: {
     marginTop: 4,
+    fontSize: 13,
+    color: '#6b7280',
+  },
+  linkedTasksSection: {
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#e5e7eb',
+    gap: 8,
+    backgroundColor: 'transparent',
+  },
+  linkedTasksTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#111827',
+  },
+  linkedTaskCard: {
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: '#f9fafb',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+  },
+  linkedTaskTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    backgroundColor: 'transparent',
+  },
+  linkedTaskTitle: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  linkedTaskCompleted: {
+    textDecorationLine: 'line-through',
+    opacity: 0.5,
+  },
+  linkedTaskBadge: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#2563eb',
+    backgroundColor: '#dbeafe',
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 999,
+    overflow: 'hidden',
+  },
+  linkedTaskMeta: {
+    marginTop: 6,
+    fontSize: 13,
+    color: '#6b7280',
+  },
+  linkedTaskNotes: {
+    marginTop: 6,
+    fontSize: 13,
+    color: '#374151',
+    lineHeight: 18,
+  },
+  noLinkedTasksCard: {
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: '#f9fafb',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+  },
+  noLinkedTasksText: {
     fontSize: 13,
     color: '#6b7280',
   },

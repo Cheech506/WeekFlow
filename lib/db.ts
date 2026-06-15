@@ -41,6 +41,7 @@ export async function migrateDb() {
       day TEXT NOT NULL,
       notes TEXT,
       priority INTEGER NOT NULL DEFAULT 0,
+      goal_id INTEGER,
       completed INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       completed_at TEXT
@@ -59,4 +60,5 @@ export async function migrateDb() {
 
   await ensureColumn(db, 'tasks', 'notes', 'TEXT');
   await ensureColumn(db, 'tasks', 'priority', 'INTEGER NOT NULL DEFAULT 0');
+  await ensureColumn(db, 'tasks', 'goal_id', 'INTEGER');
 }

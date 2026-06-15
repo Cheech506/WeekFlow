@@ -1,7 +1,13 @@
 import { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, TextInput } from 'react-native';
+import {
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  TextInput,
+} from 'react-native';
 
 import { Text, View } from '@/components/Themed';
+import { useGoals } from '@/context/GoalContext';
 import { useTasks } from '@/context/TaskContext';
 
 const days = [
@@ -24,17 +30,28 @@ export default function WeeklyScreen() {
   const [taskText, setTaskText] = useState('');
   const [selectedDay, setSelectedDay] = useState('Monday');
 
-  const { addTask, completeTask, deleteTask, getActiveTasksByDay } = useTasks();
+  const {
+    addTask,
+    completeTask,
+    deleteTask,
+    getActiveTasksByDay,
+  } = useTasks();
 
-  function handleAddTask() {
-    addTask(taskText, selectedDay);
+  const { goals } = useGoals();
+
+  async function handleAddTask() {
+    await addTask(taskText, selectedDay);
     setTaskText('');
   }
 
   return (
     <ScrollView style={styles.page} contentContainerStyle={styles.content}>
-      <Text style={styles.title}>Weekly Tasks</Text>
-      <Text style={styles.subtitle}>Plan the week. Clear the list. Relax after.</Text>
+      <View style={styles.header}>
+        <Text style={styles.title}>Weekly Tasks</Text>
+        <Text style={styles.subtitle}>
+          Plan the week. Clear the list. Relax after.
+        </Text>
+      </View>
 
       <View style={styles.addCard}>
         <TextInput
@@ -77,51 +94,67 @@ export default function WeeklyScreen() {
         </Pressable>
       </View>
 
-      {days.map((day) => {
-        const dayTasks = getActiveTasksByDay(day);
+      <View style={styles.weekList}>
+        {days.map((day) => {
+          const dayTasks = getActiveTasksByDay(day);
 
-        return (
-          <View key={day} style={styles.daySection}>
-            <Text style={styles.dayTitle}>{day}</Text>
+          return (
+            <View key={day} style={styles.daySection}>
+              <Text style={styles.dayTitle}>{day}</Text>
 
-            {dayTasks.length === 0 ? (
-              <Text style={styles.empty}>Nothing scheduled.</Text>
-            ) : (
-              dayTasks.map((task) => (
-                <View key={task.id} style={styles.taskCard}>
-                  <View style={styles.taskTextWrap}>
-                    <Text style={styles.taskTitle}>{task.title}</Text>
+              {dayTasks.length === 0 ? (
+                <Text style={styles.emptyDayText}>Nothing scheduled.</Text>
+              ) : (
+                <View style={styles.taskList}>
+                  {dayTasks.map((task) => {
+                    const linkedGoal = goals.find(
+                      (goal) => goal.id === task.goalId
+                    );
 
-                    <Text style={styles.taskMeta}>
-                      Priority: {getPriorityLabel(task.priority)}
-                    </Text>
+                    return (
+                      <View key={task.id} style={styles.taskCard}>
+                        <View style={styles.taskTextWrap}>
+                          <Text style={styles.taskTitle}>{task.title}</Text>
 
-                    {task.notes ? (
-                      <Text style={styles.taskNotes}>{task.notes}</Text>
-                    ) : null}
-                  </View>
+                          <Text style={styles.taskMeta}>
+                            Priority: {getPriorityLabel(task.priority)}
+                          </Text>
 
-                  <View style={styles.taskActions}>
-                    <Pressable
-                      style={styles.doneButton}
-                      onPress={() => completeTask(task.id)}
-                    >
-                      <Text style={styles.doneButtonText}>Done</Text>
-                    </Pressable>
+                          {linkedGoal ? (
+                            <Text style={styles.taskMeta}>
+                              Goal: {linkedGoal.title}
+                            </Text>
+                          ) : null}
 
-                    <Pressable
-                      style={styles.deleteButton}
-                      onPress={() => deleteTask(task.id)}
-                    >
-                      <Text style={styles.deleteButtonText}>Delete</Text>
-                    </Pressable>
-                  </View>
+                          {task.notes ? (
+                            <Text style={styles.taskNotes}>{task.notes}</Text>
+                          ) : null}
+                        </View>
+
+                        <View style={styles.taskActions}>
+                          <Pressable
+                            style={styles.doneButton}
+                            onPress={() => completeTask(task.id)}
+                          >
+                            <Text style={styles.doneButtonText}>Done</Text>
+                          </Pressable>
+
+                          <Pressable
+                            style={styles.deleteButton}
+                            onPress={() => deleteTask(task.id)}
+                          >
+                            <Text style={styles.deleteButtonText}>Delete</Text>
+                          </Pressable>
+                        </View>
+                      </View>
+                    );
+                  })}
                 </View>
-              ))
-            )}
-          </View>
-        );
-      })}
+              )}
+            </View>
+          );
+        })}
+      </View>
     </ScrollView>
   );
 }
@@ -134,6 +167,9 @@ const styles = StyleSheet.create({
     padding: 20,
     paddingBottom: 40,
   },
+  header: {
+    marginBottom: 20,
+  },
   title: {
     fontSize: 34,
     fontWeight: '800',
@@ -142,7 +178,7 @@ const styles = StyleSheet.create({
   subtitle: {
     fontSize: 16,
     opacity: 0.7,
-    marginBottom: 20,
+    lineHeight: 22,
   },
   addCard: {
     gap: 12,
@@ -161,7 +197,7 @@ const styles = StyleSheet.create({
   },
   dayButton: {
     paddingVertical: 10,
-    paddingHorizontal: 14,
+    paddingHorizontal: 16,
     borderRadius: 999,
     borderWidth: 1,
     borderColor: '#d1d5db',
@@ -189,13 +225,24 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     fontSize: 16,
   },
+  weekList: {
+    gap: 18,
+  },
   daySection: {
-    marginBottom: 24,
+    backgroundColor: 'white',
   },
   dayTitle: {
-    fontSize: 22,
+    fontSize: 26,
     fontWeight: '800',
-    marginBottom: 10,
+    color: '#111827',
+    marginBottom: 8,
+  },
+  emptyDayText: {
+    fontSize: 16,
+    color: '#6b7280',
+  },
+  taskList: {
+    gap: 10,
   },
   taskCard: {
     flexDirection: 'row',
@@ -207,23 +254,33 @@ const styles = StyleSheet.create({
     borderColor: '#e5e7eb',
     backgroundColor: 'white',
     gap: 12,
-    marginBottom: 10,
   },
   taskTextWrap: {
-  flex: 1,
+    flex: 1,
+    backgroundColor: 'transparent',
+  },
+  taskTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  taskMeta: {
+    marginTop: 4,
+    fontSize: 13,
+    color: '#6b7280',
+  },
+  taskNotes: {
+    marginTop: 6,
+    fontSize: 14,
+    color: '#374151',
+    lineHeight: 20,
   },
   taskActions: {
     gap: 8,
     alignItems: 'flex-end',
     backgroundColor: 'transparent',
   },
-  taskTitle: {
-    fontSize: 17,
-    fontWeight: '600',
-    color: '#111827',
-  },
   doneButton: {
-    alignSelf: 'flex-start',
     backgroundColor: '#16a34a',
     paddingVertical: 8,
     paddingHorizontal: 14,
@@ -233,32 +290,14 @@ const styles = StyleSheet.create({
     color: 'white',
     fontWeight: '700',
   },
-  empty: {
-    opacity: 0.55,
-    fontSize: 14,
-  },
   deleteButton: {
-  alignSelf: 'flex-start',
-  backgroundColor: '#dc2626',
-  paddingVertical: 8,
-  paddingHorizontal: 14,
-  borderRadius: 10,
-},
-deleteButtonText: {
-  color: 'white',
-  fontWeight: '700',
-},
-
-  taskNotes: {
-    marginTop: 6,
-    fontSize: 14,
-    color: '#374151',
-    lineHeight: 20,
+    backgroundColor: '#dc2626',
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 10,
   },
-
-  taskMeta: {
-    marginTop: 4,
-    fontSize: 13,
-    color: '#6b7280',
+  deleteButtonText: {
+    color: 'white',
+    fontWeight: '700',
   },
 });

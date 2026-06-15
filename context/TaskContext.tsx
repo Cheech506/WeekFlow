@@ -22,11 +22,12 @@ type TaskContextValue = {
   tasks: Task[];
   isLoading: boolean;
   addTask: (
-  title: string,
-  day: string,
-  notes?: string | null,
-  priority?: number
-) => Promise<void>;
+    title: string,
+    day: string,
+    notes?: string | null,
+    priority?: number,
+    goalId?: number | null
+  ) => Promise<void>;
   completeTask: (id: number) => Promise<void>;
   deleteTask: (id: number) => Promise<void>;
   moveTaskToDay: (id: number, day: string) => Promise<void>;
@@ -71,12 +72,20 @@ export function TaskProvider({ children }: { children: React.ReactNode }) {
       title: string,
       day: string,
       notes: string | null = null,
-      priority: number = 0
+      priority: number = 0,
+      goalId: number | null = null
     ) => {
       if (!title.trim()) return;
 
       try {
-        const newTask = await insertTask(title, day, notes, priority);
+        const newTask = await insertTask(
+          title,
+          day,
+          notes,
+          priority,
+          goalId
+        );
+
         setTasks((currentTasks) => [newTask, ...currentTasks]);
       } catch (error) {
         console.error('Failed to add task:', error);

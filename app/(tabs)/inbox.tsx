@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, TextInput } from 'react-native';
 
 import { Text, View } from '@/components/Themed';
+import { useGoals } from '@/context/GoalContext';
 import { useTasks } from '@/context/TaskContext';
 
 const days = [
@@ -14,10 +15,18 @@ const days = [
   'Sunday',
 ];
 
+function getPriorityLabel(priority: number) {
+  if (priority === 2) return 'High';
+  if (priority === 1) return 'Medium';
+  return 'Low';
+}
+
 export default function InboxScreen() {
   const [taskText, setTaskText] = useState('');
   const [notesText, setNotesText] = useState('');
   const [priority, setPriority] = useState(0);
+  const [selectedGoalId, setSelectedGoalId] = useState<number | null>(null);
+
   const {
     addTask,
     completeTask,
@@ -26,15 +35,18 @@ export default function InboxScreen() {
     getInboxTasks,
   } = useTasks();
 
+  const { goals } = useGoals();
+
   const inboxTasks = getInboxTasks();
 
   async function handleAddTask() {
-  await addTask(taskText, 'Inbox', notesText, priority);
+    await addTask(taskText, 'Inbox', notesText, priority, selectedGoalId);
 
-  setTaskText('');
-  setNotesText('');
-  setPriority(0);
-}
+    setTaskText('');
+    setNotesText('');
+    setPriority(0);
+    setSelectedGoalId(null);
+  }
 
   return (
     <ScrollView style={styles.page} contentContainerStyle={styles.content}>
@@ -54,48 +66,96 @@ export default function InboxScreen() {
 
       <View style={styles.addCard}>
         <TextInput
-            style={styles.input}
-            placeholder="Quick add something..."
-            value={taskText}
-            onChangeText={setTaskText}
-            onSubmitEditing={handleAddTask}
-            returnKeyType="done"
+          style={styles.input}
+          placeholder="Quick add something..."
+          value={taskText}
+          onChangeText={setTaskText}
+          onSubmitEditing={handleAddTask}
+          returnKeyType="done"
         />
 
         <TextInput
-            style={[styles.input, styles.notesInput]}
-            placeholder="Add notes... optional"
-            value={notesText}
-            onChangeText={setNotesText}
-            multiline
+          style={[styles.input, styles.notesInput]}
+          placeholder="Add notes... optional"
+          value={notesText}
+          onChangeText={setNotesText}
+          multiline
         />
 
         <View style={styles.priorityPicker}>
-            {[0, 1, 2].map((level) => (
-                <Pressable
-                    key={level}
-                    style={[
-                    styles.priorityButton,
-                    priority === level && styles.priorityButtonSelected,
-                ]}
-                onPress={() => setPriority(level)}
+          {[0, 1, 2].map((level) => (
+            <Pressable
+              key={level}
+              style={[
+                styles.priorityButton,
+                priority === level && styles.priorityButtonSelected,
+              ]}
+              onPress={() => setPriority(level)}
             >
+              <Text
+                style={[
+                  styles.priorityButtonText,
+                  priority === level && styles.priorityButtonTextSelected,
+                ]}
+              >
+                {level === 0 ? 'Low' : level === 1 ? 'Medium' : 'High'}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+
+        <View style={styles.goalPickerSection}>
+          <Text style={styles.goalPickerLabel}>Link to goal:</Text>
+
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.goalPicker}
+          >
+            <Pressable
+              style={[
+                styles.goalButton,
+                selectedGoalId === null && styles.goalButtonSelected,
+              ]}
+              onPress={() => setSelectedGoalId(null)}
+            >
+              <Text
+                style={[
+                  styles.goalButtonText,
+                  selectedGoalId === null && styles.goalButtonTextSelected,
+                ]}
+              >
+                None
+              </Text>
+            </Pressable>
+
+            {goals.map((goal) => (
+              <Pressable
+                key={goal.id}
+                style={[
+                  styles.goalButton,
+                  selectedGoalId === goal.id && styles.goalButtonSelected,
+                ]}
+                onPress={() => setSelectedGoalId(goal.id)}
+              >
                 <Text
-                    style={[
-                        styles.priorityButtonText,
-                        priority === level && styles.priorityButtonTextSelected,
-                    ]}
+                  style={[
+                    styles.goalButtonText,
+                    selectedGoalId === goal.id && styles.goalButtonTextSelected,
+                  ]}
+                  numberOfLines={1}
                 >
-                    {level === 0 ? 'Low' : level === 1 ? 'Medium' : 'High'}
+                  {goal.title}
                 </Text>
-                </Pressable>
+              </Pressable>
             ))}
+          </ScrollView>
         </View>
 
         <Pressable style={styles.addButton} onPress={handleAddTask}>
-            <Text style={styles.addButtonText}>Add to Inbox</Text>
+          <Text style={styles.addButtonText}>Add to Inbox</Text>
         </Pressable>
-        </View>
+      </View>
 
       <View style={styles.taskList}>
         {inboxTasks.length === 0 ? (
@@ -106,61 +166,69 @@ export default function InboxScreen() {
             </Text>
           </View>
         ) : (
-          inboxTasks.map((task) => (
-            <View key={task.id} style={styles.taskCard}>
-              <View style={styles.taskTopRow}>
-                <View style={styles.taskTextWrap}>
+          inboxTasks.map((task) => {
+            const linkedGoal = goals.find((goal) => goal.id === task.goalId);
+
+            return (
+              <View key={task.id} style={styles.taskCard}>
+                <View style={styles.taskTopRow}>
+                  <View style={styles.taskTextWrap}>
                     <Text style={styles.taskTitle}>{task.title}</Text>
 
                     <Text style={styles.taskMeta}>Unscheduled</Text>
 
                     <Text style={styles.taskMeta}>
-                        Priority: {task.priority === 0 ? 'Low' : task.priority === 1 ? 'Medium' : 'High'}
+                      Priority: {getPriorityLabel(task.priority)}
                     </Text>
 
-                    {task.notes ? (
-                        <Text style={styles.taskNotes}>{task.notes}</Text>
+                    {linkedGoal ? (
+                      <Text style={styles.taskMeta}>Goal: {linkedGoal.title}</Text>
                     ) : null}
-                </View>
 
-                <View style={styles.taskActions}>
-                  <Pressable
-                    style={styles.doneButton}
-                    onPress={() => completeTask(task.id)}
-                  >
-                    <Text style={styles.doneButtonText}>Done</Text>
-                  </Pressable>
+                    {task.notes ? (
+                      <Text style={styles.taskNotes}>{task.notes}</Text>
+                    ) : null}
+                  </View>
 
-                  <Pressable
-                    style={styles.deleteButton}
-                    onPress={() => deleteTask(task.id)}
-                  >
-                    <Text style={styles.deleteButtonText}>Delete</Text>
-                  </Pressable>
-                </View>
-              </View>
-
-              <View style={styles.scheduleSection}>
-                <Text style={styles.scheduleLabel}>Move to:</Text>
-
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={styles.dayPicker}
-                >
-                  {days.map((day) => (
+                  <View style={styles.taskActions}>
                     <Pressable
-                      key={day}
-                      style={styles.dayButton}
-                      onPress={() => moveTaskToDay(task.id, day)}
+                      style={styles.doneButton}
+                      onPress={() => completeTask(task.id)}
                     >
-                      <Text style={styles.dayButtonText}>{day.slice(0, 3)}</Text>
+                      <Text style={styles.doneButtonText}>Done</Text>
                     </Pressable>
-                  ))}
-                </ScrollView>
+
+                    <Pressable
+                      style={styles.deleteButton}
+                      onPress={() => deleteTask(task.id)}
+                    >
+                      <Text style={styles.deleteButtonText}>Delete</Text>
+                    </Pressable>
+                  </View>
+                </View>
+
+                <View style={styles.scheduleSection}>
+                  <Text style={styles.scheduleLabel}>Move to:</Text>
+
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.dayPicker}
+                  >
+                    {days.map((day) => (
+                      <Pressable
+                        key={day}
+                        style={styles.dayButton}
+                        onPress={() => moveTaskToDay(task.id, day)}
+                      >
+                        <Text style={styles.dayButtonText}>{day.slice(0, 3)}</Text>
+                      </Pressable>
+                    ))}
+                  </ScrollView>
+                </View>
               </View>
-            </View>
-          ))
+            );
+          })
         )}
       </View>
     </ScrollView>
@@ -216,6 +284,66 @@ const styles = StyleSheet.create({
     fontSize: 16,
     backgroundColor: 'white',
   },
+  notesInput: {
+    minHeight: 80,
+    textAlignVertical: 'top',
+  },
+  priorityPicker: {
+    flexDirection: 'row',
+    gap: 8,
+    backgroundColor: 'transparent',
+  },
+  priorityButton: {
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    backgroundColor: 'white',
+  },
+  priorityButtonSelected: {
+    backgroundColor: '#7c3aed',
+    borderColor: '#7c3aed',
+  },
+  priorityButtonText: {
+    fontWeight: '700',
+    color: '#374151',
+  },
+  priorityButtonTextSelected: {
+    color: 'white',
+  },
+  goalPickerSection: {
+    gap: 8,
+    backgroundColor: 'transparent',
+  },
+  goalPickerLabel: {
+    fontSize: 13,
+    color: '#6b7280',
+    fontWeight: '700',
+  },
+  goalPicker: {
+    gap: 8,
+  },
+  goalButton: {
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    backgroundColor: 'white',
+    maxWidth: 220,
+  },
+  goalButtonSelected: {
+    backgroundColor: '#2563eb',
+    borderColor: '#2563eb',
+  },
+  goalButtonText: {
+    fontWeight: '700',
+    color: '#374151',
+  },
+  goalButtonTextSelected: {
+    color: 'white',
+  },
   addButton: {
     backgroundColor: '#7c3aed',
     padding: 14,
@@ -257,6 +385,12 @@ const styles = StyleSheet.create({
     marginTop: 4,
     fontSize: 13,
     color: '#6b7280',
+  },
+  taskNotes: {
+    marginTop: 6,
+    fontSize: 14,
+    color: '#374151',
+    lineHeight: 20,
   },
   taskActions: {
     gap: 8,
@@ -323,46 +457,5 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: 14,
     color: '#6b7280',
-  },
-
-  notesInput: {
-    minHeight: 80,
-    textAlignVertical: 'top',
-  },
-
-  priorityPicker: {
-    flexDirection: 'row',
-    gap: 8,
-    backgroundColor: 'transparent',
-  },
-
-  priorityButton: {
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    backgroundColor: 'white',
-  },
-
-  priorityButtonSelected: {
-    backgroundColor: '#7c3aed',
-    borderColor: '#7c3aed',
-  },
-
-  priorityButtonText: {
-    fontWeight: '700',
-    color: '#374151',
-  },
-
-  priorityButtonTextSelected: {
-    color: 'white',
-  },
-
-  taskNotes: {
-    marginTop: 6,
-    fontSize: 14,
-    color: '#374151',
-    lineHeight: 20,
   },
 });

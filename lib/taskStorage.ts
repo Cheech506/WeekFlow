@@ -6,6 +6,7 @@ export type StoredTask = {
   day: string;
   notes: string | null;
   priority: number;
+  goalId: number | null;
   completed: boolean;
   completedAt: string | null;
 };
@@ -16,6 +17,7 @@ type TaskRow = {
   day: string;
   notes: string | null;
   priority: number;
+  goal_id: number | null;
   completed: number;
   completed_at: string | null;
 };
@@ -26,9 +28,9 @@ export async function getTasks(): Promise<StoredTask[]> {
   const db = await getDb();
 
   const rows = await db.getAllAsync<TaskRow>(`
-    SELECT id, title, day, notes, priority, completed, completed_at
+    SELECT id, title, day, notes, priority, goal_id, completed, completed_at
     FROM tasks
-    ORDER BY created_at DESC;
+    ORDER BY id DESC;
   `);
 
   return rows.map((row) => ({
@@ -37,6 +39,7 @@ export async function getTasks(): Promise<StoredTask[]> {
     day: row.day,
     notes: row.notes,
     priority: row.priority ?? 0,
+    goalId: row.goal_id ?? null,
     completed: row.completed === 1,
     completedAt: row.completed_at,
   }));
@@ -46,7 +49,8 @@ export async function insertTask(
   title: string,
   day: string,
   notes: string | null = null,
-  priority: number = 0
+  priority: number = 0,
+  goalId: number | null = null
 ): Promise<StoredTask> {
   await migrateDb();
 
@@ -65,13 +69,14 @@ export async function insertTask(
       day,
       notes,
       priority,
+      goal_id,
       completed,
       created_at,
       completed_at
     )
-    VALUES (?, ?, ?, ?, ?, 0, ?, NULL);
+    VALUES (?, ?, ?, ?, ?, ?, 0, ?, NULL);
     `,
-    [id, cleanTitle, day, cleanNotes, priority, now]
+    [id, cleanTitle, day, cleanNotes, priority, goalId, now]
   );
 
   return {
@@ -80,6 +85,7 @@ export async function insertTask(
     day,
     notes: cleanNotes,
     priority,
+    goalId,
     completed: false,
     completedAt: null,
   };
