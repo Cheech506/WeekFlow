@@ -1,6 +1,7 @@
 import { ScrollView, StyleSheet } from 'react-native';
 
 import { Text, View } from '@/components/Themed';
+import { useGoals } from '@/context/GoalContext';
 import { useTasks } from '@/context/TaskContext';
 
 function formatCompletedDate(value: string | null) {
@@ -25,6 +26,7 @@ function getPriorityLabel(priority: number) {
 
 export default function HistoryScreen() {
   const { tasks } = useTasks();
+  const { goals } = useGoals();
 
   const completedTasks = tasks
     .filter((task) => task.completed)
@@ -61,25 +63,33 @@ export default function HistoryScreen() {
             </Text>
           </View>
         ) : (
-          completedTasks.map((task) => (
-            <View key={task.id} style={styles.taskCard}>
+          completedTasks.map((task) => {
+            const linkedGoal = goals.find((goal) => goal.id === task.goalId);
+
+            return (
+              <View key={task.id} style={styles.taskCard}>
                 <Text style={styles.taskTitle}>{task.title}</Text>
 
                 <Text style={styles.taskMeta}>Assigned day: {task.day}</Text>
 
                 <Text style={styles.taskMeta}>
-                    Priority: {getPriorityLabel(task.priority)}
+                  Priority: {getPriorityLabel(task.priority)}
                 </Text>
-    
+
+                {linkedGoal ? (
+                  <Text style={styles.taskMeta}>Goal: {linkedGoal.title}</Text>
+                ) : null}
+
                 {task.notes ? (
-                    <Text style={styles.taskNotes}>{task.notes}</Text>
+                  <Text style={styles.taskNotes}>{task.notes}</Text>
                 ) : null}
 
                 <Text style={styles.taskMeta}>
-                    Completed: {task.completedAt ? new Date(task.completedAt).toLocaleString() : 'Unknown'}
+                  Completed: {formatCompletedDate(task.completedAt)}
                 </Text>
-            </View>
-          ))
+              </View>
+            );
+          })
         )}
       </View>
     </ScrollView>
@@ -143,6 +153,13 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#6b7280',
   },
+  taskNotes: {
+    marginTop: 6,
+    marginBottom: 4,
+    fontSize: 14,
+    color: '#374151',
+    lineHeight: 20,
+  },
   emptyCard: {
     padding: 18,
     borderRadius: 14,
@@ -159,13 +176,5 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: 14,
     color: '#6b7280',
-  },
-
-  taskNotes: {
-    marginTop: 6,
-    marginBottom: 4,
-    fontSize: 14,
-    color: '#374151',
-    lineHeight: 20,
   },
 });
