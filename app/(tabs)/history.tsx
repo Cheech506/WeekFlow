@@ -42,7 +42,12 @@ function getPriorityLabel(priority: number) {
 export default function HistoryScreen() {
   const { tasks } = useTasks();
   const { goals } = useGoals();
-  const { getArchivedBrainDumps, deleteBrainDump } = useBrainDumps();
+
+  const {
+    getArchivedBrainDumps,
+    restoreBrainDump,
+    deleteBrainDump,
+  } = useBrainDumps();
 
   const archivedBrainDumps = getArchivedBrainDumps();
 
@@ -68,7 +73,8 @@ export default function HistoryScreen() {
         <Text style={styles.progressTitle}>Accomplishments</Text>
         <Text style={styles.progressText}>
           {completedTasks.length} completed task
-          {completedTasks.length === 1 ? '' : 's'} • {archivedBrainDumps.length} archived brain dump
+          {completedTasks.length === 1 ? '' : 's'} •{' '}
+          {archivedBrainDumps.length} archived brain dump
           {archivedBrainDumps.length === 1 ? '' : 's'}
         </Text>
       </View>
@@ -99,7 +105,9 @@ export default function HistoryScreen() {
                   </Text>
 
                   {linkedGoal ? (
-                    <Text style={styles.taskMeta}>Goal: {linkedGoal.title}</Text>
+                    <Text style={styles.taskMeta}>
+                      Goal: {linkedGoal.title}
+                    </Text>
                   ) : null}
 
                   {task.notes ? (
@@ -141,12 +149,21 @@ export default function HistoryScreen() {
                   </Text>
                 </View>
 
-                <Pressable
-                  style={styles.deleteButton}
-                  onPress={() => deleteBrainDump(brainDump.id)}
-                >
-                  <Text style={styles.deleteButtonText}>Delete</Text>
-                </Pressable>
+                <View style={styles.brainDumpActions}>
+                  <Pressable
+                    style={styles.restoreButton}
+                    onPress={() => restoreBrainDump(brainDump.id)}
+                  >
+                    <Text style={styles.restoreButtonText}>Restore</Text>
+                  </Pressable>
+
+                  <Pressable
+                    style={styles.deleteButton}
+                    onPress={() => deleteBrainDump(brainDump.id)}
+                  >
+                    <Text style={styles.deleteButtonText}>Delete</Text>
+                  </Pressable>
+                </View>
               </View>
             ))
           )}
@@ -256,6 +273,21 @@ const styles = StyleSheet.create({
     color: '#111827',
     lineHeight: 21,
     marginBottom: 6,
+  },
+  brainDumpActions: {
+    gap: 8,
+    alignItems: 'flex-end',
+    backgroundColor: 'transparent',
+  },
+  restoreButton: {
+    backgroundColor: '#2563eb',
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+  },
+  restoreButtonText: {
+    color: 'white',
+    fontWeight: '700',
   },
   deleteButton: {
     backgroundColor: '#dc2626',

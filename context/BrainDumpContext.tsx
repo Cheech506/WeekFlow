@@ -12,6 +12,7 @@ import {
     deleteBrainDumpById,
     getBrainDumps,
     insertBrainDump,
+    restoreBrainDumpById,
     type StoredBrainDump,
 } from '@/lib/brainDumpStorage';
 
@@ -22,6 +23,7 @@ type BrainDumpContextValue = {
   isLoading: boolean;
   addBrainDump: (body: string) => Promise<void>;
   archiveBrainDump: (id: number) => Promise<void>;
+  restoreBrainDump: (id: number) => Promise<void>;
   deleteBrainDump: (id: number) => Promise<void>;
   getActiveBrainDumps: () => BrainDump[];
   getArchivedBrainDumps: () => BrainDump[];
@@ -68,6 +70,7 @@ export function BrainDumpProvider({
 
     try {
       const newBrainDump = await insertBrainDump(body);
+
       setBrainDumps((currentBrainDumps) => [
         newBrainDump,
         ...currentBrainDumps,
@@ -90,6 +93,22 @@ export function BrainDumpProvider({
       );
     } catch (error) {
       console.error('Failed to archive brain dump:', error);
+    }
+  }, []);
+
+  const restoreBrainDump = useCallback(async (id: number) => {
+    try {
+      await restoreBrainDumpById(id);
+
+      setBrainDumps((currentBrainDumps) =>
+        currentBrainDumps.map((brainDump) =>
+          brainDump.id === id
+            ? { ...brainDump, archived: false, archivedAt: null }
+            : brainDump
+        )
+      );
+    } catch (error) {
+      console.error('Failed to restore brain dump:', error);
     }
   }, []);
 
@@ -119,6 +138,7 @@ export function BrainDumpProvider({
       isLoading,
       addBrainDump,
       archiveBrainDump,
+      restoreBrainDump,
       deleteBrainDump,
       getActiveBrainDumps,
       getArchivedBrainDumps,
@@ -128,6 +148,7 @@ export function BrainDumpProvider({
       isLoading,
       addBrainDump,
       archiveBrainDump,
+      restoreBrainDump,
       deleteBrainDump,
       getActiveBrainDumps,
       getArchivedBrainDumps,

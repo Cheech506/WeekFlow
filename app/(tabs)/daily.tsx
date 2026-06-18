@@ -50,7 +50,11 @@ export default function DailyScreen() {
   } = useTasks();
 
   const { goals } = useGoals();
-  const { getActiveBrainDumps } = useBrainDumps();
+
+  const {
+    getActiveBrainDumps,
+    archiveBrainDump,
+  } = useBrainDumps();
 
   const today = dayNames[new Date().getDay()];
   const activeTasks = getActiveTasksByDay(today);
@@ -172,11 +176,20 @@ export default function DailyScreen() {
           ) : (
             activeBrainDumps.map((brainDump) => (
               <View key={brainDump.id} style={styles.brainDumpCard}>
-                <Text style={styles.brainDumpBody}>{brainDump.body}</Text>
+                <View style={styles.brainDumpTextWrap}>
+                  <Text style={styles.brainDumpBody}>{brainDump.body}</Text>
 
-                <Text style={styles.taskMeta}>
-                  Saved: {formatCreatedDate(brainDump.createdAt)}
-                </Text>
+                  <Text style={styles.taskMeta}>
+                    Saved: {formatCreatedDate(brainDump.createdAt)}
+                  </Text>
+                </View>
+
+                <Pressable
+                  style={styles.archiveButton}
+                  onPress={() => archiveBrainDump(brainDump.id)}
+                >
+                  <Text style={styles.archiveButtonText}>Archive</Text>
+                </Pressable>
               </View>
             ))
           )}
@@ -325,18 +338,35 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   brainDumpCard: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 12,
     padding: 16,
     borderRadius: 14,
     borderWidth: 1,
     borderColor: '#e5e7eb',
     backgroundColor: 'white',
-    gap: 4,
+  },
+  brainDumpTextWrap: {
+    flex: 1,
+    backgroundColor: 'transparent',
   },
   brainDumpBody: {
     fontSize: 15,
     fontWeight: '600',
     color: '#111827',
     lineHeight: 21,
+  },
+  archiveButton: {
+    backgroundColor: '#f59e0b',
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    alignSelf: 'flex-start',
+  },
+  archiveButtonText: {
+    color: 'white',
+    fontWeight: '700',
   },
   emptyCard: {
     padding: 18,

@@ -87,6 +87,21 @@ export async function archiveBrainDumpById(id: number): Promise<string> {
   return now;
 }
 
+export async function restoreBrainDumpById(id: number): Promise<void> {
+  await migrateDb();
+
+  const db = await getDb();
+
+  await db.runAsync(
+    `
+    UPDATE brain_dumps
+    SET archived = 0, archived_at = NULL
+    WHERE id = ?;
+    `,
+    [id]
+  );
+}
+
 export async function deleteBrainDumpById(id: number): Promise<void> {
   await migrateDb();
 
