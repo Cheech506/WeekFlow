@@ -7,6 +7,7 @@ import {
 } from 'react-native';
 
 import { Text, View } from '@/components/Themed';
+import { useBrainDumps } from '@/context/BrainDumpContext';
 import { useGoals } from '@/context/GoalContext';
 import { useTasks } from '@/context/TaskContext';
 
@@ -26,6 +27,17 @@ function getPriorityLabel(priority: number) {
   return 'Low';
 }
 
+function formatCreatedDate(value: string) {
+  const date = new Date(value);
+
+  return date.toLocaleString([], {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
 export default function DailyScreen() {
   const [taskText, setTaskText] = useState('');
 
@@ -38,9 +50,12 @@ export default function DailyScreen() {
   } = useTasks();
 
   const { goals } = useGoals();
+  const { getActiveBrainDumps } = useBrainDumps();
 
   const today = dayNames[new Date().getDay()];
   const activeTasks = getActiveTasksByDay(today);
+  const activeBrainDumps = getActiveBrainDumps();
+
   const completedTodayCount = tasks.filter(
     (task) => task.day === today && task.completed
   ).length;
@@ -55,83 +70,117 @@ export default function DailyScreen() {
       <View style={styles.header}>
         <Text style={styles.title}>Daily Tasks</Text>
         <Text style={styles.subtitle}>
-          Today is {today}. Write down what needs to get done.
+          Today is {today}. Check your tasks and review anything sitting in your brain dump.
         </Text>
       </View>
 
       <View style={styles.progressCard}>
         <Text style={styles.progressTitle}>Today's Progress</Text>
         <Text style={styles.progressText}>
-          {completedTodayCount} completed • {activeTasks.length} left
+          {completedTodayCount} completed • {activeTasks.length} task
+          {activeTasks.length === 1 ? '' : 's'} left • {activeBrainDumps.length} brain dump note
+          {activeBrainDumps.length === 1 ? '' : 's'}
         </Text>
       </View>
 
-      <View style={styles.addCard}>
-        <TextInput
-          style={styles.input}
-          placeholder="Add a task for today..."
-          value={taskText}
-          onChangeText={setTaskText}
-          onSubmitEditing={handleAddTask}
-          returnKeyType="done"
-        />
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Today's Tasks</Text>
 
-        <Pressable style={styles.addButton} onPress={handleAddTask}>
-          <Text style={styles.addButtonText}>Add Task</Text>
-        </Pressable>
+        <View style={styles.addCard}>
+          <TextInput
+            style={styles.input}
+            placeholder="Add a task for today..."
+            value={taskText}
+            onChangeText={setTaskText}
+            onSubmitEditing={handleAddTask}
+            returnKeyType="done"
+          />
+
+          <Pressable style={styles.addButton} onPress={handleAddTask}>
+            <Text style={styles.addButtonText}>Add Task</Text>
+          </Pressable>
+        </View>
+
+        <View style={styles.taskList}>
+          {activeTasks.length === 0 ? (
+            <View style={styles.emptyCard}>
+              <Text style={styles.emptyTitle}>Nothing for today 🎉</Text>
+              <Text style={styles.emptyText}>
+                Add a task above or move one from Inbox into today.
+              </Text>
+            </View>
+          ) : (
+            activeTasks.map((task) => {
+              const linkedGoal = goals.find((goal) => goal.id === task.goalId);
+
+              return (
+                <View key={task.id} style={styles.taskCard}>
+                  <View style={styles.taskTextWrap}>
+                    <Text style={styles.taskTitle}>{task.title}</Text>
+
+                    <Text style={styles.taskMeta}>{task.day}</Text>
+
+                    <Text style={styles.taskMeta}>
+                      Priority: {getPriorityLabel(task.priority)}
+                    </Text>
+
+                    {linkedGoal ? (
+                      <Text style={styles.taskMeta}>Goal: {linkedGoal.title}</Text>
+                    ) : null}
+
+                    {task.notes ? (
+                      <Text style={styles.taskNotes}>{task.notes}</Text>
+                    ) : null}
+                  </View>
+
+                  <View style={styles.taskActions}>
+                    <Pressable
+                      style={styles.doneButton}
+                      onPress={() => completeTask(task.id)}
+                    >
+                      <Text style={styles.doneButtonText}>Done</Text>
+                    </Pressable>
+
+                    <Pressable
+                      style={styles.deleteButton}
+                      onPress={() => deleteTask(task.id)}
+                    >
+                      <Text style={styles.deleteButtonText}>Delete</Text>
+                    </Pressable>
+                  </View>
+                </View>
+              );
+            })
+          )}
+        </View>
       </View>
 
-      <View style={styles.taskList}>
-        {activeTasks.length === 0 ? (
-          <View style={styles.emptyCard}>
-            <Text style={styles.emptyTitle}>Nothing for today 🎉</Text>
-            <Text style={styles.emptyText}>
-              Add a task above or move one from Inbox into today.
-            </Text>
-          </View>
-        ) : (
-          activeTasks.map((task) => {
-            const linkedGoal = goals.find((goal) => goal.id === task.goalId);
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Brain Dump Notes</Text>
+        <Text style={styles.sectionSubtitle}>
+          Active notes from Inbox. These are not scheduled tasks — just stuff you wanted out of your head.
+        </Text>
 
-            return (
-              <View key={task.id} style={styles.taskCard}>
-                <View style={styles.taskTextWrap}>
-                  <Text style={styles.taskTitle}>{task.title}</Text>
+        <View style={styles.brainDumpList}>
+          {activeBrainDumps.length === 0 ? (
+            <View style={styles.emptyCard}>
+              <Text style={styles.emptyTitle}>No active brain dumps</Text>
+              <Text style={styles.emptyText}>
+                Add brain dump notes from Inbox and they will show here too.
+              </Text>
+            </View>
+          ) : (
+            activeBrainDumps.map((brainDump) => (
+              <View key={brainDump.id} style={styles.brainDumpCard}>
+                <Text style={styles.brainDumpBody}>{brainDump.body}</Text>
 
-                  <Text style={styles.taskMeta}>{task.day}</Text>
-
-                  <Text style={styles.taskMeta}>
-                    Priority: {getPriorityLabel(task.priority)}
-                  </Text>
-
-                  {linkedGoal ? (
-                    <Text style={styles.taskMeta}>Goal: {linkedGoal.title}</Text>
-                  ) : null}
-
-                  {task.notes ? (
-                    <Text style={styles.taskNotes}>{task.notes}</Text>
-                  ) : null}
-                </View>
-
-                <View style={styles.taskActions}>
-                  <Pressable
-                    style={styles.doneButton}
-                    onPress={() => completeTask(task.id)}
-                  >
-                    <Text style={styles.doneButtonText}>Done</Text>
-                  </Pressable>
-
-                  <Pressable
-                    style={styles.deleteButton}
-                    onPress={() => deleteTask(task.id)}
-                  >
-                    <Text style={styles.deleteButtonText}>Delete</Text>
-                  </Pressable>
-                </View>
+                <Text style={styles.taskMeta}>
+                  Saved: {formatCreatedDate(brainDump.createdAt)}
+                </Text>
               </View>
-            );
-          })
-        )}
+            ))
+          )}
+        </View>
       </View>
     </ScrollView>
   );
@@ -174,9 +223,25 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: '#374151',
   },
+  section: {
+    marginBottom: 26,
+    backgroundColor: 'transparent',
+  },
+  sectionTitle: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#111827',
+    marginBottom: 8,
+  },
+  sectionSubtitle: {
+    fontSize: 14,
+    color: '#6b7280',
+    marginBottom: 12,
+    lineHeight: 20,
+  },
   addCard: {
     gap: 10,
-    marginBottom: 24,
+    marginBottom: 18,
   },
   input: {
     borderWidth: 1,
@@ -255,6 +320,23 @@ const styles = StyleSheet.create({
   deleteButtonText: {
     color: 'white',
     fontWeight: '700',
+  },
+  brainDumpList: {
+    gap: 12,
+  },
+  brainDumpCard: {
+    padding: 16,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    backgroundColor: 'white',
+    gap: 4,
+  },
+  brainDumpBody: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#111827',
+    lineHeight: 21,
   },
   emptyCard: {
     padding: 18,
