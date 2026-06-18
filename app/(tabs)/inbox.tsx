@@ -4,7 +4,7 @@ import { Pressable, ScrollView, StyleSheet, TextInput } from 'react-native';
 import { Text, View } from '@/components/Themed';
 import { useBrainDumps } from '@/context/BrainDumpContext';
 import { useGoals } from '@/context/GoalContext';
-import { useTasks } from '@/context/TaskContext';
+import { type Task, useTasks } from '@/context/TaskContext';
 
 const days = [
   'Monday',
@@ -40,8 +40,15 @@ export default function InboxScreen() {
   const [selectedGoalId, setSelectedGoalId] = useState<number | null>(null);
   const [brainDumpText, setBrainDumpText] = useState('');
 
+  const [editingTaskId, setEditingTaskId] = useState<number | null>(null);
+  const [editTaskText, setEditTaskText] = useState('');
+  const [editNotesText, setEditNotesText] = useState('');
+  const [editPriority, setEditPriority] = useState(0);
+  const [editGoalId, setEditGoalId] = useState<number | null>(null);
+
   const {
     addTask,
+    editTask,
     completeTask,
     deleteTask,
     moveTaskToDay,
@@ -80,6 +87,36 @@ export default function InboxScreen() {
   ) {
     await addTask(brainDumpBody, 'Inbox');
     await deleteBrainDump(brainDumpId);
+  }
+
+  function startEditingTask(task: Task) {
+    setEditingTaskId(task.id);
+    setEditTaskText(task.title);
+    setEditNotesText(task.notes ?? '');
+    setEditPriority(task.priority);
+    setEditGoalId(task.goalId);
+  }
+
+  function cancelEditingTask() {
+    setEditingTaskId(null);
+    setEditTaskText('');
+    setEditNotesText('');
+    setEditPriority(0);
+    setEditGoalId(null);
+  }
+
+  async function handleSaveEditedTask() {
+    if (editingTaskId === null) return;
+
+    await editTask(
+      editingTaskId,
+      editTaskText,
+      editNotesText,
+      editPriority,
+      editGoalId
+    );
+
+    cancelEditingTask();
   }
 
   return (
@@ -293,6 +330,125 @@ export default function InboxScreen() {
           ) : (
             inboxTasks.map((task) => {
               const linkedGoal = goals.find((goal) => goal.id === task.goalId);
+              const isEditing = editingTaskId === task.id;
+
+              if (isEditing) {
+                return (
+                  <View key={task.id} style={styles.taskCard}>
+                    <Text style={styles.editTitle}>Edit Task</Text>
+
+                    <TextInput
+                      style={styles.input}
+                      placeholder="Task title..."
+                      value={editTaskText}
+                      onChangeText={setEditTaskText}
+                    />
+
+                    <TextInput
+                      style={[styles.input, styles.notesInput]}
+                      placeholder="Edit notes... optional"
+                      value={editNotesText}
+                      onChangeText={setEditNotesText}
+                      multiline
+                    />
+
+                    <View style={styles.priorityPicker}>
+                      {[0, 1, 2].map((level) => (
+                        <Pressable
+                          key={level}
+                          style={[
+                            styles.priorityButton,
+                            editPriority === level &&
+                              styles.priorityButtonSelected,
+                          ]}
+                          onPress={() => setEditPriority(level)}
+                        >
+                          <Text
+                            style={[
+                              styles.priorityButtonText,
+                              editPriority === level &&
+                                styles.priorityButtonTextSelected,
+                            ]}
+                          >
+                            {level === 0
+                              ? 'Low'
+                              : level === 1
+                                ? 'Medium'
+                                : 'High'}
+                          </Text>
+                        </Pressable>
+                      ))}
+                    </View>
+
+                    <View style={styles.goalPickerSection}>
+                      <Text style={styles.goalPickerLabel}>Link to goal:</Text>
+
+                      <ScrollView
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        contentContainerStyle={styles.goalPicker}
+                      >
+                        <Pressable
+                          style={[
+                            styles.goalButton,
+                            editGoalId === null && styles.goalButtonSelected,
+                          ]}
+                          onPress={() => setEditGoalId(null)}
+                        >
+                          <Text
+                            style={[
+                              styles.goalButtonText,
+                              editGoalId === null &&
+                                styles.goalButtonTextSelected,
+                            ]}
+                          >
+                            None
+                          </Text>
+                        </Pressable>
+
+                        {goals.map((goal) => (
+                          <Pressable
+                            key={goal.id}
+                            style={[
+                              styles.goalButton,
+                              editGoalId === goal.id &&
+                                styles.goalButtonSelected,
+                            ]}
+                            onPress={() => setEditGoalId(goal.id)}
+                          >
+                            <Text
+                              style={[
+                                styles.goalButtonText,
+                                editGoalId === goal.id &&
+                                  styles.goalButtonTextSelected,
+                              ]}
+                              numberOfLines={1}
+                            >
+                              {goal.title}
+                            </Text>
+                          </Pressable>
+                        ))}
+                      </ScrollView>
+                    </View>
+
+                    <View style={styles.editActions}>
+                      <Pressable
+                        style={styles.saveButton}
+                        onPress={handleSaveEditedTask}
+                      >
+                        <Text style={styles.saveButtonText}>Save</Text>
+                      </Pressable>
+
+                      <Pressable
+                        style={styles.cancelButton}
+                        onPress={cancelEditingTask}
+                      >
+                        <Text style={styles.cancelButtonText}>Cancel</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                );
+              }
 
               return (
                 <View key={task.id} style={styles.taskCard}>
@@ -316,6 +472,13 @@ export default function InboxScreen() {
                     </View>
 
                     <View style={styles.taskActions}>
+                      <Pressable
+                        style={styles.editButton}
+                        onPress={() => startEditingTask(task)}
+                      >
+                        <Text style={styles.editButtonText}>Edit</Text>
+                      </Pressable>
+
                       <Pressable
                         style={styles.doneButton}
                         onPress={() => completeTask(task.id)}
@@ -580,6 +743,48 @@ const styles = StyleSheet.create({
     gap: 8,
     alignItems: 'flex-end',
     backgroundColor: 'transparent',
+  },
+  editTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#111827',
+  },
+  editActions: {
+    flexDirection: 'row',
+    gap: 10,
+    backgroundColor: 'transparent',
+  },
+  editButton: {
+    backgroundColor: '#2563eb',
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+  },
+  editButtonText: {
+    color: 'white',
+    fontWeight: '700',
+  },
+  saveButton: {
+    flex: 1,
+    backgroundColor: '#16a34a',
+    padding: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  saveButtonText: {
+    color: 'white',
+    fontWeight: '700',
+  },
+  cancelButton: {
+    flex: 1,
+    backgroundColor: '#6b7280',
+    padding: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  cancelButtonText: {
+    color: 'white',
+    fontWeight: '700',
   },
   doneButton: {
     backgroundColor: '#16a34a',
