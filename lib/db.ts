@@ -56,9 +56,20 @@ export async function migrateDb() {
       start_date TEXT NOT NULL,
       end_date TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS brain_dumps (
+      id INTEGER PRIMARY KEY NOT NULL,
+      body TEXT NOT NULL,
+      archived INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      archived_at TEXT
+    );
   `);
 
   await ensureColumn(db, 'tasks', 'notes', 'TEXT');
   await ensureColumn(db, 'tasks', 'priority', 'INTEGER NOT NULL DEFAULT 0');
   await ensureColumn(db, 'tasks', 'goal_id', 'INTEGER');
+
+  await ensureColumn(db, 'brain_dumps', 'archived', 'INTEGER NOT NULL DEFAULT 0');
+  await ensureColumn(db, 'brain_dumps', 'archived_at', 'TEXT');
 }

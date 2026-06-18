@@ -7,6 +7,7 @@ import { Pressable } from 'react-native';
 import { useClientOnlyValue } from '@/components/useClientOnlyValue';
 import { useColorScheme } from '@/components/useColorScheme';
 import Colors from '@/constants/Colors';
+import { BrainDumpProvider } from '@/context/BrainDumpContext';
 import { GoalProvider } from '@/context/GoalContext';
 
 export default function TabLayout() {
@@ -15,6 +16,7 @@ export default function TabLayout() {
   return (
     <GoalProvider>
     <TaskProvider>
+    <BrainDumpProvider>
     <Tabs
       screenOptions={{
         tabBarActiveTintColor: Colors[colorScheme].tint,
@@ -126,6 +128,7 @@ export default function TabLayout() {
         }}
       />
     </Tabs>
+    </BrainDumpProvider>
     </TaskProvider>
     </GoalProvider>
   );

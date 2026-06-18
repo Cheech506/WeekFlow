@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, TextInput } from 'react-native';
 
 import { Text, View } from '@/components/Themed';
+import { useBrainDumps } from '@/context/BrainDumpContext';
 import { useGoals } from '@/context/GoalContext';
 import { useTasks } from '@/context/TaskContext';
 
@@ -21,11 +22,23 @@ function getPriorityLabel(priority: number) {
   return 'Low';
 }
 
+function formatCreatedDate(value: string) {
+  const date = new Date(value);
+
+  return date.toLocaleString([], {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
 export default function InboxScreen() {
   const [taskText, setTaskText] = useState('');
   const [notesText, setNotesText] = useState('');
   const [priority, setPriority] = useState(0);
   const [selectedGoalId, setSelectedGoalId] = useState<number | null>(null);
+  const [brainDumpText, setBrainDumpText] = useState('');
 
   const {
     addTask,
@@ -35,9 +48,17 @@ export default function InboxScreen() {
     getInboxTasks,
   } = useTasks();
 
+  const {
+    addBrainDump,
+    archiveBrainDump,
+    deleteBrainDump,
+    getActiveBrainDumps,
+  } = useBrainDumps();
+
   const { goals } = useGoals();
 
   const inboxTasks = getInboxTasks();
+  const activeBrainDumps = getActiveBrainDumps();
 
   async function handleAddTask() {
     await addTask(taskText, 'Inbox', notesText, priority, selectedGoalId);
@@ -48,188 +69,271 @@ export default function InboxScreen() {
     setSelectedGoalId(null);
   }
 
+  async function handleAddBrainDump() {
+    await addBrainDump(brainDumpText);
+    setBrainDumpText('');
+  }
+
   return (
     <ScrollView style={styles.page} contentContainerStyle={styles.content}>
       <View style={styles.header}>
         <Text style={styles.title}>Inbox</Text>
         <Text style={styles.subtitle}>
-          Brain dump tasks here now. Schedule them into the week later.
+          Capture tasks, reminders, and random thoughts before they get lost.
         </Text>
       </View>
 
       <View style={styles.progressCard}>
-        <Text style={styles.progressTitle}>Unscheduled Tasks</Text>
+        <Text style={styles.progressTitle}>Inbox Overview</Text>
         <Text style={styles.progressText}>
-          {inboxTasks.length} task{inboxTasks.length === 1 ? '' : 's'} waiting to be scheduled
+          {inboxTasks.length} unscheduled task
+          {inboxTasks.length === 1 ? '' : 's'} • {activeBrainDumps.length} brain dump note
+          {activeBrainDumps.length === 1 ? '' : 's'}
         </Text>
       </View>
 
-      <View style={styles.addCard}>
-        <TextInput
-          style={styles.input}
-          placeholder="Quick add something..."
-          value={taskText}
-          onChangeText={setTaskText}
-          onSubmitEditing={handleAddTask}
-          returnKeyType="done"
-        />
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Quick Task</Text>
+        <Text style={styles.sectionSubtitle}>
+          Add something that needs to be scheduled or completed.
+        </Text>
 
-        <TextInput
-          style={[styles.input, styles.notesInput]}
-          placeholder="Add notes... optional"
-          value={notesText}
-          onChangeText={setNotesText}
-          multiline
-        />
+        <View style={styles.addCard}>
+          <TextInput
+            style={styles.input}
+            placeholder="Quick add something..."
+            value={taskText}
+            onChangeText={setTaskText}
+            onSubmitEditing={handleAddTask}
+            returnKeyType="done"
+          />
 
-        <View style={styles.priorityPicker}>
-          {[0, 1, 2].map((level) => (
-            <Pressable
-              key={level}
-              style={[
-                styles.priorityButton,
-                priority === level && styles.priorityButtonSelected,
-              ]}
-              onPress={() => setPriority(level)}
-            >
-              <Text
-                style={[
-                  styles.priorityButtonText,
-                  priority === level && styles.priorityButtonTextSelected,
-                ]}
-              >
-                {level === 0 ? 'Low' : level === 1 ? 'Medium' : 'High'}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
+          <TextInput
+            style={[styles.input, styles.notesInput]}
+            placeholder="Add notes... optional"
+            value={notesText}
+            onChangeText={setNotesText}
+            multiline
+          />
 
-        <View style={styles.goalPickerSection}>
-          <Text style={styles.goalPickerLabel}>Link to goal:</Text>
-
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.goalPicker}
-          >
-            <Pressable
-              style={[
-                styles.goalButton,
-                selectedGoalId === null && styles.goalButtonSelected,
-              ]}
-              onPress={() => setSelectedGoalId(null)}
-            >
-              <Text
-                style={[
-                  styles.goalButtonText,
-                  selectedGoalId === null && styles.goalButtonTextSelected,
-                ]}
-              >
-                None
-              </Text>
-            </Pressable>
-
-            {goals.map((goal) => (
+          <View style={styles.priorityPicker}>
+            {[0, 1, 2].map((level) => (
               <Pressable
-                key={goal.id}
+                key={level}
+                style={[
+                  styles.priorityButton,
+                  priority === level && styles.priorityButtonSelected,
+                ]}
+                onPress={() => setPriority(level)}
+              >
+                <Text
+                  style={[
+                    styles.priorityButtonText,
+                    priority === level && styles.priorityButtonTextSelected,
+                  ]}
+                >
+                  {level === 0 ? 'Low' : level === 1 ? 'Medium' : 'High'}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+
+          <View style={styles.goalPickerSection}>
+            <Text style={styles.goalPickerLabel}>Link to goal:</Text>
+
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.goalPicker}
+            >
+              <Pressable
                 style={[
                   styles.goalButton,
-                  selectedGoalId === goal.id && styles.goalButtonSelected,
+                  selectedGoalId === null && styles.goalButtonSelected,
                 ]}
-                onPress={() => setSelectedGoalId(goal.id)}
+                onPress={() => setSelectedGoalId(null)}
               >
                 <Text
                   style={[
                     styles.goalButtonText,
-                    selectedGoalId === goal.id && styles.goalButtonTextSelected,
+                    selectedGoalId === null && styles.goalButtonTextSelected,
                   ]}
-                  numberOfLines={1}
                 >
-                  {goal.title}
+                  None
                 </Text>
               </Pressable>
-            ))}
-          </ScrollView>
-        </View>
 
-        <Pressable style={styles.addButton} onPress={handleAddTask}>
-          <Text style={styles.addButtonText}>Add to Inbox</Text>
-        </Pressable>
+              {goals.map((goal) => (
+                <Pressable
+                  key={goal.id}
+                  style={[
+                    styles.goalButton,
+                    selectedGoalId === goal.id && styles.goalButtonSelected,
+                  ]}
+                  onPress={() => setSelectedGoalId(goal.id)}
+                >
+                  <Text
+                    style={[
+                      styles.goalButtonText,
+                      selectedGoalId === goal.id && styles.goalButtonTextSelected,
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {goal.title}
+                  </Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+          </View>
+
+          <Pressable style={styles.addButton} onPress={handleAddTask}>
+            <Text style={styles.addButtonText}>Add to Inbox</Text>
+          </Pressable>
+        </View>
       </View>
 
-      <View style={styles.taskList}>
-        {inboxTasks.length === 0 ? (
-          <View style={styles.emptyCard}>
-            <Text style={styles.emptyTitle}>Inbox is clear ✅</Text>
-            <Text style={styles.emptyText}>
-              Add quick tasks here when you do not want to schedule them yet.
-            </Text>
-          </View>
-        ) : (
-          inboxTasks.map((task) => {
-            const linkedGoal = goals.find((goal) => goal.id === task.goalId);
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Brain Dump Notes</Text>
+        <Text style={styles.sectionSubtitle}>
+          Write down thoughts, reminders, ideas, or stuff you just need out of your head.
+        </Text>
 
-            return (
-              <View key={task.id} style={styles.taskCard}>
-                <View style={styles.taskTopRow}>
-                  <View style={styles.taskTextWrap}>
-                    <Text style={styles.taskTitle}>{task.title}</Text>
+        <View style={styles.brainDumpAddCard}>
+          <TextInput
+            style={[styles.input, styles.brainDumpInput]}
+            placeholder="Write anything here..."
+            value={brainDumpText}
+            onChangeText={setBrainDumpText}
+            multiline
+          />
 
-                    <Text style={styles.taskMeta}>Unscheduled</Text>
+          <Pressable
+            style={styles.brainDumpButton}
+            onPress={handleAddBrainDump}
+          >
+            <Text style={styles.brainDumpButtonText}>Save Brain Dump</Text>
+          </Pressable>
+        </View>
 
-                    <Text style={styles.taskMeta}>
-                      Priority: {getPriorityLabel(task.priority)}
-                    </Text>
-
-                    {linkedGoal ? (
-                      <Text style={styles.taskMeta}>Goal: {linkedGoal.title}</Text>
-                    ) : null}
-
-                    {task.notes ? (
-                      <Text style={styles.taskNotes}>{task.notes}</Text>
-                    ) : null}
-                  </View>
-
-                  <View style={styles.taskActions}>
-                    <Pressable
-                      style={styles.doneButton}
-                      onPress={() => completeTask(task.id)}
-                    >
-                      <Text style={styles.doneButtonText}>Done</Text>
-                    </Pressable>
-
-                    <Pressable
-                      style={styles.deleteButton}
-                      onPress={() => deleteTask(task.id)}
-                    >
-                      <Text style={styles.deleteButtonText}>Delete</Text>
-                    </Pressable>
-                  </View>
+        <View style={styles.brainDumpList}>
+          {activeBrainDumps.length === 0 ? (
+            <View style={styles.emptyCard}>
+              <Text style={styles.emptyTitle}>No brain dumps yet</Text>
+              <Text style={styles.emptyText}>
+                Use this area for random thoughts that are not really tasks yet.
+              </Text>
+            </View>
+          ) : (
+            activeBrainDumps.map((brainDump) => (
+              <View key={brainDump.id} style={styles.brainDumpCard}>
+                <View style={styles.brainDumpTextWrap}>
+                  <Text style={styles.brainDumpBody}>{brainDump.body}</Text>
+                  <Text style={styles.taskMeta}>
+                    Saved: {formatCreatedDate(brainDump.createdAt)}
+                  </Text>
                 </View>
 
-                <View style={styles.scheduleSection}>
-                  <Text style={styles.scheduleLabel}>Move to:</Text>
-
-                  <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={styles.dayPicker}
+                <View style={styles.taskActions}>
+                  <Pressable
+                    style={styles.archiveButton}
+                    onPress={() => archiveBrainDump(brainDump.id)}
                   >
-                    {days.map((day) => (
-                      <Pressable
-                        key={day}
-                        style={styles.dayButton}
-                        onPress={() => moveTaskToDay(task.id, day)}
-                      >
-                        <Text style={styles.dayButtonText}>{day.slice(0, 3)}</Text>
-                      </Pressable>
-                    ))}
-                  </ScrollView>
+                    <Text style={styles.archiveButtonText}>Archive</Text>
+                  </Pressable>
+
+                  <Pressable
+                    style={styles.deleteButton}
+                    onPress={() => deleteBrainDump(brainDump.id)}
+                  >
+                    <Text style={styles.deleteButtonText}>Delete</Text>
+                  </Pressable>
                 </View>
               </View>
-            );
-          })
-        )}
+            ))
+          )}
+        </View>
+      </View>
+
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Unscheduled Tasks</Text>
+        <Text style={styles.sectionSubtitle}>
+          These still need to be moved into the week.
+        </Text>
+
+        <View style={styles.taskList}>
+          {inboxTasks.length === 0 ? (
+            <View style={styles.emptyCard}>
+              <Text style={styles.emptyTitle}>Inbox is clear ✅</Text>
+              <Text style={styles.emptyText}>
+                Add quick tasks here when you do not want to schedule them yet.
+              </Text>
+            </View>
+          ) : (
+            inboxTasks.map((task) => {
+              const linkedGoal = goals.find((goal) => goal.id === task.goalId);
+
+              return (
+                <View key={task.id} style={styles.taskCard}>
+                  <View style={styles.taskTopRow}>
+                    <View style={styles.taskTextWrap}>
+                      <Text style={styles.taskTitle}>{task.title}</Text>
+
+                      <Text style={styles.taskMeta}>Unscheduled</Text>
+
+                      <Text style={styles.taskMeta}>
+                        Priority: {getPriorityLabel(task.priority)}
+                      </Text>
+
+                      {linkedGoal ? (
+                        <Text style={styles.taskMeta}>Goal: {linkedGoal.title}</Text>
+                      ) : null}
+
+                      {task.notes ? (
+                        <Text style={styles.taskNotes}>{task.notes}</Text>
+                      ) : null}
+                    </View>
+
+                    <View style={styles.taskActions}>
+                      <Pressable
+                        style={styles.doneButton}
+                        onPress={() => completeTask(task.id)}
+                      >
+                        <Text style={styles.doneButtonText}>Done</Text>
+                      </Pressable>
+
+                      <Pressable
+                        style={styles.deleteButton}
+                        onPress={() => deleteTask(task.id)}
+                      >
+                        <Text style={styles.deleteButtonText}>Delete</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+
+                  <View style={styles.scheduleSection}>
+                    <Text style={styles.scheduleLabel}>Move to:</Text>
+
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      contentContainerStyle={styles.dayPicker}
+                    >
+                      {days.map((day) => (
+                        <Pressable
+                          key={day}
+                          style={styles.dayButton}
+                          onPress={() => moveTaskToDay(task.id, day)}
+                        >
+                          <Text style={styles.dayButtonText}>{day.slice(0, 3)}</Text>
+                        </Pressable>
+                      ))}
+                    </ScrollView>
+                  </View>
+                </View>
+              );
+            })
+          )}
+        </View>
       </View>
     </ScrollView>
   );
@@ -272,9 +376,24 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: '#374151',
   },
+  section: {
+    marginBottom: 26,
+    backgroundColor: 'transparent',
+  },
+  sectionTitle: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#111827',
+    marginBottom: 4,
+  },
+  sectionSubtitle: {
+    fontSize: 14,
+    color: '#6b7280',
+    marginBottom: 12,
+    lineHeight: 20,
+  },
   addCard: {
     gap: 10,
-    marginBottom: 24,
   },
   input: {
     borderWidth: 1,
@@ -287,6 +406,49 @@ const styles = StyleSheet.create({
   notesInput: {
     minHeight: 80,
     textAlignVertical: 'top',
+  },
+  brainDumpAddCard: {
+    gap: 10,
+    backgroundColor: 'transparent',
+  },
+  brainDumpInput: {
+    minHeight: 110,
+    textAlignVertical: 'top',
+  },
+  brainDumpButton: {
+    backgroundColor: '#0f766e',
+    padding: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  brainDumpButtonText: {
+    color: 'white',
+    fontWeight: '700',
+    fontSize: 16,
+  },
+  brainDumpList: {
+    gap: 12,
+    marginTop: 14,
+  },
+  brainDumpCard: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 12,
+    padding: 16,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    backgroundColor: 'white',
+  },
+  brainDumpTextWrap: {
+    flex: 1,
+    backgroundColor: 'transparent',
+  },
+  brainDumpBody: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#111827',
+    lineHeight: 21,
   },
   priorityPicker: {
     flexDirection: 'row',
@@ -404,6 +566,16 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   doneButtonText: {
+    color: 'white',
+    fontWeight: '700',
+  },
+  archiveButton: {
+    backgroundColor: '#f59e0b',
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+  },
+  archiveButtonText: {
     color: 'white',
     fontWeight: '700',
   },

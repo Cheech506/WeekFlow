@@ -1,11 +1,26 @@
-import { ScrollView, StyleSheet } from 'react-native';
+import { Pressable, ScrollView, StyleSheet } from 'react-native';
 
 import { Text, View } from '@/components/Themed';
+import { useBrainDumps } from '@/context/BrainDumpContext';
 import { useGoals } from '@/context/GoalContext';
 import { useTasks } from '@/context/TaskContext';
 
 function formatCompletedDate(value: string | null) {
   if (!value) return 'Completed date unknown';
+
+  const date = new Date(value);
+
+  return date.toLocaleString([], {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+function formatArchivedDate(value: string | null) {
+  if (!value) return 'Archived date unknown';
 
   const date = new Date(value);
 
@@ -27,6 +42,9 @@ function getPriorityLabel(priority: number) {
 export default function HistoryScreen() {
   const { tasks } = useTasks();
   const { goals } = useGoals();
+  const { getArchivedBrainDumps, deleteBrainDump } = useBrainDumps();
+
+  const archivedBrainDumps = getArchivedBrainDumps();
 
   const completedTasks = tasks
     .filter((task) => task.completed)
@@ -42,7 +60,7 @@ export default function HistoryScreen() {
       <View style={styles.header}>
         <Text style={styles.title}>Completed History</Text>
         <Text style={styles.subtitle}>
-          Look back at everything you knocked out.
+          Look back at everything you knocked out or cleared from your head.
         </Text>
       </View>
 
@@ -50,47 +68,89 @@ export default function HistoryScreen() {
         <Text style={styles.progressTitle}>Accomplishments</Text>
         <Text style={styles.progressText}>
           {completedTasks.length} completed task
-          {completedTasks.length === 1 ? '' : 's'}
+          {completedTasks.length === 1 ? '' : 's'} • {archivedBrainDumps.length} archived brain dump
+          {archivedBrainDumps.length === 1 ? '' : 's'}
         </Text>
       </View>
 
-      <View style={styles.list}>
-        {completedTasks.length === 0 ? (
-          <View style={styles.emptyCard}>
-            <Text style={styles.emptyTitle}>Nothing completed yet</Text>
-            <Text style={styles.emptyText}>
-              Finish a task from Daily or Weekly and it will show up here.
-            </Text>
-          </View>
-        ) : (
-          completedTasks.map((task) => {
-            const linkedGoal = goals.find((goal) => goal.id === task.goalId);
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Completed Tasks</Text>
 
-            return (
-              <View key={task.id} style={styles.taskCard}>
-                <Text style={styles.taskTitle}>{task.title}</Text>
+        <View style={styles.list}>
+          {completedTasks.length === 0 ? (
+            <View style={styles.emptyCard}>
+              <Text style={styles.emptyTitle}>Nothing completed yet</Text>
+              <Text style={styles.emptyText}>
+                Finish a task from Daily or Weekly and it will show up here.
+              </Text>
+            </View>
+          ) : (
+            completedTasks.map((task) => {
+              const linkedGoal = goals.find((goal) => goal.id === task.goalId);
 
-                <Text style={styles.taskMeta}>Assigned day: {task.day}</Text>
+              return (
+                <View key={task.id} style={styles.taskCard}>
+                  <Text style={styles.taskTitle}>{task.title}</Text>
 
-                <Text style={styles.taskMeta}>
-                  Priority: {getPriorityLabel(task.priority)}
-                </Text>
+                  <Text style={styles.taskMeta}>Assigned day: {task.day}</Text>
 
-                {linkedGoal ? (
-                  <Text style={styles.taskMeta}>Goal: {linkedGoal.title}</Text>
-                ) : null}
+                  <Text style={styles.taskMeta}>
+                    Priority: {getPriorityLabel(task.priority)}
+                  </Text>
 
-                {task.notes ? (
-                  <Text style={styles.taskNotes}>{task.notes}</Text>
-                ) : null}
+                  {linkedGoal ? (
+                    <Text style={styles.taskMeta}>Goal: {linkedGoal.title}</Text>
+                  ) : null}
 
-                <Text style={styles.taskMeta}>
-                  Completed: {formatCompletedDate(task.completedAt)}
-                </Text>
+                  {task.notes ? (
+                    <Text style={styles.taskNotes}>{task.notes}</Text>
+                  ) : null}
+
+                  <Text style={styles.taskMeta}>
+                    Completed: {formatCompletedDate(task.completedAt)}
+                  </Text>
+                </View>
+              );
+            })
+          )}
+        </View>
+      </View>
+
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Archived Brain Dumps</Text>
+        <Text style={styles.sectionSubtitle}>
+          Thoughts and notes you cleared out of Inbox but kept for later.
+        </Text>
+
+        <View style={styles.list}>
+          {archivedBrainDumps.length === 0 ? (
+            <View style={styles.emptyCard}>
+              <Text style={styles.emptyTitle}>No archived brain dumps yet</Text>
+              <Text style={styles.emptyText}>
+                Archive a brain dump from Inbox and it will show up here.
+              </Text>
+            </View>
+          ) : (
+            archivedBrainDumps.map((brainDump) => (
+              <View key={brainDump.id} style={styles.brainDumpCard}>
+                <View style={styles.brainDumpTextWrap}>
+                  <Text style={styles.brainDumpBody}>{brainDump.body}</Text>
+
+                  <Text style={styles.taskMeta}>
+                    Archived: {formatArchivedDate(brainDump.archivedAt)}
+                  </Text>
+                </View>
+
+                <Pressable
+                  style={styles.deleteButton}
+                  onPress={() => deleteBrainDump(brainDump.id)}
+                >
+                  <Text style={styles.deleteButtonText}>Delete</Text>
+                </Pressable>
               </View>
-            );
-          })
-        )}
+            ))
+          )}
+        </View>
       </View>
     </ScrollView>
   );
@@ -133,6 +193,22 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: '#374151',
   },
+  section: {
+    marginBottom: 26,
+    backgroundColor: 'transparent',
+  },
+  sectionTitle: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#111827',
+    marginBottom: 8,
+  },
+  sectionSubtitle: {
+    fontSize: 14,
+    color: '#6b7280',
+    marginBottom: 12,
+    lineHeight: 20,
+  },
   list: {
     gap: 12,
   },
@@ -159,6 +235,38 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#374151',
     lineHeight: 20,
+  },
+  brainDumpCard: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 12,
+    padding: 16,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    backgroundColor: 'white',
+  },
+  brainDumpTextWrap: {
+    flex: 1,
+    backgroundColor: 'transparent',
+  },
+  brainDumpBody: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#111827',
+    lineHeight: 21,
+    marginBottom: 6,
+  },
+  deleteButton: {
+    backgroundColor: '#dc2626',
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    alignSelf: 'flex-start',
+  },
+  deleteButtonText: {
+    color: 'white',
+    fontWeight: '700',
   },
   emptyCard: {
     padding: 18,
