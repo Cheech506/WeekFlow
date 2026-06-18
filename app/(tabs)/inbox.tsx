@@ -74,6 +74,14 @@ export default function InboxScreen() {
     setBrainDumpText('');
   }
 
+  async function handleTurnBrainDumpIntoTask(
+    brainDumpId: number,
+    brainDumpBody: string
+  ) {
+    await addTask(brainDumpBody, 'Inbox');
+    await deleteBrainDump(brainDumpId);
+  }
+
   return (
     <ScrollView style={styles.page} contentContainerStyle={styles.content}>
       <View style={styles.header}>
@@ -234,6 +242,20 @@ export default function InboxScreen() {
                 </View>
 
                 <View style={styles.taskActions}>
+                  <Pressable
+                    style={styles.turnIntoTaskButton}
+                    onPress={() =>
+                      handleTurnBrainDumpIntoTask(
+                        brainDump.id,
+                        brainDump.body
+                      )
+                    }
+                  >
+                    <Text style={styles.turnIntoTaskButtonText}>
+                      Turn Into Task
+                    </Text>
+                  </Pressable>
+
                   <Pressable
                     style={styles.archiveButton}
                     onPress={() => archiveBrainDump(brainDump.id)}
@@ -566,6 +588,16 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   doneButtonText: {
+    color: 'white',
+    fontWeight: '700',
+  },
+  turnIntoTaskButton: {
+    backgroundColor: '#2563eb',
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+  },
+  turnIntoTaskButtonText: {
     color: 'white',
     fontWeight: '700',
   },
