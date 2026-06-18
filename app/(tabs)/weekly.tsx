@@ -1,9 +1,7 @@
-import { useState } from 'react';
 import {
   Pressable,
   ScrollView,
   StyleSheet,
-  TextInput,
 } from 'react-native';
 
 import { Text, View } from '@/components/Themed';
@@ -27,11 +25,7 @@ function getPriorityLabel(priority: number) {
 }
 
 export default function WeeklyScreen() {
-  const [taskText, setTaskText] = useState('');
-  const [selectedDay, setSelectedDay] = useState('Monday');
-
   const {
-    addTask,
     completeTask,
     deleteTask,
     getActiveTasksByDay,
@@ -39,59 +33,13 @@ export default function WeeklyScreen() {
 
   const { goals } = useGoals();
 
-  async function handleAddTask() {
-    await addTask(taskText, selectedDay);
-    setTaskText('');
-  }
-
   return (
     <ScrollView style={styles.page} contentContainerStyle={styles.content}>
       <View style={styles.header}>
         <Text style={styles.title}>Weekly Tasks</Text>
         <Text style={styles.subtitle}>
-          Plan the week. Clear the list. Relax after.
+          View what is planned for the week. Add and schedule tasks from Inbox.
         </Text>
-      </View>
-
-      <View style={styles.addCard}>
-        <TextInput
-          style={styles.input}
-          placeholder="Add a task for this week..."
-          value={taskText}
-          onChangeText={setTaskText}
-          onSubmitEditing={handleAddTask}
-          returnKeyType="done"
-        />
-
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.dayPicker}
-        >
-          {days.map((day) => (
-            <Pressable
-              key={day}
-              style={[
-                styles.dayButton,
-                selectedDay === day && styles.dayButtonSelected,
-              ]}
-              onPress={() => setSelectedDay(day)}
-            >
-              <Text
-                style={[
-                  styles.dayButtonText,
-                  selectedDay === day && styles.dayButtonTextSelected,
-                ]}
-              >
-                {day.slice(0, 3)}
-              </Text>
-            </Pressable>
-          ))}
-        </ScrollView>
-
-        <Pressable style={styles.addButton} onPress={handleAddTask}>
-          <Text style={styles.addButtonText}>Add to {selectedDay}</Text>
-        </Pressable>
       </View>
 
       <View style={styles.weekList}>
@@ -168,7 +116,7 @@ const styles = StyleSheet.create({
     paddingBottom: 40,
   },
   header: {
-    marginBottom: 20,
+    marginBottom: 24,
   },
   title: {
     fontSize: 34,
@@ -180,56 +128,15 @@ const styles = StyleSheet.create({
     opacity: 0.7,
     lineHeight: 22,
   },
-  addCard: {
-    gap: 12,
-    marginBottom: 24,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 12,
-    padding: 14,
-    fontSize: 16,
-    backgroundColor: 'white',
-  },
-  dayPicker: {
-    gap: 8,
-  },
-  dayButton: {
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    backgroundColor: 'white',
-  },
-  dayButtonSelected: {
-    backgroundColor: '#2563eb',
-    borderColor: '#2563eb',
-  },
-  dayButtonText: {
-    fontWeight: '700',
-    color: '#374151',
-  },
-  dayButtonTextSelected: {
-    color: 'white',
-  },
-  addButton: {
-    backgroundColor: '#2563eb',
-    padding: 14,
-    borderRadius: 12,
-    alignItems: 'center',
-  },
-  addButtonText: {
-    color: 'white',
-    fontWeight: '700',
-    fontSize: 16,
-  },
   weekList: {
     gap: 18,
   },
   daySection: {
     backgroundColor: 'white',
+    padding: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
   },
   dayTitle: {
     fontSize: 26,

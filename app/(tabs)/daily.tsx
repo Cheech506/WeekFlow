@@ -1,9 +1,7 @@
-import { useState } from 'react';
 import {
   Pressable,
   ScrollView,
   StyleSheet,
-  TextInput,
 } from 'react-native';
 
 import { Text, View } from '@/components/Themed';
@@ -39,11 +37,8 @@ function formatCreatedDate(value: string) {
 }
 
 export default function DailyScreen() {
-  const [taskText, setTaskText] = useState('');
-
   const {
     tasks,
-    addTask,
     completeTask,
     deleteTask,
     getActiveTasksByDay,
@@ -64,17 +59,12 @@ export default function DailyScreen() {
     (task) => task.day === today && task.completed
   ).length;
 
-  async function handleAddTask() {
-    await addTask(taskText, today);
-    setTaskText('');
-  }
-
   return (
     <ScrollView style={styles.page} contentContainerStyle={styles.content}>
       <View style={styles.header}>
         <Text style={styles.title}>Daily Tasks</Text>
         <Text style={styles.subtitle}>
-          Today is {today}. Check your tasks and review anything sitting in your brain dump.
+          Today is {today}. Review what needs attention today.
         </Text>
       </View>
 
@@ -89,28 +79,16 @@ export default function DailyScreen() {
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Today's Tasks</Text>
-
-        <View style={styles.addCard}>
-          <TextInput
-            style={styles.input}
-            placeholder="Add a task for today..."
-            value={taskText}
-            onChangeText={setTaskText}
-            onSubmitEditing={handleAddTask}
-            returnKeyType="done"
-          />
-
-          <Pressable style={styles.addButton} onPress={handleAddTask}>
-            <Text style={styles.addButtonText}>Add Task</Text>
-          </Pressable>
-        </View>
+        <Text style={styles.sectionSubtitle}>
+          Tasks moved from Inbox into today show here.
+        </Text>
 
         <View style={styles.taskList}>
           {activeTasks.length === 0 ? (
             <View style={styles.emptyCard}>
               <Text style={styles.emptyTitle}>Nothing for today 🎉</Text>
               <Text style={styles.emptyText}>
-                Add a task above or move one from Inbox into today.
+                Move a task from Inbox into today when something needs to be done.
               </Text>
             </View>
           ) : (
@@ -122,14 +100,16 @@ export default function DailyScreen() {
                   <View style={styles.taskTextWrap}>
                     <Text style={styles.taskTitle}>{task.title}</Text>
 
-                    <Text style={styles.taskMeta}>{task.day}</Text>
+                    <Text style={styles.taskMeta}>Assigned day: {task.day}</Text>
 
                     <Text style={styles.taskMeta}>
                       Priority: {getPriorityLabel(task.priority)}
                     </Text>
 
                     {linkedGoal ? (
-                      <Text style={styles.taskMeta}>Goal: {linkedGoal.title}</Text>
+                      <Text style={styles.taskMeta}>
+                        Goal: {linkedGoal.title}
+                      </Text>
                     ) : null}
 
                     {task.notes ? (
@@ -251,29 +231,6 @@ const styles = StyleSheet.create({
     color: '#6b7280',
     marginBottom: 12,
     lineHeight: 20,
-  },
-  addCard: {
-    gap: 10,
-    marginBottom: 18,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 12,
-    padding: 14,
-    fontSize: 16,
-    backgroundColor: 'white',
-  },
-  addButton: {
-    backgroundColor: '#16a34a',
-    padding: 14,
-    borderRadius: 12,
-    alignItems: 'center',
-  },
-  addButtonText: {
-    color: 'white',
-    fontWeight: '700',
-    fontSize: 16,
   },
   taskList: {
     gap: 12,
