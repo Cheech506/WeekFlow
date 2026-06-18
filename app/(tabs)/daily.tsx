@@ -41,6 +41,7 @@ export default function DailyScreen() {
     tasks,
     completeTask,
     deleteTask,
+    moveTaskToDay,
     getActiveTasksByDay,
   } = useTasks();
 
@@ -118,6 +119,13 @@ export default function DailyScreen() {
                   </View>
 
                   <View style={styles.taskActions}>
+                    <Pressable
+                      style={styles.inboxButton}
+                      onPress={() => moveTaskToDay(task.id, 'Inbox')}
+                    >
+                      <Text style={styles.inboxButtonText}>Back to Inbox</Text>
+                    </Pressable>
+
                     <Pressable
                       style={styles.doneButton}
                       onPress={() => completeTask(task.id)}
@@ -270,6 +278,16 @@ const styles = StyleSheet.create({
     gap: 8,
     alignItems: 'flex-end',
     backgroundColor: 'transparent',
+  },
+  inboxButton: {
+    backgroundColor: '#2563eb',
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+  },
+  inboxButtonText: {
+    color: 'white',
+    fontWeight: '700',
   },
   doneButton: {
     backgroundColor: '#16a34a',

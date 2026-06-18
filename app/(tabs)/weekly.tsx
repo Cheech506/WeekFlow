@@ -28,6 +28,7 @@ export default function WeeklyScreen() {
   const {
     completeTask,
     deleteTask,
+    moveTaskToDay,
     getActiveTasksByDay,
   } = useTasks();
 
@@ -38,7 +39,7 @@ export default function WeeklyScreen() {
       <View style={styles.header}>
         <Text style={styles.title}>Weekly Tasks</Text>
         <Text style={styles.subtitle}>
-          View what is planned for the week. Add and schedule tasks from Inbox.
+          View what is planned for the week. Add, edit, and schedule tasks from Inbox.
         </Text>
       </View>
 
@@ -80,6 +81,15 @@ export default function WeeklyScreen() {
                         </View>
 
                         <View style={styles.taskActions}>
+                          <Pressable
+                            style={styles.inboxButton}
+                            onPress={() => moveTaskToDay(task.id, 'Inbox')}
+                          >
+                            <Text style={styles.inboxButtonText}>
+                              Back to Inbox
+                            </Text>
+                          </Pressable>
+
                           <Pressable
                             style={styles.doneButton}
                             onPress={() => completeTask(task.id)}
@@ -186,6 +196,16 @@ const styles = StyleSheet.create({
     gap: 8,
     alignItems: 'flex-end',
     backgroundColor: 'transparent',
+  },
+  inboxButton: {
+    backgroundColor: '#2563eb',
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+  },
+  inboxButtonText: {
+    color: 'white',
+    fontWeight: '700',
   },
   doneButton: {
     backgroundColor: '#16a34a',
