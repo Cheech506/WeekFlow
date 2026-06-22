@@ -1,5 +1,14 @@
 import type { Task } from './taskStorage';
 
+export type WeeklyDayProgress = {
+  day: string;
+  shortDay: string;
+  dateKey: string;
+  completedCount: number;
+  isToday: boolean;
+  isFuture: boolean;
+};
+
 export type ProgressStats = {
   completedToday: number;
   completedThisWeek: number;
@@ -7,9 +16,10 @@ export type ProgressStats = {
   weeklyCompletionRate: number;
   bestDay: string | null;
   bestDayCount: number;
+  weeklyDays: WeeklyDayProgress[];
 };
 
-// WeekFlow treats Monday as the beginning of each week.
+// WeekFlow uses Monday as the beginning of the week.
 const weekDays = [
   'Monday',
   'Tuesday',
@@ -23,8 +33,8 @@ const weekDays = [
 /**
  * Removes the time portion of a Date.
  *
- * This lets the progress calculations compare calendar days
- * without hours, minutes, or seconds affecting the result.
+ * This allows dates to be compared by calendar day without
+ * hours, minutes, or seconds changing the result.
  */
 function startOfLocalDay(date: Date): Date {
   return new Date(
@@ -40,8 +50,8 @@ function startOfLocalDay(date: Date): Date {
  * Example:
  * June 20, 2026 becomes "2026-06-20".
  *
- * We avoid using toISOString() here because ISO dates use UTC,
- * which could place a late-night completion on the wrong local day.
+ * We do not use toISOString() because ISO dates use UTC and
+ * could place late-night completions on the wrong local day.
  */
 function getLocalDateKey(date: Date): string {
   const year = date.getFullYear();
@@ -52,8 +62,8 @@ function getLocalDateKey(date: Date): string {
 }
 
 /**
- * Returns a new local date moved forward or backward
- * by the requested number of days.
+ * Returns a new date moved forward or backward by the
+ * requested number of calendar days.
  */
 function addDays(date: Date, amount: number): Date {
   const updatedDate = new Date(date);
@@ -66,12 +76,11 @@ function addDays(date: Date, amount: number): Date {
 /**
  * Finds Monday at the beginning of the current week.
  *
- * JavaScript uses Sunday as day zero, so the calculation
- * converts the date into a Monday-based week.
+ * JavaScript uses Sunday as day zero, so this converts the
+ * date into WeekFlow's Monday-based week.
  */
 function getStartOfWeek(date: Date): Date {
   const start = startOfLocalDay(date);
-
   const daysSinceMonday = (start.getDay() + 6) % 7;
 
   start.setDate(start.getDate() - daysSinceMonday);
@@ -82,8 +91,8 @@ function getStartOfWeek(date: Date): Date {
 /**
  * Returns a valid completion date for a completed task.
  *
- * Incomplete tasks, tasks without a completedAt value,
- * and invalid timestamps are ignored by the progress system.
+ * Incomplete tasks, tasks without completedAt, and invalid
+ * timestamps are ignored by the progress system.
  */
 function getCompletedDate(task: Task): Date | null {
   if (!task.completed || !task.completedAt) {
@@ -100,10 +109,10 @@ function getCompletedDate(task: Task): Date | null {
 }
 
 /**
- * Calculates all progress statistics from the current task list.
+ * Calculates all progress information from the current task list.
  *
- * currentDate can be passed manually during testing.
- * In normal use, it defaults to the current local date and time.
+ * currentDate is optional so tests can calculate statistics for
+ * a specific date instead of always using the real current date.
  */
 export function calculateProgressStats(
   tasks: Task[],
@@ -117,8 +126,9 @@ export function calculateProgressStats(
 
   /*
    * Convert completed tasks into task/date pairs once.
-   * This prevents the rest of the calculations from repeatedly
-   * parsing completedAt timestamps.
+   *
+   * This avoids repeatedly parsing completedAt timestamps
+   * during every calculation below.
    */
   const completedTasks = tasks
     .map((task) => ({
@@ -141,7 +151,7 @@ export function calculateProgressStats(
   ).length;
 
   /*
-   * The current week begins Monday at midnight and ends
+   * The current week starts Monday at midnight and ends
    * immediately before the following Monday.
    */
   const completedThisWeekTasks = completedTasks.filter(
@@ -153,11 +163,10 @@ export function calculateProgressStats(
   const completedThisWeek = completedThisWeekTasks.length;
 
   /*
-   * A calendar day counts toward the streak when the user
-   * completes at least one task on that day.
+   * A Set stores each unique completion date.
    *
-   * A Set is used because completing multiple tasks on the
-   * same date should still count as only one streak day.
+   * Completing multiple tasks on one day should still count
+   * as only one day toward the streak.
    */
   const completionDateKeys = new Set(
     completedTasks.map(({ completedDate }) =>
@@ -168,9 +177,9 @@ export function calculateProgressStats(
   let streakCursor = today;
 
   /*
-   * If the user has not completed anything today, begin checking
-   * from yesterday. The current day is still in progress, so an
-   * existing streak should not break until the entire day is missed.
+   * If nothing has been completed today, begin checking from
+   * yesterday. The current day is still in progress, so the
+   * streak should not break until the full day has passed.
    */
   if (!completionDateKeys.has(todayKey)) {
     streakCursor = addDays(today, -1);
@@ -178,10 +187,7 @@ export function calculateProgressStats(
 
   let currentStreak = 0;
 
-  /*
-   * Walk backward one day at a time until a date is found
-   * that has no task completion.
-   */
+  // Walk backward until reaching a day with no completion.
   while (
     completionDateKeys.has(getLocalDateKey(streakCursor))
   ) {
@@ -190,34 +196,59 @@ export function calculateProgressStats(
   }
 
   /*
-   * Store completion totals for Monday through Sunday.
-   * Each array position represents one weekday.
+   * Count completed tasks by local date for the seven-day
+   * visual progress display.
    */
-  const completionCountsByDay = new Array<number>(7).fill(0);
+  const completionCountsByDate = new Map<string, number>();
 
   completedThisWeekTasks.forEach(({ completedDate }) => {
-    const mondayBasedDayIndex =
-      (completedDate.getDay() + 6) % 7;
+    const dateKey = getLocalDateKey(completedDate);
+    const previousCount =
+      completionCountsByDate.get(dateKey) ?? 0;
 
-    completionCountsByDay[mondayBasedDayIndex] += 1;
+    completionCountsByDate.set(
+      dateKey,
+      previousCount + 1
+    );
   });
+
+  /*
+   * Build one progress record for each day from Monday
+   * through Sunday.
+   */
+  const weeklyDays: WeeklyDayProgress[] = weekDays.map(
+    (day, index) => {
+      const date = addDays(weekStart, index);
+      const dateKey = getLocalDateKey(date);
+
+      return {
+        day,
+        shortDay: day.slice(0, 3),
+        dateKey,
+        completedCount:
+          completionCountsByDate.get(dateKey) ?? 0,
+        isToday: dateKey === todayKey,
+        isFuture: date > today,
+      };
+    }
+  );
 
   let bestDay: string | null = null;
   let bestDayCount = 0;
 
-  // Find the weekday with the most completed tasks this week.
-  completionCountsByDay.forEach((count, index) => {
-    if (count > bestDayCount) {
-      bestDayCount = count;
-      bestDay = weekDays[index];
+  // Find the weekday with the most completed tasks.
+  weeklyDays.forEach((day) => {
+    if (day.completedCount > bestDayCount) {
+      bestDay = day.day;
+      bestDayCount = day.completedCount;
     }
   });
 
   /*
-   * Only active scheduled tasks are included in weekly planning.
+   * Only scheduled active tasks are included in weekly planning.
    *
    * Inbox tasks are excluded because they have not been assigned
-   * to the weekly schedule yet.
+   * to the current weekly plan yet.
    */
   const activeScheduledTasks = tasks.filter(
     (task) => !task.completed && task.day !== 'Inbox'
@@ -247,5 +278,6 @@ export function calculateProgressStats(
     weeklyCompletionRate,
     bestDay,
     bestDayCount,
+    weeklyDays,
   };
 }

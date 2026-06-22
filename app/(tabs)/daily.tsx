@@ -57,6 +57,10 @@ export default function DailyScreen() {
   const activeTasks = getActiveTasksByDay(today);
   const activeBrainDumps = getActiveBrainDumps();
 
+  /*
+   * Progress calculations remain outside the UI markup so the
+   * screen only needs to display the returned statistics.
+   */
   const progressStats = calculateProgressStats(tasks);
 
   return (
@@ -74,7 +78,7 @@ export default function DailyScreen() {
 
       <View style={styles.progressCard}>
         <Text style={styles.progressTitle}>
-          Today&apos;s Progress
+          Today's Progress
         </Text>
 
         <Text style={styles.progressText}>
@@ -161,9 +165,103 @@ export default function DailyScreen() {
         </Text>
       </View>
 
+      <View style={styles.weekProgressCard}>
+        <Text style={styles.weekProgressTitle}>
+          Seven-Day Progress
+        </Text>
+
+        <Text style={styles.weekProgressSubtitle}>
+          Each completed day helps continue your streak.
+        </Text>
+
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.weekDaysRow}
+        >
+          {progressStats.weeklyDays.map((day) => {
+            const hasCompletion = day.completedCount > 0;
+
+            /*
+             * Completed days show a check mark.
+             * Future days show a dash.
+             * Past days without a completion show an empty circle.
+             */
+            const statusSymbol = hasCompletion
+              ? '✓'
+              : day.isFuture
+                ? '—'
+                : '○';
+
+            return (
+              <View
+                key={day.dateKey}
+                style={[
+                  styles.weekDayCard,
+                  hasCompletion &&
+                    styles.weekDayCardCompleted,
+                  day.isToday &&
+                    styles.weekDayCardToday,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.weekDayName,
+                    hasCompletion &&
+                      styles.weekDayTextCompleted,
+                  ]}
+                >
+                  {day.shortDay}
+                </Text>
+
+                <Text
+                  style={[
+                    styles.weekDayCount,
+                    hasCompletion &&
+                      styles.weekDayTextCompleted,
+                  ]}
+                >
+                  {day.completedCount}
+                </Text>
+
+                <Text
+                  style={[
+                    styles.weekDayStatus,
+                    hasCompletion &&
+                      styles.weekDayTextCompleted,
+                  ]}
+                >
+                  {statusSymbol}
+                </Text>
+
+                {day.isToday ? (
+                  <Text style={styles.todayLabel}>
+                    Today
+                  </Text>
+                ) : null}
+              </View>
+            );
+          })}
+        </ScrollView>
+
+        <View style={styles.weekLegend}>
+          <Text style={styles.weekLegendText}>
+            ✓ Completed day
+          </Text>
+
+          <Text style={styles.weekLegendText}>
+            ○ No completion
+          </Text>
+
+          <Text style={styles.weekLegendText}>
+            — Future day
+          </Text>
+        </View>
+      </View>
+
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>
-          Today&apos;s Tasks
+          Today's Tasks
         </Text>
 
         <Text style={styles.sectionSubtitle}>
@@ -355,7 +453,7 @@ const styles = StyleSheet.create({
     padding: 18,
     borderRadius: 16,
     backgroundColor: '#fff7ed',
-    marginBottom: 22,
+    marginBottom: 14,
   },
   streakHeader: {
     flexDirection: 'row',
@@ -428,6 +526,84 @@ const styles = StyleSheet.create({
     marginTop: 12,
     fontSize: 12,
     lineHeight: 17,
+    color: '#6b7280',
+  },
+  weekProgressCard: {
+    padding: 18,
+    borderRadius: 16,
+    backgroundColor: '#eff6ff',
+    marginBottom: 22,
+  },
+  weekProgressTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#111827',
+  },
+  weekProgressSubtitle: {
+    marginTop: 4,
+    marginBottom: 14,
+    fontSize: 13,
+    lineHeight: 18,
+    color: '#6b7280',
+  },
+  weekDaysRow: {
+    gap: 10,
+    paddingBottom: 4,
+  },
+  weekDayCard: {
+    minWidth: 72,
+    minHeight: 112,
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#dbeafe',
+    backgroundColor: 'white',
+    alignItems: 'center',
+  },
+  weekDayCardCompleted: {
+    backgroundColor: '#dcfce7',
+    borderColor: '#86efac',
+  },
+  weekDayCardToday: {
+    borderWidth: 3,
+    borderColor: '#2563eb',
+  },
+  weekDayName: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#374151',
+  },
+  weekDayCount: {
+    marginTop: 8,
+    fontSize: 24,
+    fontWeight: '900',
+    color: '#111827',
+  },
+  weekDayStatus: {
+    marginTop: 3,
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#9ca3af',
+  },
+  weekDayTextCompleted: {
+    color: '#166534',
+  },
+  todayLabel: {
+    marginTop: 4,
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#2563eb',
+  },
+  weekLegend: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+    marginTop: 12,
+    backgroundColor: 'transparent',
+  },
+  weekLegendText: {
+    fontSize: 11,
     color: '#6b7280',
   },
   section: {
