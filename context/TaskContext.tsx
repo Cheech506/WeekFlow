@@ -24,6 +24,7 @@ export type { Task };
 type TaskContextValue = {
   tasks: Task[];
   isLoading: boolean;
+  refreshTasks: () => Promise<void>;
   addTask: (
     title: string,
     day: string,
@@ -178,6 +179,7 @@ export function TaskProvider({ children }: { children: ReactNode }) {
       value={{
         tasks,
         isLoading,
+        refreshTasks: loadTasks,
         addTask,
         editTask,
         completeTask,

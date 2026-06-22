@@ -32,7 +32,8 @@
     "plugins": [
       "expo-router",
       "expo-web-browser",
-      "expo-sqlite"
+      "expo-sqlite",
+      "expo-sharing"
     ],
     "experiments": {
       "typedRoutes": true

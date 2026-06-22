@@ -1,19 +1,19 @@
 import React, {
-    createContext,
-    useCallback,
-    useContext,
-    useEffect,
-    useMemo,
-    useState,
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
 } from 'react';
 
 import {
-    archiveBrainDumpById,
-    deleteBrainDumpById,
-    getBrainDumps,
-    insertBrainDump,
-    restoreBrainDumpById,
-    type StoredBrainDump,
+  archiveBrainDumpById,
+  deleteBrainDumpById,
+  getBrainDumps,
+  insertBrainDump,
+  restoreBrainDumpById,
+  type StoredBrainDump,
 } from '@/lib/brainDumpStorage';
 
 export type BrainDump = StoredBrainDump;
@@ -21,6 +21,7 @@ export type BrainDump = StoredBrainDump;
 type BrainDumpContextValue = {
   brainDumps: BrainDump[];
   isLoading: boolean;
+  refreshBrainDumps: () => Promise<void>;
   addBrainDump: (body: string) => Promise<void>;
   archiveBrainDump: (id: number) => Promise<void>;
   restoreBrainDump: (id: number) => Promise<void>;
@@ -39,31 +40,22 @@ export function BrainDumpProvider({
   const [brainDumps, setBrainDumps] = useState<BrainDump[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  useEffect(() => {
-    let mounted = true;
+  const refreshBrainDumps = useCallback(async () => {
+    setIsLoading(true);
 
-    async function loadBrainDumps() {
-      try {
-        const storedBrainDumps = await getBrainDumps();
-
-        if (mounted) {
-          setBrainDumps(storedBrainDumps);
-        }
-      } catch (error) {
-        console.error('Failed to load brain dumps:', error);
-      } finally {
-        if (mounted) {
-          setIsLoading(false);
-        }
-      }
+    try {
+      const storedBrainDumps = await getBrainDumps();
+      setBrainDumps(storedBrainDumps);
+    } catch (error) {
+      console.error('Failed to load brain dumps:', error);
+    } finally {
+      setIsLoading(false);
     }
-
-    loadBrainDumps();
-
-    return () => {
-      mounted = false;
-    };
   }, []);
+
+  useEffect(() => {
+    refreshBrainDumps();
+  }, [refreshBrainDumps]);
 
   const addBrainDump = useCallback(async (body: string) => {
     if (!body.trim()) return;
@@ -136,6 +128,7 @@ export function BrainDumpProvider({
     () => ({
       brainDumps,
       isLoading,
+      refreshBrainDumps,
       addBrainDump,
       archiveBrainDump,
       restoreBrainDump,
@@ -146,6 +139,7 @@ export function BrainDumpProvider({
     [
       brainDumps,
       isLoading,
+      refreshBrainDumps,
       addBrainDump,
       archiveBrainDump,
       restoreBrainDump,

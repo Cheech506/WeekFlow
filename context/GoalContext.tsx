@@ -1,18 +1,18 @@
 import React, {
-    createContext,
-    useCallback,
-    useContext,
-    useEffect,
-    useMemo,
-    useState,
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
 } from 'react';
 
 import {
-    deleteGoalById,
-    getGoals,
-    insertGoal,
-    updateGoalCompletion,
-    type StoredGoal,
+  deleteGoalById,
+  getGoals,
+  insertGoal,
+  updateGoalCompletion,
+  type StoredGoal,
 } from '@/lib/goalStorage';
 
 export type Goal = StoredGoal;
@@ -20,6 +20,7 @@ export type Goal = StoredGoal;
 type GoalContextValue = {
   goals: Goal[];
   isLoading: boolean;
+  refreshGoals: () => Promise<void>;
   addGoal: (title: string) => Promise<void>;
   toggleGoal: (id: number) => Promise<void>;
   deleteGoal: (id: number) => Promise<void>;
@@ -31,31 +32,22 @@ export function GoalProvider({ children }: { children: React.ReactNode }) {
   const [goals, setGoals] = useState<Goal[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  useEffect(() => {
-    let mounted = true;
+  const refreshGoals = useCallback(async () => {
+    setIsLoading(true);
 
-    async function loadGoals() {
-      try {
-        const storedGoals = await getGoals();
-
-        if (mounted) {
-          setGoals(storedGoals);
-        }
-      } catch (error) {
-        console.error('Failed to load goals:', error);
-      } finally {
-        if (mounted) {
-          setIsLoading(false);
-        }
-      }
+    try {
+      const storedGoals = await getGoals();
+      setGoals(storedGoals);
+    } catch (error) {
+      console.error('Failed to load goals:', error);
+    } finally {
+      setIsLoading(false);
     }
-
-    loadGoals();
-
-    return () => {
-      mounted = false;
-    };
   }, []);
+
+  useEffect(() => {
+    refreshGoals();
+  }, [refreshGoals]);
 
   const addGoal = useCallback(async (title: string) => {
     if (!title.trim()) return;
@@ -112,11 +104,19 @@ export function GoalProvider({ children }: { children: React.ReactNode }) {
     () => ({
       goals,
       isLoading,
+      refreshGoals,
       addGoal,
       toggleGoal,
       deleteGoal,
     }),
-    [goals, isLoading, addGoal, toggleGoal, deleteGoal]
+    [
+      goals,
+      isLoading,
+      refreshGoals,
+      addGoal,
+      toggleGoal,
+      deleteGoal,
+    ]
   );
 
   return <GoalContext.Provider value={value}>{children}</GoalContext.Provider>;

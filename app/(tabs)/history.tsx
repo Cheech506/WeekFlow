@@ -11,6 +11,12 @@ import { useBrainDumps } from '@/context/BrainDumpContext';
 import { useGoals } from '@/context/GoalContext';
 import { useTasks } from '@/context/TaskContext';
 import {
+  exportWeekFlowBackup,
+  pickWeekFlowBackup,
+  replaceWeekFlowData,
+  type PickedWeekFlowBackup,
+} from '@/lib/backupStorage';
+import {
   formatDateKey,
   getLocalDateKey,
   getStartOfWeek,
@@ -179,14 +185,20 @@ export default function HistoryScreen() {
     useState<PriorityFilter>('all');
   const [goalFilter, setGoalFilter] =
     useState<GoalFilter>('all');
+  const [isExporting, setIsExporting] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
+  const [backupMessage, setBackupMessage] = useState('');
+  const [pendingImport, setPendingImport] =
+    useState<PickedWeekFlowBackup | null>(null);
 
-  const { tasks } = useTasks();
-  const { goals } = useGoals();
+  const { tasks, refreshTasks } = useTasks();
+  const { goals, refreshGoals } = useGoals();
 
   const {
     getArchivedBrainDumps,
     restoreBrainDump,
     deleteBrainDump,
+    refreshBrainDumps,
   } = useBrainDumps();
 
   /*
@@ -367,6 +379,94 @@ export default function HistoryScreen() {
     setContentFilter('all');
     setPriorityFilter('all');
     setGoalFilter('all');
+  }
+
+  async function handleExportBackup() {
+    setIsExporting(true);
+    setBackupMessage('');
+
+    try {
+      const result = await exportWeekFlowBackup();
+
+      setBackupMessage(
+        `Exported ${result.counts.tasks} tasks, ` +
+          `${result.counts.goals} goals, and ` +
+          `${result.counts.brainDumps} brain dumps.`
+      );
+    } catch (error) {
+      console.error('Failed to export WeekFlow backup:', error);
+
+      setBackupMessage(
+        error instanceof Error
+          ? error.message
+          : 'The backup could not be exported.'
+      );
+    } finally {
+      setIsExporting(false);
+    }
+  }
+
+  async function handleChooseBackup() {
+    setBackupMessage('');
+
+    try {
+      const pickedBackup = await pickWeekFlowBackup();
+
+      if (pickedBackup) {
+        setPendingImport(pickedBackup);
+      }
+    } catch (error) {
+      console.error('Failed to read WeekFlow backup:', error);
+
+      setBackupMessage(
+        error instanceof Error
+          ? error.message
+          : 'The selected backup could not be read.'
+      );
+    }
+  }
+
+  async function handleConfirmImport() {
+    if (!pendingImport) return;
+
+    setIsImporting(true);
+    setBackupMessage('');
+
+    try {
+      const counts = await replaceWeekFlowData(
+        pendingImport.backup
+      );
+
+      /*
+       * The database changes immediately, but each context keeps
+       * its own in-memory list. Reload all three after import so
+       * every tab updates without restarting Expo.
+       */
+      await Promise.all([
+        refreshTasks(),
+        refreshGoals(),
+        refreshBrainDumps(),
+      ]);
+
+      setBackupMessage(
+        `Imported ${counts.tasks} tasks, ` +
+          `${counts.goals} goals, and ` +
+          `${counts.brainDumps} brain dumps.`
+      );
+
+      setPendingImport(null);
+      clearFilters();
+    } catch (error) {
+      console.error('Failed to import WeekFlow backup:', error);
+
+      setBackupMessage(
+        error instanceof Error
+          ? error.message
+          : 'The backup could not be imported.'
+      );
+    } finally {
+      setIsImporting(false);
+    }
   }
 
   return (
@@ -843,6 +943,114 @@ export default function HistoryScreen() {
           )}
         </View>
       ) : null}
+
+      <View style={styles.backupSection}>
+        <Text style={styles.sectionTitle}>Backup and Transfer</Text>
+
+        <Text style={styles.sectionSubtitle}>
+          Export all WeekFlow tasks, goals, and brain dumps to one
+          JSON file, or replace this device&apos;s data with a saved
+          WeekFlow backup.
+        </Text>
+
+        <View style={styles.backupCard}>
+          <Text style={styles.backupTitle}>Export Backup</Text>
+
+          <Text style={styles.backupText}>
+            Web downloads the backup file. The iPhone version opens
+            the system share sheet so the file can be saved or sent.
+          </Text>
+
+          <Pressable
+            style={[
+              styles.backupPrimaryButton,
+              isExporting && styles.backupButtonDisabled,
+            ]}
+            onPress={handleExportBackup}
+            disabled={isExporting || isImporting}
+          >
+            <Text style={styles.backupPrimaryButtonText}>
+              {isExporting ? 'Exporting...' : 'Export WeekFlow Data'}
+            </Text>
+          </Pressable>
+        </View>
+
+        <View style={styles.backupCard}>
+          <Text style={styles.backupTitle}>Import Backup</Text>
+
+          <Text style={styles.backupWarning}>
+            Import uses Replace Existing Data. The current tasks,
+            goals, and brain dumps on this device will be erased
+            only after you select a valid backup and confirm.
+          </Text>
+
+          <Pressable
+            style={[
+              styles.backupSecondaryButton,
+              isImporting && styles.backupButtonDisabled,
+            ]}
+            onPress={handleChooseBackup}
+            disabled={isExporting || isImporting}
+          >
+            <Text style={styles.backupSecondaryButtonText}>
+              Choose WeekFlow Backup
+            </Text>
+          </Pressable>
+
+          {pendingImport ? (
+            <View style={styles.importConfirmation}>
+              <Text style={styles.importFileName}>
+                {pendingImport.fileName}
+              </Text>
+
+              <Text style={styles.importCounts}>
+                {pendingImport.counts.tasks} tasks •{' '}
+                {pendingImport.counts.goals} goals •{' '}
+                {pendingImport.counts.brainDumps} brain dumps
+              </Text>
+
+              <Text style={styles.importWarningText}>
+                Confirming will replace all WeekFlow data currently
+                stored on this device.
+              </Text>
+
+              <View style={styles.importActions}>
+                <Pressable
+                  style={styles.cancelImportButton}
+                  onPress={() => setPendingImport(null)}
+                  disabled={isImporting}
+                >
+                  <Text style={styles.cancelImportButtonText}>
+                    Cancel
+                  </Text>
+                </Pressable>
+
+                <Pressable
+                  style={[
+                    styles.confirmImportButton,
+                    isImporting && styles.backupButtonDisabled,
+                  ]}
+                  onPress={handleConfirmImport}
+                  disabled={isImporting}
+                >
+                  <Text style={styles.confirmImportButtonText}>
+                    {isImporting
+                      ? 'Importing...'
+                      : 'Replace and Import'}
+                  </Text>
+                </Pressable>
+              </View>
+            </View>
+          ) : null}
+
+          {backupMessage ? (
+            <Text style={styles.backupMessage}>
+              {backupMessage}
+            </Text>
+          ) : null}
+        </View>
+      </View>
+
     </ScrollView>
   );
 }
@@ -1094,6 +1302,127 @@ const styles = StyleSheet.create({
   deleteButtonText: {
     color: 'white',
     fontWeight: '700',
+  },
+
+  backupSection: {
+    marginBottom: 28,
+    backgroundColor: 'transparent',
+  },
+  backupCard: {
+    padding: 16,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    backgroundColor: 'white',
+    marginBottom: 12,
+  },
+  backupTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#111827',
+    marginBottom: 6,
+  },
+  backupText: {
+    fontSize: 14,
+    color: '#4b5563',
+    lineHeight: 20,
+    marginBottom: 14,
+  },
+  backupWarning: {
+    fontSize: 14,
+    color: '#92400e',
+    lineHeight: 20,
+    marginBottom: 14,
+  },
+  backupPrimaryButton: {
+    backgroundColor: '#2563eb',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 11,
+    alignItems: 'center',
+  },
+  backupPrimaryButtonText: {
+    color: 'white',
+    fontWeight: '800',
+  },
+  backupSecondaryButton: {
+    borderWidth: 1,
+    borderColor: '#2563eb',
+    backgroundColor: '#eff6ff',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 11,
+    alignItems: 'center',
+  },
+  backupSecondaryButtonText: {
+    color: '#1d4ed8',
+    fontWeight: '800',
+  },
+  backupButtonDisabled: {
+    opacity: 0.55,
+  },
+  importConfirmation: {
+    marginTop: 14,
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#f59e0b',
+    backgroundColor: '#fffbeb',
+  },
+  importFileName: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#111827',
+    marginBottom: 4,
+  },
+  importCounts: {
+    fontSize: 13,
+    color: '#4b5563',
+    marginBottom: 8,
+  },
+  importWarningText: {
+    fontSize: 13,
+    color: '#92400e',
+    lineHeight: 18,
+    marginBottom: 12,
+  },
+  importActions: {
+    flexDirection: 'row',
+    gap: 10,
+    backgroundColor: 'transparent',
+  },
+  cancelImportButton: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#9ca3af',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    alignItems: 'center',
+    backgroundColor: 'white',
+  },
+  cancelImportButtonText: {
+    color: '#374151',
+    fontWeight: '800',
+  },
+  confirmImportButton: {
+    flex: 1,
+    backgroundColor: '#dc2626',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  confirmImportButtonText: {
+    color: 'white',
+    fontWeight: '800',
+  },
+  backupMessage: {
+    marginTop: 12,
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#166534',
+    lineHeight: 18,
   },
   emptyCard: {
     padding: 18,
