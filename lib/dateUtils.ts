@@ -98,6 +98,24 @@ export function formatDateKey(
 }
 
 /**
+ * Returns true when the supplied date key is before today's local date.
+ * Completed tasks are filtered elsewhere, so this helper only compares dates.
+ */
+export function isDateKeyOverdue(
+  dateKey: string | null,
+  currentDate: Date = new Date()
+): boolean {
+  if (!dateKey || !parseLocalDateKey(dateKey)) {
+    return false;
+  }
+
+  const todayKey = getLocalDateKey(startOfLocalDay(currentDate));
+
+  // YYYY-MM-DD values can be compared safely as strings.
+  return dateKey < todayKey;
+}
+
+/**
  * Returns the next occurrence of a weekday, including today when it matches.
  * This is used to safely migrate old weekday-only tasks into real dates.
  */
@@ -118,7 +136,7 @@ export function getNextOccurrenceDateKey(
 }
 
 /**
- * Builds a list of upcoming calendar dates for the Inbox scheduling controls.
+ * Builds a list of upcoming calendar dates for Inbox and rescheduling controls.
  */
 export function getUpcomingDays(
   count: number = 14,

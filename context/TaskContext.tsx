@@ -6,6 +6,7 @@ import {
   useState,
 } from 'react';
 
+import { getLocalDateKey } from '@/lib/dateUtils';
 import {
   completeTaskById,
   deleteTaskById,
@@ -45,6 +46,7 @@ type TaskContextValue = {
   moveTaskToDay: (id: number, day: string) => Promise<void>;
   getActiveTasksByDate: (dateKey: string) => Task[];
   getActiveTasksByDay: (day: string) => Task[];
+  getOverdueTasks: (currentDate?: Date) => Task[];
   getInboxTasks: () => Task[];
   getCompletedTasks: () => Task[];
 };
@@ -140,6 +142,27 @@ export function TaskProvider({ children }: { children: ReactNode }) {
     );
   }
 
+  /**
+   * An overdue task is active, has a real due date, and is dated
+   * before today. Sorting oldest first keeps the most overdue work visible.
+   */
+  function getOverdueTasks(currentDate: Date = new Date()) {
+    const todayKey = getLocalDateKey(currentDate);
+
+    return tasks
+      .filter(
+        (task) =>
+          !task.completed &&
+          task.dueDate !== null &&
+          task.dueDate < todayKey
+      )
+      .sort((firstTask, secondTask) =>
+        (firstTask.dueDate ?? '').localeCompare(
+          secondTask.dueDate ?? ''
+        )
+      );
+  }
+
   function getInboxTasks() {
     return tasks.filter(
       (task) => task.day === 'Inbox' && !task.completed
@@ -164,6 +187,7 @@ export function TaskProvider({ children }: { children: ReactNode }) {
         moveTaskToDay,
         getActiveTasksByDate,
         getActiveTasksByDay,
+        getOverdueTasks,
         getInboxTasks,
         getCompletedTasks,
       }}

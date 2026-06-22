@@ -8,7 +8,11 @@ import { Text, View } from '@/components/Themed';
 import { useBrainDumps } from '@/context/BrainDumpContext';
 import { useGoals } from '@/context/GoalContext';
 import { useTasks } from '@/context/TaskContext';
-import { formatDateKey, getLocalDateKey } from '@/lib/dateUtils';
+import {
+  formatDateKey,
+  getLocalDateKey,
+  getUpcomingDays,
+} from '@/lib/dateUtils';
 import { calculateProgressStats } from '@/lib/progressStats';
 
 function getPriorityLabel(priority: number) {
@@ -33,8 +37,10 @@ export default function DailyScreen() {
     tasks,
     completeTask,
     deleteTask,
+    scheduleTask,
     moveTaskToInbox,
     getActiveTasksByDate,
+    getOverdueTasks,
   } = useTasks();
 
   const { goals } = useGoals();
@@ -45,6 +51,12 @@ export default function DailyScreen() {
   } = useBrainDumps();
 
   const todayDateKey = getLocalDateKey(new Date());
+  // Temporary test: treat tomorrow as today.
+  // This is here to check for Overdue tasks
+  // const testNow = new Date();
+  // testNow.setDate(testNow.getDate() + 1);
+
+  // const todayDateKey = getLocalDateKey(testNow);
   const todayLabel = formatDateKey(todayDateKey, {
     weekday: 'long',
     month: 'long',
@@ -52,7 +64,17 @@ export default function DailyScreen() {
     year: 'numeric',
   });
   const activeTasks = getActiveTasksByDate(todayDateKey);
+  const overdueTasks = getOverdueTasks();
+
+  // This is here to check for Overdue tasks
+  // const overdueTasks = getOverdueTasks(testNow);
   const activeBrainDumps = getActiveBrainDumps();
+
+  /*
+   * The first option would be Today, which already has its own quick button.
+   * The remaining options give overdue tasks a simple future reschedule list.
+   */
+  const futureRescheduleDays = getUpcomingDays(14).slice(1);
 
   /*
    * Progress calculations remain outside the UI markup so the
@@ -82,10 +104,132 @@ export default function DailyScreen() {
           {progressStats.completedToday} completed •{' '}
           {activeTasks.length} task
           {activeTasks.length === 1 ? '' : 's'} left •{' '}
+          {overdueTasks.length} overdue •{' '}
           {activeBrainDumps.length} brain dump note
           {activeBrainDumps.length === 1 ? '' : 's'}
         </Text>
       </View>
+
+      {overdueTasks.length > 0 ? (
+        <View style={styles.overdueSection}>
+          <Text style={styles.overdueSectionTitle}>
+            Overdue Tasks
+          </Text>
+
+          <Text style={styles.overdueSectionSubtitle}>
+            These tasks missed their due dates. Move them to today,
+            choose a new date, or return them to Inbox.
+          </Text>
+
+          <View style={styles.overdueList}>
+            {overdueTasks.map((task) => {
+              const linkedGoal = goals.find(
+                (goal) => goal.id === task.goalId
+              );
+
+              return (
+                <View key={task.id} style={styles.overdueCard}>
+                  <View style={styles.overdueTopRow}>
+                    <View style={styles.taskTextWrap}>
+                      <View style={styles.overdueTitleRow}>
+                        <Text style={styles.taskTitle}>{task.title}</Text>
+                        <Text style={styles.overdueBadge}>Overdue</Text>
+                      </View>
+
+                      <Text style={styles.overdueDueText}>
+                        Due:{' '}
+                        {task.dueDate
+                          ? formatDateKey(task.dueDate)
+                          : task.day}
+                      </Text>
+
+                      <Text style={styles.taskMeta}>
+                        Priority: {getPriorityLabel(task.priority)}
+                      </Text>
+
+                      {linkedGoal ? (
+                        <Text style={styles.taskMeta}>
+                          Goal: {linkedGoal.title}
+                        </Text>
+                      ) : null}
+
+                      {task.notes ? (
+                        <Text style={styles.taskNotes}>{task.notes}</Text>
+                      ) : null}
+                    </View>
+
+                    <View style={styles.taskActions}>
+                      <Pressable
+                        style={styles.todayButton}
+                        onPress={() =>
+                          scheduleTask(task.id, todayDateKey)
+                        }
+                      >
+                        <Text style={styles.actionButtonText}>
+                          Move to Today
+                        </Text>
+                      </Pressable>
+
+                      <Pressable
+                        style={styles.inboxButton}
+                        onPress={() => moveTaskToInbox(task.id)}
+                      >
+                        <Text style={styles.actionButtonText}>
+                          Back to Inbox
+                        </Text>
+                      </Pressable>
+
+                      <Pressable
+                        style={styles.doneButton}
+                        onPress={() => completeTask(task.id)}
+                      >
+                        <Text style={styles.actionButtonText}>Done</Text>
+                      </Pressable>
+
+                      <Pressable
+                        style={styles.deleteButton}
+                        onPress={() => deleteTask(task.id)}
+                      >
+                        <Text style={styles.actionButtonText}>Delete</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+
+                  <View style={styles.rescheduleSection}>
+                    <Text style={styles.rescheduleLabel}>
+                      Pick New Date:
+                    </Text>
+
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      contentContainerStyle={styles.rescheduleDays}
+                    >
+                      {futureRescheduleDays.map((calendarDay) => (
+                        <Pressable
+                          key={calendarDay.dateKey}
+                          style={styles.rescheduleButton}
+                          onPress={() =>
+                            scheduleTask(task.id, calendarDay.dateKey)
+                          }
+                        >
+                          <Text style={styles.rescheduleDayText}>
+                            {calendarDay.shortDayName}
+                          </Text>
+
+                          <Text style={styles.rescheduleDateText}>
+                            {calendarDay.monthDayLabel}
+                          </Text>
+                        </Pressable>
+                      ))}
+                    </ScrollView>
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+        </View>
+      ) : null}
 
       <View style={styles.streakCard}>
         <View style={styles.streakTextWrap}>
@@ -189,11 +333,6 @@ export default function DailyScreen() {
           {progressStats.weeklyDays.map((day) => {
             const hasCompletion = day.completedCount > 0;
 
-            /*
-             * Completed days show a check mark.
-             * Future days show a dash.
-             * Past days without a completion show an empty circle.
-             */
             const statusSymbol = hasCompletion
               ? '✓'
               : day.isFuture
@@ -205,17 +344,14 @@ export default function DailyScreen() {
                 key={day.dateKey}
                 style={[
                   styles.weekDayCard,
-                  hasCompletion &&
-                    styles.weekDayCardCompleted,
-                  day.isToday &&
-                    styles.weekDayCardToday,
+                  hasCompletion && styles.weekDayCardCompleted,
+                  day.isToday && styles.weekDayCardToday,
                 ]}
               >
                 <Text
                   style={[
                     styles.weekDayName,
-                    hasCompletion &&
-                      styles.weekDayTextCompleted,
+                    hasCompletion && styles.weekDayTextCompleted,
                   ]}
                 >
                   {day.shortDay}
@@ -224,8 +360,7 @@ export default function DailyScreen() {
                 <Text
                   style={[
                     styles.weekDayCount,
-                    hasCompletion &&
-                      styles.weekDayTextCompleted,
+                    hasCompletion && styles.weekDayTextCompleted,
                   ]}
                 >
                   {day.completedCount}
@@ -234,17 +369,14 @@ export default function DailyScreen() {
                 <Text
                   style={[
                     styles.weekDayStatus,
-                    hasCompletion &&
-                      styles.weekDayTextCompleted,
+                    hasCompletion && styles.weekDayTextCompleted,
                   ]}
                 >
                   {statusSymbol}
                 </Text>
 
                 {day.isToday ? (
-                  <Text style={styles.todayLabel}>
-                    Today
-                  </Text>
+                  <Text style={styles.todayLabel}>Today</Text>
                 ) : null}
               </View>
             );
@@ -252,17 +384,9 @@ export default function DailyScreen() {
         </ScrollView>
 
         <View style={styles.weekLegend}>
-          <Text style={styles.weekLegendText}>
-            ✓ Completed day
-          </Text>
-
-          <Text style={styles.weekLegendText}>
-            ○ No completion
-          </Text>
-
-          <Text style={styles.weekLegendText}>
-            — Future day
-          </Text>
+          <Text style={styles.weekLegendText}>✓ Completed day</Text>
+          <Text style={styles.weekLegendText}>○ No completion</Text>
+          <Text style={styles.weekLegendText}>— Future day</Text>
         </View>
       </View>
 
@@ -296,17 +420,17 @@ export default function DailyScreen() {
               return (
                 <View key={task.id} style={styles.taskCard}>
                   <View style={styles.taskTextWrap}>
-                    <Text style={styles.taskTitle}>
-                      {task.title}
+                    <Text style={styles.taskTitle}>{task.title}</Text>
+
+                    <Text style={styles.taskMeta}>
+                      Due:{' '}
+                      {task.dueDate
+                        ? formatDateKey(task.dueDate)
+                        : task.day}
                     </Text>
 
                     <Text style={styles.taskMeta}>
-                      Due: {task.dueDate ? formatDateKey(task.dueDate) : task.day}
-                    </Text>
-
-                    <Text style={styles.taskMeta}>
-                      Priority:{' '}
-                      {getPriorityLabel(task.priority)}
+                      Priority: {getPriorityLabel(task.priority)}
                     </Text>
 
                     {linkedGoal ? (
@@ -316,20 +440,16 @@ export default function DailyScreen() {
                     ) : null}
 
                     {task.notes ? (
-                      <Text style={styles.taskNotes}>
-                        {task.notes}
-                      </Text>
+                      <Text style={styles.taskNotes}>{task.notes}</Text>
                     ) : null}
                   </View>
 
                   <View style={styles.taskActions}>
                     <Pressable
                       style={styles.inboxButton}
-                      onPress={() =>
-                        moveTaskToInbox(task.id)
-                      }
+                      onPress={() => moveTaskToInbox(task.id)}
                     >
-                      <Text style={styles.inboxButtonText}>
+                      <Text style={styles.actionButtonText}>
                         Back to Inbox
                       </Text>
                     </Pressable>
@@ -338,18 +458,14 @@ export default function DailyScreen() {
                       style={styles.doneButton}
                       onPress={() => completeTask(task.id)}
                     >
-                      <Text style={styles.doneButtonText}>
-                        Done
-                      </Text>
+                      <Text style={styles.actionButtonText}>Done</Text>
                     </Pressable>
 
                     <Pressable
                       style={styles.deleteButton}
                       onPress={() => deleteTask(task.id)}
                     >
-                      <Text style={styles.deleteButtonText}>
-                        Delete
-                      </Text>
+                      <Text style={styles.actionButtonText}>Delete</Text>
                     </Pressable>
                   </View>
                 </View>
@@ -383,32 +499,22 @@ export default function DailyScreen() {
             </View>
           ) : (
             activeBrainDumps.map((brainDump) => (
-              <View
-                key={brainDump.id}
-                style={styles.brainDumpCard}
-              >
+              <View key={brainDump.id} style={styles.brainDumpCard}>
                 <View style={styles.brainDumpTextWrap}>
                   <Text style={styles.brainDumpBody}>
                     {brainDump.body}
                   </Text>
 
                   <Text style={styles.taskMeta}>
-                    Saved:{' '}
-                    {formatCreatedDate(
-                      brainDump.createdAt
-                    )}
+                    Saved: {formatCreatedDate(brainDump.createdAt)}
                   </Text>
                 </View>
 
                 <Pressable
                   style={styles.archiveButton}
-                  onPress={() =>
-                    archiveBrainDump(brainDump.id)
-                  }
+                  onPress={() => archiveBrainDump(brainDump.id)}
                 >
-                  <Text style={styles.archiveButtonText}>
-                    Archive
-                  </Text>
+                  <Text style={styles.archiveButtonText}>Archive</Text>
                 </Pressable>
               </View>
             ))
@@ -420,26 +526,11 @@ export default function DailyScreen() {
 }
 
 const styles = StyleSheet.create({
-  page: {
-    flex: 1,
-  },
-  content: {
-    padding: 20,
-    paddingBottom: 40,
-  },
-  header: {
-    marginBottom: 20,
-  },
-  title: {
-    fontSize: 34,
-    fontWeight: '800',
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 16,
-    opacity: 0.7,
-    lineHeight: 22,
-  },
+  page: { flex: 1 },
+  content: { padding: 20, paddingBottom: 40 },
+  header: { marginBottom: 20 },
+  title: { fontSize: 34, fontWeight: '800', marginBottom: 8 },
+  subtitle: { fontSize: 16, opacity: 0.7, lineHeight: 22 },
   progressCard: {
     padding: 18,
     borderRadius: 16,
@@ -452,9 +543,91 @@ const styles = StyleSheet.create({
     marginBottom: 4,
     color: '#111827',
   },
-  progressText: {
-    fontSize: 15,
-    color: '#374151',
+  progressText: { fontSize: 15, color: '#374151' },
+  overdueSection: {
+    padding: 18,
+    borderRadius: 16,
+    backgroundColor: '#fff1f2',
+    marginBottom: 14,
+  },
+  overdueSectionTitle: {
+    fontSize: 22,
+    fontWeight: '900',
+    color: '#991b1b',
+  },
+  overdueSectionSubtitle: {
+    marginTop: 5,
+    marginBottom: 14,
+    fontSize: 13,
+    lineHeight: 19,
+    color: '#7f1d1d',
+  },
+  overdueList: { gap: 12, backgroundColor: 'transparent' },
+  overdueCard: {
+    padding: 16,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#f87171',
+    backgroundColor: 'white',
+    gap: 14,
+  },
+  overdueTopRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
+    backgroundColor: 'transparent',
+  },
+  overdueTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
+    backgroundColor: 'transparent',
+  },
+  overdueBadge: {
+    fontSize: 11,
+    fontWeight: '900',
+    color: '#991b1b',
+    backgroundColor: '#fee2e2',
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 999,
+    overflow: 'hidden',
+  },
+  overdueDueText: {
+    marginTop: 5,
+    fontSize: 13,
+    color: '#b91c1c',
+    fontWeight: '800',
+  },
+  rescheduleSection: { gap: 8, backgroundColor: 'transparent' },
+  rescheduleLabel: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#7f1d1d',
+  },
+  rescheduleDays: { gap: 8 },
+  rescheduleButton: {
+    minWidth: 82,
+    paddingVertical: 9,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#fecaca',
+    backgroundColor: '#fff7ed',
+    alignItems: 'center',
+  },
+  rescheduleDayText: {
+    fontSize: 13,
+    fontWeight: '900',
+    color: '#9a3412',
+  },
+  rescheduleDateText: {
+    marginTop: 3,
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#7c2d12',
   },
   streakCard: {
     padding: 18,
@@ -462,16 +635,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff7ed',
     marginBottom: 14,
   },
-  streakTextWrap: {
-    backgroundColor: 'transparent',
-  },
-  streakTitle: {
-    fontSize: 20,
-    fontWeight: '800',
-    color: '#111827',
-    marginBottom: 4,
-  },
+  streakTextWrap: { backgroundColor: 'transparent' },
+  streakTitle: { fontSize: 20, fontWeight: '800', color: '#111827' },
   streakSubtitle: {
+    marginTop: 4,
     fontSize: 13,
     color: '#6b7280',
     lineHeight: 18,
@@ -499,7 +666,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     color: '#9a3412',
-    textAlign: 'center',
   },
   longestStreakBadge: {
     flex: 1,
@@ -518,7 +684,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     color: '#92400e',
-    textAlign: 'center',
   },
   statsGrid: {
     flexDirection: 'row',
@@ -535,13 +700,9 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     backgroundColor: 'white',
   },
-  statNumber: {
-    fontSize: 22,
-    fontWeight: '900',
-    color: '#111827',
-    marginBottom: 4,
-  },
+  statNumber: { fontSize: 22, fontWeight: '900', color: '#111827' },
   statLabel: {
+    marginTop: 4,
     fontSize: 12,
     fontWeight: '700',
     color: '#6b7280',
@@ -558,11 +719,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#eff6ff',
     marginBottom: 22,
   },
-  weekProgressTitle: {
-    fontSize: 20,
-    fontWeight: '800',
-    color: '#111827',
-  },
+  weekProgressTitle: { fontSize: 20, fontWeight: '800', color: '#111827' },
   weekProgressSubtitle: {
     marginTop: 4,
     marginBottom: 14,
@@ -570,10 +727,7 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     color: '#6b7280',
   },
-  weekDaysRow: {
-    gap: 10,
-    paddingBottom: 4,
-  },
+  weekDaysRow: { gap: 10, paddingBottom: 4 },
   weekDayCard: {
     minWidth: 72,
     minHeight: 112,
@@ -589,15 +743,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#dcfce7',
     borderColor: '#86efac',
   },
-  weekDayCardToday: {
-    borderWidth: 3,
-    borderColor: '#2563eb',
-  },
-  weekDayName: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#374151',
-  },
+  weekDayCardToday: { borderWidth: 3, borderColor: '#2563eb' },
+  weekDayName: { fontSize: 13, fontWeight: '800', color: '#374151' },
   weekDayCount: {
     marginTop: 8,
     fontSize: 24,
@@ -610,9 +757,7 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     color: '#9ca3af',
   },
-  weekDayTextCompleted: {
-    color: '#166534',
-  },
+  weekDayTextCompleted: { color: '#166534' },
   todayLabel: {
     marginTop: 4,
     fontSize: 10,
@@ -626,14 +771,8 @@ const styles = StyleSheet.create({
     marginTop: 12,
     backgroundColor: 'transparent',
   },
-  weekLegendText: {
-    fontSize: 11,
-    color: '#6b7280',
-  },
-  section: {
-    marginBottom: 26,
-    backgroundColor: 'transparent',
-  },
+  weekLegendText: { fontSize: 11, color: '#6b7280' },
+  section: { marginBottom: 26, backgroundColor: 'transparent' },
   sectionTitle: {
     fontSize: 22,
     fontWeight: '800',
@@ -646,9 +785,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     lineHeight: 20,
   },
-  taskList: {
-    gap: 12,
-  },
+  taskList: { gap: 12 },
   taskCard: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -660,20 +797,9 @@ const styles = StyleSheet.create({
     backgroundColor: 'white',
     gap: 12,
   },
-  taskTextWrap: {
-    flex: 1,
-    backgroundColor: 'transparent',
-  },
-  taskTitle: {
-    fontSize: 17,
-    fontWeight: '700',
-    color: '#111827',
-  },
-  taskMeta: {
-    marginTop: 4,
-    fontSize: 13,
-    color: '#6b7280',
-  },
+  taskTextWrap: { flex: 1, backgroundColor: 'transparent' },
+  taskTitle: { fontSize: 17, fontWeight: '700', color: '#111827' },
+  taskMeta: { marginTop: 4, fontSize: 13, color: '#6b7280' },
   taskNotes: {
     marginTop: 6,
     fontSize: 14,
@@ -685,15 +811,17 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
     backgroundColor: 'transparent',
   },
+  todayButton: {
+    backgroundColor: '#f97316',
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+  },
   inboxButton: {
     backgroundColor: '#2563eb',
     paddingVertical: 8,
     paddingHorizontal: 14,
     borderRadius: 10,
-  },
-  inboxButtonText: {
-    color: 'white',
-    fontWeight: '700',
   },
   doneButton: {
     backgroundColor: '#16a34a',
@@ -701,23 +829,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     borderRadius: 10,
   },
-  doneButtonText: {
-    color: 'white',
-    fontWeight: '700',
-  },
   deleteButton: {
     backgroundColor: '#dc2626',
     paddingVertical: 8,
     paddingHorizontal: 14,
     borderRadius: 10,
   },
-  deleteButtonText: {
-    color: 'white',
-    fontWeight: '700',
-  },
-  brainDumpList: {
-    gap: 12,
-  },
+  actionButtonText: { color: 'white', fontWeight: '700' },
+  brainDumpList: { gap: 12 },
   brainDumpCard: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -728,10 +847,7 @@ const styles = StyleSheet.create({
     borderColor: '#e5e7eb',
     backgroundColor: 'white',
   },
-  brainDumpTextWrap: {
-    flex: 1,
-    backgroundColor: 'transparent',
-  },
+  brainDumpTextWrap: { flex: 1, backgroundColor: 'transparent' },
   brainDumpBody: {
     fontSize: 15,
     fontWeight: '600',
@@ -745,10 +861,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     alignSelf: 'flex-start',
   },
-  archiveButtonText: {
-    color: 'white',
-    fontWeight: '700',
-  },
+  archiveButtonText: { color: 'white', fontWeight: '700' },
   emptyCard: {
     padding: 18,
     borderRadius: 14,
@@ -762,8 +875,5 @@ const styles = StyleSheet.create({
     marginBottom: 4,
     color: '#111827',
   },
-  emptyText: {
-    fontSize: 14,
-    color: '#6b7280',
-  },
+  emptyText: { fontSize: 14, color: '#6b7280' },
 });
