@@ -12,6 +12,8 @@ import {
   getTasks,
   insertTask,
   moveTaskToDayById,
+  moveTaskToInboxById,
+  scheduleTaskByDate,
   Task,
   updateTaskById,
 } from '@/lib/taskStorage';
@@ -26,7 +28,8 @@ type TaskContextValue = {
     day: string,
     notes?: string,
     priority?: number,
-    goalId?: number | null
+    goalId?: number | null,
+    dueDate?: string | null
   ) => Promise<void>;
   editTask: (
     id: number,
@@ -37,7 +40,10 @@ type TaskContextValue = {
   ) => Promise<void>;
   completeTask: (id: number) => Promise<void>;
   deleteTask: (id: number) => Promise<void>;
+  scheduleTask: (id: number, dueDate: string) => Promise<void>;
+  moveTaskToInbox: (id: number) => Promise<void>;
   moveTaskToDay: (id: number, day: string) => Promise<void>;
+  getActiveTasksByDate: (dateKey: string) => Task[];
   getActiveTasksByDay: (day: string) => Task[];
   getInboxTasks: () => Task[];
   getCompletedTasks: () => Task[];
@@ -52,10 +58,14 @@ export function TaskProvider({ children }: { children: ReactNode }) {
   async function loadTasks() {
     setIsLoading(true);
 
-    const loadedTasks = await getTasks();
-
-    setTasks(loadedTasks);
-    setIsLoading(false);
+    try {
+      const loadedTasks = await getTasks();
+      setTasks(loadedTasks);
+    } catch (error) {
+      console.error('Failed to load tasks:', error);
+    } finally {
+      setIsLoading(false);
+    }
   }
 
   useEffect(() => {
@@ -67,11 +77,12 @@ export function TaskProvider({ children }: { children: ReactNode }) {
     day: string,
     notes: string = '',
     priority: number = 0,
-    goalId: number | null = null
+    goalId: number | null = null,
+    dueDate: string | null = null
   ) {
     if (!title.trim()) return;
 
-    await insertTask(title, day, notes, priority, goalId);
+    await insertTask(title, day, notes, priority, goalId, dueDate);
     await loadTasks();
   }
 
@@ -98,17 +109,41 @@ export function TaskProvider({ children }: { children: ReactNode }) {
     await loadTasks();
   }
 
+  async function scheduleTask(id: number, dueDate: string) {
+    await scheduleTaskByDate(id, dueDate);
+    await loadTasks();
+  }
+
+  async function moveTaskToInbox(id: number) {
+    await moveTaskToInboxById(id);
+    await loadTasks();
+  }
+
+  /*
+   * This older method remains available so any screen that still sends a
+   * weekday name continues to work while the app moves to real dates.
+   */
   async function moveTaskToDay(id: number, day: string) {
     await moveTaskToDayById(id, day);
     await loadTasks();
   }
 
+  function getActiveTasksByDate(dateKey: string) {
+    return tasks.filter(
+      (task) => task.dueDate === dateKey && !task.completed
+    );
+  }
+
   function getActiveTasksByDay(day: string) {
-    return tasks.filter((task) => task.day === day && !task.completed);
+    return tasks.filter(
+      (task) => task.day === day && !task.completed
+    );
   }
 
   function getInboxTasks() {
-    return tasks.filter((task) => task.day === 'Inbox' && !task.completed);
+    return tasks.filter(
+      (task) => task.day === 'Inbox' && !task.completed
+    );
   }
 
   function getCompletedTasks() {
@@ -124,7 +159,10 @@ export function TaskProvider({ children }: { children: ReactNode }) {
         editTask,
         completeTask,
         deleteTask,
+        scheduleTask,
+        moveTaskToInbox,
         moveTaskToDay,
+        getActiveTasksByDate,
         getActiveTasksByDay,
         getInboxTasks,
         getCompletedTasks,

@@ -8,17 +8,8 @@ import { Text, View } from '@/components/Themed';
 import { useBrainDumps } from '@/context/BrainDumpContext';
 import { useGoals } from '@/context/GoalContext';
 import { useTasks } from '@/context/TaskContext';
+import { formatDateKey, getLocalDateKey } from '@/lib/dateUtils';
 import { calculateProgressStats } from '@/lib/progressStats';
-
-const dayNames = [
-  'Sunday',
-  'Monday',
-  'Tuesday',
-  'Wednesday',
-  'Thursday',
-  'Friday',
-  'Saturday',
-];
 
 function getPriorityLabel(priority: number) {
   if (priority === 2) return 'High';
@@ -42,8 +33,8 @@ export default function DailyScreen() {
     tasks,
     completeTask,
     deleteTask,
-    moveTaskToDay,
-    getActiveTasksByDay,
+    moveTaskToInbox,
+    getActiveTasksByDate,
   } = useTasks();
 
   const { goals } = useGoals();
@@ -53,8 +44,14 @@ export default function DailyScreen() {
     archiveBrainDump,
   } = useBrainDumps();
 
-  const today = dayNames[new Date().getDay()];
-  const activeTasks = getActiveTasksByDay(today);
+  const todayDateKey = getLocalDateKey(new Date());
+  const todayLabel = formatDateKey(todayDateKey, {
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  });
+  const activeTasks = getActiveTasksByDate(todayDateKey);
   const activeBrainDumps = getActiveBrainDumps();
 
   /*
@@ -72,7 +69,7 @@ export default function DailyScreen() {
         <Text style={styles.title}>Daily Tasks</Text>
 
         <Text style={styles.subtitle}>
-          Today is {today}. Review what needs attention today.
+          Today is {todayLabel}. Review what needs attention today.
         </Text>
       </View>
 
@@ -275,7 +272,7 @@ export default function DailyScreen() {
         </Text>
 
         <Text style={styles.sectionSubtitle}>
-          Tasks moved from Inbox into today show here.
+          Tasks scheduled for today's actual calendar date show here.
         </Text>
 
         <View style={styles.taskList}>
@@ -286,7 +283,7 @@ export default function DailyScreen() {
               </Text>
 
               <Text style={styles.emptyText}>
-                Move a task from Inbox into today when
+                Schedule a task from Inbox for today's date when
                 something needs to be done.
               </Text>
             </View>
@@ -304,7 +301,7 @@ export default function DailyScreen() {
                     </Text>
 
                     <Text style={styles.taskMeta}>
-                      Assigned day: {task.day}
+                      Due: {task.dueDate ? formatDateKey(task.dueDate) : task.day}
                     </Text>
 
                     <Text style={styles.taskMeta}>
@@ -329,7 +326,7 @@ export default function DailyScreen() {
                     <Pressable
                       style={styles.inboxButton}
                       onPress={() =>
-                        moveTaskToDay(task.id, 'Inbox')
+                        moveTaskToInbox(task.id)
                       }
                     >
                       <Text style={styles.inboxButtonText}>
