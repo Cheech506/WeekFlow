@@ -1,7 +1,8 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet } from 'react-native';
 
 import { Text, View } from '@/components/Themed';
+import { useBrainDumps } from '@/context/BrainDumpContext';
 import { useGoals } from '@/context/GoalContext';
 import { useTasks } from '@/context/TaskContext';
 import {
@@ -10,6 +11,8 @@ import {
   getWeekDays,
   isDateKeyOverdue,
 } from '@/lib/dateUtils';
+import { calculateProgressStats } from '@/lib/progressStats';
+import { calculateWeeklyReview } from '@/lib/weeklyReview';
 
 function getPriorityLabel(priority: number) {
   if (priority === 2) return 'High';
@@ -19,8 +22,10 @@ function getPriorityLabel(priority: number) {
 
 export default function WeeklyScreen() {
   const [weekOffset, setWeekOffset] = useState(0);
+  const [isReviewExpanded, setIsReviewExpanded] = useState(true);
 
   const {
+    tasks,
     completeTask,
     deleteTask,
     scheduleTask,
@@ -29,6 +34,7 @@ export default function WeeklyScreen() {
   } = useTasks();
 
   const { goals } = useGoals();
+  const { brainDumps } = useBrainDumps();
   const todayDateKey = getLocalDateKey(new Date());
 
   /*
@@ -40,6 +46,35 @@ export default function WeeklyScreen() {
     [weekOffset]
   );
 
+  const weeklyReview = useMemo(
+    () =>
+      calculateWeeklyReview(
+        tasks,
+        goals,
+        brainDumps,
+        new Date(),
+        weekOffset
+      ),
+    [tasks, goals, brainDumps, weekOffset]
+  );
+
+  /*
+   * Streaks describe the user's current overall consistency, so they are
+   * displayed only while reviewing the current week.
+   */
+  const currentProgressStats = useMemo(
+    () => calculateProgressStats(tasks),
+    [tasks]
+  );
+
+  /*
+   * The current week starts expanded. Previous and future weeks start
+   * collapsed so the task schedule remains the main focus.
+   */
+  useEffect(() => {
+    setIsReviewExpanded(weekOffset === 0);
+  }, [weekOffset]);
+
   const firstDate = weekDays[0].dateKey;
   const lastDate = weekDays[6].dateKey;
   const weekLabel = `${formatDateKey(firstDate, {
@@ -50,6 +85,11 @@ export default function WeeklyScreen() {
     day: 'numeric',
     year: 'numeric',
   })}`;
+
+  const reviewGoalCount =
+    weeklyReview.status === 'future'
+      ? weeklyReview.scheduledGoalCount
+      : weeklyReview.goalsProgressedCount;
 
   return (
     <ScrollView style={styles.page} contentContainerStyle={styles.content}>
@@ -95,6 +135,133 @@ export default function WeeklyScreen() {
             <Text style={styles.navigationButtonText}>Next</Text>
           </Pressable>
         </View>
+      </View>
+
+      <View
+        style={[
+          styles.reviewCard,
+          weeklyReview.status === 'past' && styles.pastReviewCard,
+          weeklyReview.status === 'future' && styles.futureReviewCard,
+        ]}
+      >
+        <Pressable
+          style={styles.reviewHeader}
+          onPress={() =>
+            setIsReviewExpanded((current) => !current)
+          }
+          accessibilityRole="button"
+          accessibilityState={{ expanded: isReviewExpanded }}
+          accessibilityLabel={`${weeklyReview.title}. ${
+            isReviewExpanded ? 'Collapse' : 'Expand'
+          } weekly summary.`}
+        >
+          <View style={styles.reviewHeaderText}>
+            <Text style={styles.reviewTitle}>
+              {weeklyReview.title}
+            </Text>
+
+            <Text style={styles.reviewCollapsedSummary}>
+              {weeklyReview.collapsedSummary}
+            </Text>
+          </View>
+
+          <Text style={styles.reviewChevron}>
+            {isReviewExpanded ? '▼' : '▶'}
+          </Text>
+        </Pressable>
+
+        {isReviewExpanded ? (
+          <View style={styles.reviewBody}>
+            <View style={styles.summaryList}>
+              {weeklyReview.summaryLines.map((line, index) => (
+                <Text
+                  key={`${line}-${index}`}
+                  style={styles.summaryLine}
+                >
+                  • {line}
+                </Text>
+              ))}
+            </View>
+
+            <View style={styles.reviewMetrics}>
+              <View style={styles.metricCard}>
+                <Text style={styles.metricValue}>
+                  {weeklyReview.status === 'future'
+                    ? weeklyReview.unfinishedCount
+                    : weeklyReview.completedCount}
+                </Text>
+                <Text style={styles.metricLabel}>
+                  {weeklyReview.status === 'future'
+                    ? 'Scheduled'
+                    : 'Completed'}
+                </Text>
+              </View>
+
+              <View style={styles.metricCard}>
+                <Text style={styles.metricValue}>
+                  {weeklyReview.unfinishedCount}
+                </Text>
+                <Text style={styles.metricLabel}>
+                  {weeklyReview.status === 'future'
+                    ? 'Planned'
+                    : 'Remaining'}
+                </Text>
+              </View>
+
+              <View style={styles.metricCard}>
+                <Text style={styles.metricValue}>
+                  {weeklyReview.status === 'future'
+                    ? reviewGoalCount
+                    : `${weeklyReview.completionRate}%`}
+                </Text>
+                <Text style={styles.metricLabel}>
+                  {weeklyReview.status === 'future'
+                    ? 'Linked Goals'
+                    : 'Completion'}
+                </Text>
+              </View>
+
+              <View style={styles.metricCard}>
+                <Text style={styles.metricValue}>
+                  {reviewGoalCount}
+                </Text>
+                <Text style={styles.metricLabel}>
+                  {weeklyReview.status === 'future'
+                    ? 'Goals'
+                    : 'Goals Progressed'}
+                </Text>
+              </View>
+            </View>
+
+            {weeklyReview.status === 'current' ? (
+              <View style={styles.streakRow}>
+                <View style={styles.streakBadge}>
+                  <Text style={styles.streakIcon}>🔥</Text>
+                  <View style={styles.transparentView}>
+                    <Text style={styles.streakValue}>
+                      {currentProgressStats.currentStreak}
+                    </Text>
+                    <Text style={styles.streakLabel}>
+                      Current Streak
+                    </Text>
+                  </View>
+                </View>
+
+                <View style={styles.streakBadge}>
+                  <Text style={styles.streakIcon}>🏆</Text>
+                  <View style={styles.transparentView}>
+                    <Text style={styles.streakValue}>
+                      {currentProgressStats.longestStreak}
+                    </Text>
+                    <Text style={styles.streakLabel}>
+                      Longest Streak
+                    </Text>
+                  </View>
+                </View>
+              </View>
+            ) : null}
+          </View>
+        ) : null}
       </View>
 
       <View style={styles.weekList}>
@@ -273,6 +440,122 @@ const styles = StyleSheet.create({
     color: '#2563eb',
   },
   navigationButtonTextSelected: { color: 'white' },
+  reviewCard: {
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+    backgroundColor: '#eff6ff',
+    marginBottom: 18,
+    overflow: 'hidden',
+  },
+  pastReviewCard: {
+    borderColor: '#bbf7d0',
+    backgroundColor: '#f0fdf4',
+  },
+  futureReviewCard: {
+    borderColor: '#ddd6fe',
+    backgroundColor: '#f5f3ff',
+  },
+  reviewHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    padding: 16,
+    backgroundColor: 'transparent',
+  },
+  reviewHeaderText: {
+    flex: 1,
+    backgroundColor: 'transparent',
+  },
+  reviewTitle: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: '#111827',
+    marginBottom: 3,
+  },
+  reviewCollapsedSummary: {
+    fontSize: 13,
+    color: '#4b5563',
+  },
+  reviewChevron: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#2563eb',
+  },
+  reviewBody: {
+    paddingHorizontal: 16,
+    paddingBottom: 16,
+    backgroundColor: 'transparent',
+  },
+  summaryList: {
+    gap: 7,
+    marginBottom: 14,
+    backgroundColor: 'transparent',
+  },
+  summaryLine: {
+    fontSize: 14,
+    lineHeight: 20,
+    color: '#374151',
+  },
+  reviewMetrics: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    backgroundColor: 'transparent',
+  },
+  metricCard: {
+    width: '48%',
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    backgroundColor: 'white',
+    alignItems: 'center',
+  },
+  metricValue: {
+    fontSize: 22,
+    fontWeight: '900',
+    color: '#111827',
+  },
+  metricLabel: {
+    marginTop: 2,
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#6b7280',
+    textAlign: 'center',
+  },
+  streakRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 12,
+    backgroundColor: 'transparent',
+  },
+  streakBadge: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: 'white',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+  },
+  streakIcon: {
+    fontSize: 24,
+  },
+  streakValue: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#111827',
+  },
+  streakLabel: {
+    fontSize: 11,
+    color: '#6b7280',
+    fontWeight: '700',
+  },
   weekList: { gap: 18 },
   daySection: {
     backgroundColor: 'white',
