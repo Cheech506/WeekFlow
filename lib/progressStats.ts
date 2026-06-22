@@ -13,6 +13,7 @@ export type ProgressStats = {
   completedToday: number;
   completedThisWeek: number;
   currentStreak: number;
+  longestStreak: number;
   weeklyCompletionRate: number;
   bestDay: string | null;
   bestDayCount: number;
@@ -48,7 +49,7 @@ function startOfLocalDay(date: Date): Date {
  * Creates a date key using the user's local calendar date.
  *
  * Example:
- * June 20, 2026 becomes "2026-06-20".
+ * June 22, 2026 becomes "2026-06-22".
  *
  * We do not use toISOString() because ISO dates use UTC and
  * could place late-night completions on the wrong local day.
@@ -163,37 +164,86 @@ export function calculateProgressStats(
   const completedThisWeek = completedThisWeekTasks.length;
 
   /*
-   * A Set stores each unique completion date.
+   * Store each unique date where at least one task was completed.
    *
-   * Completing multiple tasks on one day should still count
-   * as only one day toward the streak.
+   * Multiple completions on the same day still represent only
+   * one streak day.
    */
+  const completionDaysByKey = new Map<string, Date>();
+
+  completedTasks.forEach(({ completedDate }) => {
+    const completionDay = startOfLocalDay(completedDate);
+    const dateKey = getLocalDateKey(completionDay);
+
+    completionDaysByKey.set(dateKey, completionDay);
+  });
+
   const completionDateKeys = new Set(
-    completedTasks.map(({ completedDate }) =>
-      getLocalDateKey(completedDate)
-    )
+    completionDaysByKey.keys()
   );
 
+  /*
+   * Calculate the current streak.
+   *
+   * If nothing has been completed today, checking begins from
+   * yesterday because the current day is still in progress.
+   */
   let streakCursor = today;
 
-  /*
-   * If nothing has been completed today, begin checking from
-   * yesterday. The current day is still in progress, so the
-   * streak should not break until the full day has passed.
-   */
   if (!completionDateKeys.has(todayKey)) {
     streakCursor = addDays(today, -1);
   }
 
   let currentStreak = 0;
 
-  // Walk backward until reaching a day with no completion.
   while (
     completionDateKeys.has(getLocalDateKey(streakCursor))
   ) {
     currentStreak += 1;
     streakCursor = addDays(streakCursor, -1);
   }
+
+  /*
+   * Calculate the longest streak across all saved task history.
+   *
+   * The unique completion days are sorted from oldest to newest.
+   * Each date is compared with the day immediately after the
+   * previous completion date.
+   */
+  const sortedCompletionDays = Array.from(
+    completionDaysByKey.values()
+  ).sort((firstDate, secondDate) => {
+    return firstDate.getTime() - secondDate.getTime();
+  });
+
+  let longestStreak = 0;
+  let runningStreak = 0;
+  let previousCompletionDay: Date | null = null;
+
+  sortedCompletionDays.forEach((completionDay) => {
+    if (previousCompletionDay === null) {
+      runningStreak = 1;
+    } else {
+      const expectedNextDay = addDays(
+        previousCompletionDay,
+        1
+      );
+
+      const isConsecutive =
+        getLocalDateKey(completionDay) ===
+        getLocalDateKey(expectedNextDay);
+
+      runningStreak = isConsecutive
+        ? runningStreak + 1
+        : 1;
+    }
+
+    if (runningStreak > longestStreak) {
+      longestStreak = runningStreak;
+    }
+
+    previousCompletionDay = completionDay;
+  });
 
   /*
    * Count completed tasks by local date for the seven-day
@@ -275,6 +325,7 @@ export function calculateProgressStats(
     completedToday,
     completedThisWeek,
     currentStreak,
+    longestStreak,
     weeklyCompletionRate,
     bestDay,
     bestDayCount,

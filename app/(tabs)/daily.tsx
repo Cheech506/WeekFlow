@@ -91,25 +91,35 @@ export default function DailyScreen() {
       </View>
 
       <View style={styles.streakCard}>
-        <View style={styles.streakHeader}>
-          <View style={styles.streakTextWrap}>
-            <Text style={styles.streakTitle}>
-              Progress & Streaks
-            </Text>
+        <View style={styles.streakTextWrap}>
+          <Text style={styles.streakTitle}>
+            Progress & Streaks
+          </Text>
 
-            <Text style={styles.streakSubtitle}>
-              Complete at least one task each day to continue
-              your streak.
-            </Text>
-          </View>
+          <Text style={styles.streakSubtitle}>
+            Complete at least one task each day to continue
+            your streak.
+          </Text>
+        </View>
 
-          <View style={styles.streakBadge}>
-            <Text style={styles.streakNumber}>
+        <View style={styles.streakBadgesRow}>
+          <View style={styles.currentStreakBadge}>
+            <Text style={styles.currentStreakNumber}>
               {progressStats.currentStreak}
             </Text>
 
-            <Text style={styles.streakBadgeText}>
-              day streak 🔥
+            <Text style={styles.currentStreakText}>
+              current streak 🔥
+            </Text>
+          </View>
+
+          <View style={styles.longestStreakBadge}>
+            <Text style={styles.longestStreakNumber}>
+              {progressStats.longestStreak}
+            </Text>
+
+            <Text style={styles.longestStreakText}>
+              longest streak 🏆
             </Text>
           </View>
         </View>
@@ -455,15 +465,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff7ed',
     marginBottom: 14,
   },
-  streakHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    gap: 14,
-    backgroundColor: 'transparent',
-  },
   streakTextWrap: {
-    flex: 1,
     backgroundColor: 'transparent',
   },
   streakTitle: {
@@ -477,23 +479,48 @@ const styles = StyleSheet.create({
     color: '#6b7280',
     lineHeight: 18,
   },
-  streakBadge: {
-    minWidth: 100,
+  streakBadgesRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 16,
+    backgroundColor: 'transparent',
+  },
+  currentStreakBadge: {
+    flex: 1,
     alignItems: 'center',
-    paddingVertical: 10,
-    paddingHorizontal: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 10,
     borderRadius: 14,
     backgroundColor: '#ffedd5',
   },
-  streakNumber: {
-    fontSize: 28,
+  currentStreakNumber: {
+    fontSize: 30,
     fontWeight: '900',
     color: '#c2410c',
   },
-  streakBadgeText: {
+  currentStreakText: {
     fontSize: 12,
     fontWeight: '700',
     color: '#9a3412',
+    textAlign: 'center',
+  },
+  longestStreakBadge: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    borderRadius: 14,
+    backgroundColor: '#fef3c7',
+  },
+  longestStreakNumber: {
+    fontSize: 30,
+    fontWeight: '900',
+    color: '#b45309',
+  },
+  longestStreakText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#92400e',
     textAlign: 'center',
   },
   statsGrid: {
