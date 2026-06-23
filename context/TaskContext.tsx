@@ -8,6 +8,17 @@ import {
 
 import { getLocalDateKey } from '@/lib/dateUtils';
 import {
+  deleteRecurringRuleById,
+  ensureRecurringOccurrences,
+  getRecurringRules,
+  insertRecurringRule,
+  setRecurringRuleActive,
+  type CreateRecurringRuleInput,
+  type DeleteRecurringRuleMode,
+  type RecurrenceFrequency,
+  type RecurringRule,
+} from '@/lib/recurringStorage';
+import {
   completeTaskById,
   deleteTaskById,
   getTasks,
@@ -19,10 +30,17 @@ import {
   updateTaskById,
 } from '@/lib/taskStorage';
 
-export type { Task };
+export type {
+  CreateRecurringRuleInput,
+  DeleteRecurringRuleMode,
+  RecurrenceFrequency,
+  RecurringRule,
+  Task,
+};
 
 type TaskContextValue = {
   tasks: Task[];
+  recurringRules: RecurringRule[];
   isLoading: boolean;
   refreshTasks: () => Promise<void>;
   addTask: (
@@ -32,6 +50,14 @@ type TaskContextValue = {
     priority?: number,
     goalId?: number | null,
     dueDate?: string | null
+  ) => Promise<void>;
+  createRecurringTask: (
+    input: CreateRecurringRuleInput
+  ) => Promise<void>;
+  toggleRecurringRule: (id: number) => Promise<void>;
+  deleteRecurringRule: (
+    id: number,
+    mode: DeleteRecurringRuleMode
   ) => Promise<void>;
   editTask: (
     id: number,
@@ -52,18 +78,30 @@ type TaskContextValue = {
   getCompletedTasks: () => Task[];
 };
 
-const TaskContext = createContext<TaskContextValue | undefined>(undefined);
+const TaskContext = createContext<TaskContextValue | undefined>(
+  undefined
+);
 
 export function TaskProvider({ children }: { children: ReactNode }) {
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [recurringRules, setRecurringRules] = useState<
+    RecurringRule[]
+  >([]);
   const [isLoading, setIsLoading] = useState(true);
 
   async function loadTasks() {
     setIsLoading(true);
 
     try {
-      const loadedTasks = await getTasks();
+      await ensureRecurringOccurrences();
+
+      const [loadedTasks, loadedRules] = await Promise.all([
+        getTasks(),
+        getRecurringRules(),
+      ]);
+
       setTasks(loadedTasks);
+      setRecurringRules(loadedRules);
     } catch (error) {
       console.error('Failed to load tasks:', error);
     } finally {
@@ -85,7 +123,37 @@ export function TaskProvider({ children }: { children: ReactNode }) {
   ) {
     if (!title.trim()) return;
 
-    await insertTask(title, day, notes, priority, goalId, dueDate);
+    await insertTask(
+      title,
+      day,
+      notes,
+      priority,
+      goalId,
+      dueDate
+    );
+    await loadTasks();
+  }
+
+  async function createRecurringTask(
+    input: CreateRecurringRuleInput
+  ) {
+    await insertRecurringRule(input);
+    await loadTasks();
+  }
+
+  async function toggleRecurringRule(id: number) {
+    const rule = recurringRules.find((item) => item.id === id);
+    if (!rule) return;
+
+    await setRecurringRuleActive(id, !rule.active);
+    await loadTasks();
+  }
+
+  async function deleteRecurringRule(
+    id: number,
+    mode: DeleteRecurringRuleMode
+  ) {
+    await deleteRecurringRuleById(id, mode);
     await loadTasks();
   }
 
@@ -98,7 +166,13 @@ export function TaskProvider({ children }: { children: ReactNode }) {
   ) {
     if (!title.trim()) return;
 
-    await updateTaskById(id, title, notes, priority, goalId);
+    await updateTaskById(
+      id,
+      title,
+      notes,
+      priority,
+      goalId
+    );
     await loadTasks();
   }
 
@@ -122,10 +196,6 @@ export function TaskProvider({ children }: { children: ReactNode }) {
     await loadTasks();
   }
 
-  /*
-   * This older method remains available so any screen that still sends a
-   * weekday name continues to work while the app moves to real dates.
-   */
   async function moveTaskToDay(id: number, day: string) {
     await moveTaskToDayById(id, day);
     await loadTasks();
@@ -143,10 +213,6 @@ export function TaskProvider({ children }: { children: ReactNode }) {
     );
   }
 
-  /**
-   * An overdue task is active, has a real due date, and is dated
-   * before today. Sorting oldest first keeps the most overdue work visible.
-   */
   function getOverdueTasks(currentDate: Date = new Date()) {
     const todayKey = getLocalDateKey(currentDate);
 
@@ -157,10 +223,8 @@ export function TaskProvider({ children }: { children: ReactNode }) {
           task.dueDate !== null &&
           task.dueDate < todayKey
       )
-      .sort((firstTask, secondTask) =>
-        (firstTask.dueDate ?? '').localeCompare(
-          secondTask.dueDate ?? ''
-        )
+      .sort((a, b) =>
+        (a.dueDate ?? '').localeCompare(b.dueDate ?? '')
       );
   }
 
@@ -178,9 +242,13 @@ export function TaskProvider({ children }: { children: ReactNode }) {
     <TaskContext.Provider
       value={{
         tasks,
+        recurringRules,
         isLoading,
         refreshTasks: loadTasks,
         addTask,
+        createRecurringTask,
+        toggleRecurringRule,
+        deleteRecurringRule,
         editTask,
         completeTask,
         deleteTask,

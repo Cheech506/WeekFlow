@@ -16,6 +16,8 @@ export type Task = {
   completed: boolean;
   createdAt: string;
   completedAt: string | null;
+  recurringRuleId: number | null;
+  recurrenceOccurrenceDate: string | null;
 };
 
 type TaskRow = {
@@ -29,6 +31,8 @@ type TaskRow = {
   completed: number;
   created_at: string;
   completed_at: string | null;
+  recurring_rule_id: number | null;
+  recurrence_occurrence_date: string | null;
 };
 
 function mapTaskRow(row: TaskRow): Task {
@@ -43,16 +47,16 @@ function mapTaskRow(row: TaskRow): Task {
     completed: row.completed === 1,
     createdAt: row.created_at,
     completedAt: row.completed_at,
+    recurringRuleId: row.recurring_rule_id,
+    recurrenceOccurrenceDate: row.recurrence_occurrence_date,
   };
 }
 
 export async function getTasks(): Promise<Task[]> {
   await migrateDb();
-
   const db = await getDb();
 
-  const rows = await db.getAllAsync<TaskRow>(
-    `
+  const rows = await db.getAllAsync<TaskRow>(`
     SELECT
       id,
       title,
@@ -63,11 +67,12 @@ export async function getTasks(): Promise<Task[]> {
       goal_id,
       completed,
       created_at,
-      completed_at
+      completed_at,
+      recurring_rule_id,
+      recurrence_occurrence_date
     FROM tasks
     ORDER BY created_at DESC;
-    `
-  );
+  `);
 
   return rows.map(mapTaskRow);
 }
@@ -81,14 +86,9 @@ export async function insertTask(
   dueDate: string | null = null
 ): Promise<void> {
   await migrateDb();
-
   const db = await getDb();
   const createdAt = new Date().toISOString();
 
-  /*
-   * When a real date is provided, the weekday is derived from it.
-   * Otherwise the task stays in Inbox or keeps the supplied legacy day value.
-   */
   const resolvedDay = dueDate
     ? getDayNameFromDateKey(dueDate) ?? day
     : day;
@@ -104,9 +104,11 @@ export async function insertTask(
       goal_id,
       completed,
       created_at,
-      completed_at
+      completed_at,
+      recurring_rule_id,
+      recurrence_occurrence_date
     )
-    VALUES (?, ?, ?, ?, ?, ?, 0, ?, NULL);
+    VALUES (?, ?, ?, ?, ?, ?, 0, ?, NULL, NULL, NULL);
     `,
     [
       title.trim(),
@@ -128,9 +130,11 @@ export async function updateTaskById(
   goalId: number | null = null
 ): Promise<void> {
   await migrateDb();
-
   const db = await getDb();
 
+  /*
+   * Editing a recurring occurrence changes only that occurrence.
+   */
   await db.runAsync(
     `
     UPDATE tasks
@@ -153,9 +157,7 @@ export async function updateTaskById(
 
 export async function completeTaskById(id: number): Promise<void> {
   await migrateDb();
-
   const db = await getDb();
-  const completedAt = new Date().toISOString();
 
   await db.runAsync(
     `
@@ -164,28 +166,63 @@ export async function completeTaskById(id: number): Promise<void> {
         completed_at = ?
     WHERE id = ?;
     `,
-    [completedAt, id]
-  );
-}
-
-export async function deleteTaskById(id: number): Promise<void> {
-  await migrateDb();
-
-  const db = await getDb();
-
-  await db.runAsync(
-    `
-    DELETE FROM tasks
-    WHERE id = ?;
-    `,
-    [id]
+    [new Date().toISOString(), id]
   );
 }
 
 /**
- * Assigns a task to a specific calendar date.
- * The weekday is stored too so older parts of the app remain compatible.
+ * Deleting one generated task records an exception first. The generator
+ * therefore cannot bring that same rule/date occurrence back.
  */
+export async function deleteTaskById(id: number): Promise<void> {
+  await migrateDb();
+  const db = await getDb();
+
+  const task = await db.getFirstAsync<{
+    recurring_rule_id: number | null;
+    recurrence_occurrence_date: string | null;
+  }>(
+    `
+    SELECT recurring_rule_id, recurrence_occurrence_date
+    FROM tasks
+    WHERE id = ?;
+    `,
+    [id]
+  );
+
+  await db.withTransactionAsync(async () => {
+    if (
+      task?.recurring_rule_id !== null &&
+      task?.recurring_rule_id !== undefined &&
+      task.recurrence_occurrence_date
+    ) {
+      await db.runAsync(
+        `
+        INSERT OR IGNORE INTO recurring_occurrence_exceptions (
+          recurring_rule_id,
+          occurrence_date,
+          created_at
+        )
+        VALUES (?, ?, ?);
+        `,
+        [
+          task.recurring_rule_id,
+          task.recurrence_occurrence_date,
+          new Date().toISOString(),
+        ]
+      );
+    }
+
+    await db.runAsync(
+      `
+      DELETE FROM tasks
+      WHERE id = ?;
+      `,
+      [id]
+    );
+  });
+}
+
 export async function scheduleTaskByDate(
   id: number,
   dueDate: string
@@ -201,6 +238,9 @@ export async function scheduleTaskByDate(
 
   const db = await getDb();
 
+  /*
+   * The original occurrence date stays unchanged when the task moves.
+   */
   await db.runAsync(
     `
     UPDATE tasks
@@ -212,12 +252,10 @@ export async function scheduleTaskByDate(
   );
 }
 
-/**
- * Returning a task to Inbox removes its due date because it is unscheduled again.
- */
-export async function moveTaskToInboxById(id: number): Promise<void> {
+export async function moveTaskToInboxById(
+  id: number
+): Promise<void> {
   await migrateDb();
-
   const db = await getDb();
 
   await db.runAsync(
@@ -231,10 +269,6 @@ export async function moveTaskToInboxById(id: number): Promise<void> {
   );
 }
 
-/**
- * Kept for backward compatibility with older screen code.
- * A weekday now schedules the task for the next occurrence of that day.
- */
 export async function moveTaskToDayById(
   id: number,
   day: string

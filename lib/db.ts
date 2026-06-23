@@ -3,13 +3,6 @@ import * as SQLite from 'expo-sqlite';
 import { getNextOccurrenceDateKey } from './dateUtils';
 
 let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
-
-/*
- * TaskContext and GoalContext can request the database at nearly
- * the same time when the app starts. This shared promise makes
- * every caller wait for one migration instead of running several
- * migrations at the same time.
- */
 let migrationPromise: Promise<void> | null = null;
 
 export async function getDb() {
@@ -20,10 +13,6 @@ export async function getDb() {
   return dbPromise;
 }
 
-/**
- * Checks whether an error came from attempting to add a column
- * that another migration already added.
- */
 function isDuplicateColumnError(error: unknown) {
   return (
     error instanceof Error &&
@@ -31,12 +20,6 @@ function isDuplicateColumnError(error: unknown) {
   );
 }
 
-/**
- * Adds a column only when it is missing.
- *
- * The duplicate-column catch protects against development reloads
- * or two migration calls reaching this point at nearly the same time.
- */
 async function ensureColumn(
   db: SQLite.SQLiteDatabase,
   tableName: string,
@@ -47,11 +30,7 @@ async function ensureColumn(
     `PRAGMA table_info(${tableName});`
   );
 
-  const columnExists = columns.some(
-    (column) => column.name === columnName
-  );
-
-  if (columnExists) {
+  if (columns.some((column) => column.name === columnName)) {
     return;
   }
 
@@ -60,23 +39,12 @@ async function ensureColumn(
       `ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnDefinition};`
     );
   } catch (error) {
-    /*
-     * Another migration may have added the same column after
-     * the PRAGMA check but before this ALTER TABLE completed.
-     */
     if (!isDuplicateColumnError(error)) {
       throw error;
     }
   }
 }
 
-/**
- * Converts older active tasks that only stored a weekday into
- * tasks with a real calendar due date.
- *
- * The next occurrence of the saved weekday is used so existing
- * scheduled tasks do not disappear after the migration.
- */
 async function backfillLegacyTaskDueDates(
   db: SQLite.SQLiteDatabase
 ) {
@@ -94,9 +62,7 @@ async function backfillLegacyTaskDueDates(
   for (const task of legacyTasks) {
     const dueDate = getNextOccurrenceDateKey(task.day);
 
-    if (!dueDate) {
-      continue;
-    }
+    if (!dueDate) continue;
 
     await db.runAsync(
       `
@@ -109,10 +75,6 @@ async function backfillLegacyTaskDueDates(
   }
 }
 
-/**
- * Performs the actual database setup and schema updates.
- * This function is called through the shared migration promise below.
- */
 async function runMigrations() {
   const db = await getDb();
 
@@ -129,7 +91,9 @@ async function runMigrations() {
       goal_id INTEGER,
       completed INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
-      completed_at TEXT
+      completed_at TEXT,
+      recurring_rule_id INTEGER,
+      recurrence_occurrence_date TEXT
     );
 
     CREATE TABLE IF NOT EXISTS goals (
@@ -149,6 +113,27 @@ async function runMigrations() {
       created_at TEXT NOT NULL,
       archived_at TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS recurring_rules (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      notes TEXT,
+      priority INTEGER NOT NULL DEFAULT 0,
+      goal_id INTEGER,
+      frequency TEXT NOT NULL,
+      start_date TEXT NOT NULL,
+      end_date TEXT,
+      weekdays TEXT NOT NULL DEFAULT '[]',
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS recurring_occurrence_exceptions (
+      recurring_rule_id INTEGER NOT NULL,
+      occurrence_date TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (recurring_rule_id, occurrence_date)
+    );
   `);
 
   await ensureColumn(db, 'tasks', 'notes', 'TEXT');
@@ -160,6 +145,13 @@ async function runMigrations() {
   );
   await ensureColumn(db, 'tasks', 'goal_id', 'INTEGER');
   await ensureColumn(db, 'tasks', 'due_date', 'TEXT');
+  await ensureColumn(db, 'tasks', 'recurring_rule_id', 'INTEGER');
+  await ensureColumn(
+    db,
+    'tasks',
+    'recurrence_occurrence_date',
+    'TEXT'
+  );
 
   await ensureColumn(
     db,
@@ -174,15 +166,29 @@ async function runMigrations() {
     'TEXT'
   );
 
+  /*
+   * occurrence_date is the generated occurrence's permanent identity.
+   * due_date can change when the user reschedules the task.
+   */
+  await db.execAsync(`
+    CREATE UNIQUE INDEX IF NOT EXISTS
+      idx_tasks_recurring_occurrence
+    ON tasks (recurring_rule_id, recurrence_occurrence_date)
+    WHERE recurring_rule_id IS NOT NULL
+      AND recurrence_occurrence_date IS NOT NULL;
+
+    CREATE INDEX IF NOT EXISTS
+      idx_tasks_due_date
+    ON tasks (due_date);
+
+    CREATE INDEX IF NOT EXISTS
+      idx_recurring_rules_active
+    ON recurring_rules (active);
+  `);
+
   await backfillLegacyTaskDueDates(db);
 }
 
-/**
- * Ensures only one migration runs during app startup.
- *
- * If migration fails for a real reason, the promise is cleared so
- * the app can try again after the problem is corrected.
- */
 export async function migrateDb() {
   if (!migrationPromise) {
     migrationPromise = runMigrations().catch((error) => {

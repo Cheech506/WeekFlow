@@ -1,13 +1,39 @@
 import * as DocumentPicker from 'expo-document-picker';
 import { Platform } from 'react-native';
 
-import { getBrainDumps, type StoredBrainDump } from './brainDumpStorage';
+import {
+  getBrainDumps,
+  type StoredBrainDump,
+} from './brainDumpStorage';
 import { getDb, migrateDb } from './db';
 import { getGoals, type StoredGoal } from './goalStorage';
+import {
+  getRecurringOccurrenceExceptions,
+  getRecurringRules,
+  RECURRENCE_FREQUENCIES,
+  type RecurringOccurrenceException,
+  type RecurringRule,
+} from './recurringStorage';
 import { getTasks, type Task } from './taskStorage';
 
 const BACKUP_FORMAT = 'weekflow-backup';
-const BACKUP_VERSION = 1;
+const BACKUP_VERSION = 2;
+
+type LegacyTask = Omit<
+  Task,
+  'recurringRuleId' | 'recurrenceOccurrenceDate'
+>;
+
+type LegacyWeekFlowBackup = {
+  format: typeof BACKUP_FORMAT;
+  version: 1;
+  exportedAt: string;
+  data: {
+    tasks: LegacyTask[];
+    goals: StoredGoal[];
+    brainDumps: StoredBrainDump[];
+  };
+};
 
 export type WeekFlowBackup = {
   format: typeof BACKUP_FORMAT;
@@ -17,6 +43,8 @@ export type WeekFlowBackup = {
     tasks: Task[];
     goals: StoredGoal[];
     brainDumps: StoredBrainDump[];
+    recurringRules: RecurringRule[];
+    recurringExceptions: RecurringOccurrenceException[];
   };
 };
 
@@ -24,6 +52,7 @@ export type BackupCounts = {
   tasks: number;
   goals: number;
   brainDumps: number;
+  recurringRules: number;
 };
 
 export type PickedWeekFlowBackup = {
@@ -38,14 +67,25 @@ export type ExportedWeekFlowBackup = {
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    !Array.isArray(value)
+  );
 }
 
 function isNullableString(value: unknown): value is string | null {
   return typeof value === 'string' || value === null;
 }
 
-function isTask(value: unknown): value is Task {
+function isNullableInteger(value: unknown) {
+  return (
+    value === null ||
+    (typeof value === 'number' && Number.isInteger(value))
+  );
+}
+
+function isBaseTask(value: unknown): value is LegacyTask {
   if (!isRecord(value)) return false;
 
   return (
@@ -59,12 +99,38 @@ function isTask(value: unknown): value is Task {
     Number.isInteger(value.priority) &&
     value.priority >= 0 &&
     value.priority <= 2 &&
-    (value.goalId === null ||
-      (typeof value.goalId === 'number' && Number.isInteger(value.goalId))) &&
+    isNullableInteger(value.goalId) &&
     typeof value.completed === 'boolean' &&
     typeof value.createdAt === 'string' &&
     isNullableString(value.completedAt)
   );
+}
+
+function isTask(value: unknown): value is Task {
+  if (!isRecord(value) || !isBaseTask(value)) {
+    return false;
+  }
+
+  /*
+   * isBaseTask validates every field shared by version 1 and
+   * version 2 tasks. Read through a generic record here because
+   * version 1 tasks did not contain the recurring-task fields.
+   */
+  const record = value as Record<string, unknown>;
+
+  const recurringRuleId = record.recurringRuleId;
+  const occurrenceDate = record.recurrenceOccurrenceDate;
+
+  const isNormalTask =
+    recurringRuleId === null &&
+    occurrenceDate === null;
+
+  const isRecurringTask =
+    typeof recurringRuleId === 'number' &&
+    Number.isInteger(recurringRuleId) &&
+    typeof occurrenceDate === 'string';
+
+  return isNormalTask || isRecurringTask;
 }
 
 function isGoal(value: unknown): value is StoredGoal {
@@ -95,71 +161,216 @@ function isBrainDump(value: unknown): value is StoredBrainDump {
   );
 }
 
+function isRecurringRule(value: unknown): value is RecurringRule {
+  if (!isRecord(value)) return false;
+
+  return (
+    typeof value.id === 'number' &&
+    Number.isInteger(value.id) &&
+    typeof value.title === 'string' &&
+    isNullableString(value.notes) &&
+    typeof value.priority === 'number' &&
+    Number.isInteger(value.priority) &&
+    value.priority >= 0 &&
+    value.priority <= 2 &&
+    isNullableInteger(value.goalId) &&
+    typeof value.frequency === 'string' &&
+    RECURRENCE_FREQUENCIES.includes(
+      value.frequency as RecurringRule['frequency']
+    ) &&
+    typeof value.startDate === 'string' &&
+    isNullableString(value.endDate) &&
+    Array.isArray(value.weekdays) &&
+    value.weekdays.every(
+      (weekday) =>
+        typeof weekday === 'number' &&
+        Number.isInteger(weekday) &&
+        weekday >= 0 &&
+        weekday <= 6
+    ) &&
+    typeof value.active === 'boolean' &&
+    typeof value.createdAt === 'string'
+  );
+}
+
+function isRecurringException(
+  value: unknown
+): value is RecurringOccurrenceException {
+  if (!isRecord(value)) return false;
+
+  return (
+    typeof value.recurringRuleId === 'number' &&
+    Number.isInteger(value.recurringRuleId) &&
+    typeof value.occurrenceDate === 'string' &&
+    typeof value.createdAt === 'string'
+  );
+}
+
 function hasUniqueIds(items: { id: number }[]) {
   return new Set(items.map((item) => item.id)).size === items.length;
 }
 
-/**
- * Validates the whole backup before any rows are deleted.
- *
- * Import is intentionally strict because this first version replaces
- * the current database. A malformed or partially valid file is rejected.
- */
+function validateRelationships(backup: WeekFlowBackup) {
+  const goalIds = new Set(
+    backup.data.goals.map((goal) => goal.id)
+  );
+  const ruleIds = new Set(
+    backup.data.recurringRules.map((rule) => rule.id)
+  );
+
+  const brokenTaskGoal = backup.data.tasks.some(
+    (task) =>
+      task.goalId !== null && !goalIds.has(task.goalId)
+  );
+
+  const brokenRuleGoal = backup.data.recurringRules.some(
+    (rule) =>
+      rule.goalId !== null && !goalIds.has(rule.goalId)
+  );
+
+  const brokenTaskRule = backup.data.tasks.some(
+    (task) =>
+      task.recurringRuleId !== null &&
+      !ruleIds.has(task.recurringRuleId)
+  );
+
+  const brokenException = backup.data.recurringExceptions.some(
+    (exception) => !ruleIds.has(exception.recurringRuleId)
+  );
+
+  if (
+    brokenTaskGoal ||
+    brokenRuleGoal ||
+    brokenTaskRule ||
+    brokenException
+  ) {
+    throw new Error(
+      'The backup contains a broken task, goal, or recurring-rule link.'
+    );
+  }
+}
+
+function normalizeLegacyBackup(
+  backup: LegacyWeekFlowBackup
+): WeekFlowBackup {
+  return {
+    format: BACKUP_FORMAT,
+    version: BACKUP_VERSION,
+    exportedAt: backup.exportedAt,
+    data: {
+      tasks: backup.data.tasks.map((task) => ({
+        ...task,
+        recurringRuleId: null,
+        recurrenceOccurrenceDate: null,
+      })),
+      goals: backup.data.goals,
+      brainDumps: backup.data.brainDumps,
+      recurringRules: [],
+      recurringExceptions: [],
+    },
+  };
+}
+
 function parseWeekFlowBackup(value: unknown): WeekFlowBackup {
   if (
     !isRecord(value) ||
     value.format !== BACKUP_FORMAT ||
-    value.version !== BACKUP_VERSION ||
     typeof value.exportedAt !== 'string' ||
     !isRecord(value.data) ||
     !Array.isArray(value.data.tasks) ||
     !Array.isArray(value.data.goals) ||
     !Array.isArray(value.data.brainDumps)
   ) {
-    throw new Error('This is not a supported WeekFlow backup file.');
+    throw new Error(
+      'This is not a supported WeekFlow backup file.'
+    );
+  }
+
+  if (value.version === 1) {
+    if (
+      !value.data.tasks.every(isBaseTask) ||
+      !value.data.goals.every(isGoal) ||
+      !value.data.brainDumps.every(isBrainDump)
+    ) {
+      throw new Error(
+        'The older backup contains an invalid record.'
+      );
+    }
+
+    const normalized = normalizeLegacyBackup(
+      value as unknown as LegacyWeekFlowBackup
+    );
+
+    validateRelationships(normalized);
+    return normalized;
+  }
+
+  if (
+    value.version !== BACKUP_VERSION ||
+    !Array.isArray(value.data.recurringRules) ||
+    !Array.isArray(value.data.recurringExceptions)
+  ) {
+    throw new Error(
+      'This WeekFlow backup version is not supported.'
+    );
   }
 
   const tasks = value.data.tasks;
   const goals = value.data.goals;
   const brainDumps = value.data.brainDumps;
+  const rules = value.data.recurringRules;
+  const exceptions = value.data.recurringExceptions;
 
   if (!tasks.every(isTask)) {
-    throw new Error('The backup contains an invalid task record.');
+    throw new Error('The backup contains an invalid task.');
   }
 
   if (!goals.every(isGoal)) {
-    throw new Error('The backup contains an invalid goal record.');
+    throw new Error('The backup contains an invalid goal.');
   }
 
   if (!brainDumps.every(isBrainDump)) {
-    throw new Error('The backup contains an invalid brain dump record.');
+    throw new Error(
+      'The backup contains an invalid brain dump.'
+    );
+  }
+
+  if (!rules.every(isRecurringRule)) {
+    throw new Error(
+      'The backup contains an invalid recurring rule.'
+    );
+  }
+
+  if (!exceptions.every(isRecurringException)) {
+    throw new Error(
+      'The backup contains an invalid recurring exception.'
+    );
   }
 
   if (
     !hasUniqueIds(tasks) ||
     !hasUniqueIds(goals) ||
-    !hasUniqueIds(brainDumps)
+    !hasUniqueIds(brainDumps) ||
+    !hasUniqueIds(rules)
   ) {
-    throw new Error('The backup contains duplicate record IDs.');
+    throw new Error(
+      'The backup contains duplicate record IDs.'
+    );
   }
 
-  const goalIds = new Set(goals.map((goal) => goal.id));
-  const hasBrokenGoalLink = tasks.some(
-    (task) => task.goalId !== null && !goalIds.has(task.goalId)
-  );
-
-  if (hasBrokenGoalLink) {
-    throw new Error('The backup contains a task linked to a missing goal.');
-  }
-
-  return value as WeekFlowBackup;
+  const backup = value as unknown as WeekFlowBackup;
+  validateRelationships(backup);
+  return backup;
 }
 
-function getBackupCounts(backup: WeekFlowBackup): BackupCounts {
+function getBackupCounts(
+  backup: WeekFlowBackup
+): BackupCounts {
   return {
     tasks: backup.data.tasks.length,
     goals: backup.data.goals.length,
     brainDumps: backup.data.brainDumps.length,
+    recurringRules: backup.data.recurringRules.length,
   };
 }
 
@@ -172,10 +383,18 @@ function createBackupFileName(exportedAt: string) {
 }
 
 async function buildWeekFlowBackup(): Promise<WeekFlowBackup> {
-  const [tasks, goals, brainDumps] = await Promise.all([
+  const [
+    tasks,
+    goals,
+    brainDumps,
+    recurringRules,
+    recurringExceptions,
+  ] = await Promise.all([
     getTasks(),
     getGoals(),
     getBrainDumps(),
+    getRecurringRules(),
+    getRecurringOccurrenceExceptions(),
   ]);
 
   return {
@@ -186,11 +405,16 @@ async function buildWeekFlowBackup(): Promise<WeekFlowBackup> {
       tasks,
       goals,
       brainDumps,
+      recurringRules,
+      recurringExceptions,
     },
   };
 }
 
-function downloadBackupOnWeb(json: string, fileName: string) {
+function downloadBackupOnWeb(
+  json: string,
+  fileName: string
+) {
   const blob = new Blob([json], {
     type: 'application/json',
   });
@@ -205,29 +429,26 @@ function downloadBackupOnWeb(json: string, fileName: string) {
   document.body.appendChild(link);
   link.click();
   link.remove();
-
   URL.revokeObjectURL(objectUrl);
 }
 
-async function shareBackupOnNative(json: string, fileName: string) {
+async function shareBackupOnNative(
+  json: string,
+  fileName: string
+) {
   const [{ File, Paths }, Sharing] = await Promise.all([
     import('expo-file-system'),
     import('expo-sharing'),
   ]);
 
   const backupFile = new File(Paths.cache, fileName);
-
-  /*
-   * The cache may already contain a backup with this exact name
-   * during repeated testing, so overwrite is enabled.
-   */
   backupFile.create({ overwrite: true });
   backupFile.write(json);
 
-  const sharingAvailable = await Sharing.isAvailableAsync();
-
-  if (!sharingAvailable) {
-    throw new Error('File sharing is not available on this device.');
+  if (!(await Sharing.isAvailableAsync())) {
+    throw new Error(
+      'File sharing is not available on this device.'
+    );
   }
 
   await Sharing.shareAsync(backupFile.uri, {
@@ -237,12 +458,6 @@ async function shareBackupOnNative(json: string, fileName: string) {
   });
 }
 
-/**
- * Exports all current WeekFlow data.
- *
- * Web downloads a JSON file directly. Native platforms create a
- * temporary JSON file and open the system share sheet.
- */
 export async function exportWeekFlowBackup(): Promise<ExportedWeekFlowBackup> {
   const backup = await buildWeekFlowBackup();
   const fileName = createBackupFileName(backup.exportedAt);
@@ -263,26 +478,14 @@ export async function exportWeekFlowBackup(): Promise<ExportedWeekFlowBackup> {
 async function readPickedBackupText(
   asset: DocumentPicker.DocumentPickerAsset
 ) {
-  /*
-   * On web, DocumentPicker provides the browser File object.
-   * Native uses expo-file-system to read the cached picked file.
-   */
   if (Platform.OS === 'web' && asset.file) {
     return asset.file.text();
   }
 
   const { File } = await import('expo-file-system');
-  const pickedFile = new File(asset.uri);
-
-  return pickedFile.text();
+  return new File(asset.uri).text();
 }
 
-/**
- * Opens the system file picker and validates the chosen backup.
- *
- * No database changes happen here. The UI can display the record
- * counts and ask for confirmation before calling replaceWeekFlowData.
- */
 export async function pickWeekFlowBackup(): Promise<PickedWeekFlowBackup | null> {
   const result = await DocumentPicker.getDocumentAsync({
     type: ['application/json', 'text/json', 'text/plain'],
@@ -290,22 +493,22 @@ export async function pickWeekFlowBackup(): Promise<PickedWeekFlowBackup | null>
     multiple: false,
   });
 
-  if (result.canceled) {
-    return null;
-  }
+  if (result.canceled) return null;
 
   const asset = result.assets[0];
   const fileText = await readPickedBackupText(asset);
 
-  let parsedValue: unknown;
+  let parsed: unknown;
 
   try {
-    parsedValue = JSON.parse(fileText);
+    parsed = JSON.parse(fileText);
   } catch {
-    throw new Error('The selected file does not contain valid JSON.');
+    throw new Error(
+      'The selected file does not contain valid JSON.'
+    );
   }
 
-  const backup = parseWeekFlowBackup(parsedValue);
+  const backup = parseWeekFlowBackup(parsed);
 
   return {
     fileName: asset.name,
@@ -314,45 +517,29 @@ export async function pickWeekFlowBackup(): Promise<PickedWeekFlowBackup | null>
   };
 }
 
-/**
- * Replaces the current SQLite data with a previously validated backup.
- *
- * The delete and insert statements run in one transaction. If any insert
- * fails, SQLite rolls the transaction back instead of leaving a partial
- * import behind.
- */
 export async function replaceWeekFlowData(
   backup: WeekFlowBackup
 ): Promise<BackupCounts> {
-  const validatedBackup = parseWeekFlowBackup(backup);
+  const validated = parseWeekFlowBackup(backup);
 
   await migrateDb();
-
   const db = await getDb();
 
   await db.withTransactionAsync(async () => {
-    /*
-     * Tasks are removed first because they can reference goals.
-     * The current schema does not enforce a foreign key, but this
-     * order also works if one is added later.
-     */
     await db.execAsync(`
       DELETE FROM tasks;
+      DELETE FROM recurring_occurrence_exceptions;
+      DELETE FROM recurring_rules;
       DELETE FROM goals;
       DELETE FROM brain_dumps;
     `);
 
-    for (const goal of validatedBackup.data.goals) {
+    for (const goal of validated.data.goals) {
       await db.runAsync(
         `
         INSERT INTO goals (
-          id,
-          title,
-          completed,
-          created_at,
-          completed_at,
-          start_date,
-          end_date
+          id, title, completed, created_at, completed_at,
+          start_date, end_date
         )
         VALUES (?, ?, ?, ?, ?, ?, ?);
         `,
@@ -368,22 +555,40 @@ export async function replaceWeekFlowData(
       );
     }
 
-    for (const task of validatedBackup.data.tasks) {
+    for (const rule of validated.data.recurringRules) {
+      await db.runAsync(
+        `
+        INSERT INTO recurring_rules (
+          id, title, notes, priority, goal_id, frequency,
+          start_date, end_date, weekdays, active, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        `,
+        [
+          rule.id,
+          rule.title,
+          rule.notes,
+          rule.priority,
+          rule.goalId,
+          rule.frequency,
+          rule.startDate,
+          rule.endDate,
+          JSON.stringify(rule.weekdays),
+          rule.active ? 1 : 0,
+          rule.createdAt,
+        ]
+      );
+    }
+
+    for (const task of validated.data.tasks) {
       await db.runAsync(
         `
         INSERT INTO tasks (
-          id,
-          title,
-          day,
-          due_date,
-          notes,
-          priority,
-          goal_id,
-          completed,
-          created_at,
-          completed_at
+          id, title, day, due_date, notes, priority, goal_id,
+          completed, created_at, completed_at, recurring_rule_id,
+          recurrence_occurrence_date
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         `,
         [
           task.id,
@@ -396,19 +601,33 @@ export async function replaceWeekFlowData(
           task.completed ? 1 : 0,
           task.createdAt,
           task.completedAt,
+          task.recurringRuleId,
+          task.recurrenceOccurrenceDate,
         ]
       );
     }
 
-    for (const brainDump of validatedBackup.data.brainDumps) {
+    for (const exception of validated.data.recurringExceptions) {
+      await db.runAsync(
+        `
+        INSERT INTO recurring_occurrence_exceptions (
+          recurring_rule_id, occurrence_date, created_at
+        )
+        VALUES (?, ?, ?);
+        `,
+        [
+          exception.recurringRuleId,
+          exception.occurrenceDate,
+          exception.createdAt,
+        ]
+      );
+    }
+
+    for (const brainDump of validated.data.brainDumps) {
       await db.runAsync(
         `
         INSERT INTO brain_dumps (
-          id,
-          body,
-          archived,
-          created_at,
-          archived_at
+          id, body, archived, created_at, archived_at
         )
         VALUES (?, ?, ?, ?, ?);
         `,
@@ -423,5 +642,5 @@ export async function replaceWeekFlowData(
     }
   });
 
-  return getBackupCounts(validatedBackup);
+  return getBackupCounts(validated);
 }
