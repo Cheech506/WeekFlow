@@ -1,21 +1,15 @@
-import {
-  addDays,
-  getDayNameFromDateKey,
-  getLocalDateKey,
-  parseLocalDateKey,
-  startOfLocalDay,
-} from './dateUtils';
+import { getDayNameFromDateKey } from './dateUtils';
 import { getDb, migrateDb } from './db';
+import {
+  getRecurringOccurrenceDateKeys,
+  normalizeWeekdays,
+  RECURRENCE_FREQUENCIES,
+  validateAndNormalizeRecurringRuleInput,
+  type RecurrenceFrequency,
+} from './recurrenceUtils';
 
-export const RECURRENCE_FREQUENCIES = [
-  'daily',
-  'weekly',
-  'certainDays',
-  'monthly',
-] as const;
-
-export type RecurrenceFrequency =
-  (typeof RECURRENCE_FREQUENCIES)[number];
+export { RECURRENCE_FREQUENCIES };
+export type { RecurrenceFrequency };
 
 export type RecurringRule = {
   id: number;
@@ -80,18 +74,6 @@ function isRecurrenceFrequency(
   );
 }
 
-function normalizeWeekdays(weekdays: number[] = []) {
-  return Array.from(
-    new Set(
-      weekdays.filter(
-        (weekday) =>
-          Number.isInteger(weekday) &&
-          weekday >= 0 &&
-          weekday <= 6
-      )
-    )
-  ).sort((a, b) => a - b);
-}
 
 function parseStoredWeekdays(value: string) {
   try {
@@ -132,38 +114,6 @@ function mapRule(row: RecurringRuleRow): RecurringRule {
   };
 }
 
-function getDaysInMonth(year: number, monthIndex: number) {
-  return new Date(year, monthIndex + 1, 0).getDate();
-}
-
-function matchesRuleDate(
-  rule: RecurringRule,
-  date: Date,
-  startDate: Date
-) {
-  if (date < startDate) return false;
-
-  if (rule.frequency === 'daily') return true;
-
-  if (rule.frequency === 'weekly') {
-    return date.getDay() === startDate.getDay();
-  }
-
-  if (rule.frequency === 'certainDays') {
-    return rule.weekdays.includes(date.getDay());
-  }
-
-  /*
-   * A monthly rule anchored on the 29th, 30th, or 31st uses the
-   * final valid day of shorter months.
-   */
-  const targetDay = Math.min(
-    startDate.getDate(),
-    getDaysInMonth(date.getFullYear(), date.getMonth())
-  );
-
-  return date.getDate() === targetDay;
-}
 
 export async function getRecurringRules(): Promise<
   RecurringRule[]
@@ -239,40 +189,30 @@ export async function ensureRecurringOccurrences(
     )
   );
 
-  const today = startOfLocalDay(currentDate);
-  const horizonEnd = addDays(today, Math.max(0, horizonDays));
   const createdAt = new Date().toISOString();
 
   for (const rule of rules) {
-    if (!rule.active) continue;
+    const occurrenceDates =
+      getRecurringOccurrenceDateKeys(
+        rule,
+        currentDate,
+        horizonDays
+      );
 
-    const start = parseLocalDateKey(rule.startDate);
-    const end = rule.endDate
-      ? parseLocalDateKey(rule.endDate)
-      : null;
+    for (const occurrenceDate of occurrenceDates) {
+      const exceptionKey =
+        `${rule.id}:${occurrenceDate}`;
 
-    if (!start || (rule.endDate && !end)) continue;
+      if (exceptionKeys.has(exceptionKey)) {
+        continue;
+      }
 
-    const generationStart = start > today ? start : today;
-    const generationEnd =
-      end && end < horizonEnd ? end : horizonEnd;
+      const dayName =
+        getDayNameFromDateKey(occurrenceDate);
 
-    if (generationEnd < generationStart) continue;
-
-    for (
-      let cursor = generationStart;
-      cursor <= generationEnd;
-      cursor = addDays(cursor, 1)
-    ) {
-      if (!matchesRuleDate(rule, cursor, start)) continue;
-
-      const occurrenceDate = getLocalDateKey(cursor);
-      const exceptionKey = `${rule.id}:${occurrenceDate}`;
-
-      if (exceptionKeys.has(exceptionKey)) continue;
-
-      const dayName = getDayNameFromDateKey(occurrenceDate);
-      if (!dayName) continue;
+      if (!dayName) {
+        continue;
+      }
 
       await db.runAsync(
         `
@@ -312,46 +252,19 @@ export async function insertRecurringRule(
 ): Promise<RecurringRule> {
   await migrateDb();
 
-  const title = input.title.trim();
-  const notes = input.notes?.trim() || null;
-  const priority = input.priority ?? 0;
-  const goalId = input.goalId ?? null;
-  const start = parseLocalDateKey(input.startDate);
-  const end = input.endDate
-    ? parseLocalDateKey(input.endDate)
-    : null;
-  const weekdays = normalizeWeekdays(input.weekdays);
+  const normalizedInput =
+    validateAndNormalizeRecurringRuleInput(input);
 
-  if (!title) {
-    throw new Error('A recurring task needs a title.');
-  }
-
-  if (!Number.isInteger(priority) || priority < 0 || priority > 2) {
-    throw new Error('Recurring task priority is invalid.');
-  }
-
-  if (!start) {
-    throw new Error('Recurring task start date is invalid.');
-  }
-
-  if (input.endDate && !end) {
-    throw new Error('Recurring task end date is invalid.');
-  }
-
-  if (end && end < start) {
-    throw new Error(
-      'The repeat end date cannot be before the start date.'
-    );
-  }
-
-  if (
-    input.frequency === 'certainDays' &&
-    weekdays.length === 0
-  ) {
-    throw new Error(
-      'Choose at least one weekday for Certain Days.'
-    );
-  }
+  const {
+    title,
+    notes,
+    priority,
+    goalId,
+    frequency,
+    startDate,
+    endDate,
+    weekdays,
+  } = normalizedInput;
 
   const db = await getDb();
   const createdAt = new Date().toISOString();
@@ -377,9 +290,9 @@ export async function insertRecurringRule(
       notes,
       priority,
       goalId,
-      input.frequency,
-      input.startDate,
-      input.endDate ?? null,
+      frequency,
+      startDate,
+      endDate,
       JSON.stringify(weekdays),
       createdAt,
     ]
@@ -391,9 +304,9 @@ export async function insertRecurringRule(
     notes,
     priority,
     goalId,
-    frequency: input.frequency,
-    startDate: input.startDate,
-    endDate: input.endDate ?? null,
+    frequency,
+    startDate,
+    endDate,
     weekdays,
     active: true,
     createdAt,
