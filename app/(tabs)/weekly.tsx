@@ -1,5 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet } from 'react-native';
+import {
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  useWindowDimensions,
+} from 'react-native';
 
 import { Text, View } from '@/components/Themed';
 import { useBrainDumps } from '@/context/BrainDumpContext';
@@ -20,9 +25,35 @@ function getPriorityLabel(priority: number) {
   return 'Low';
 }
 
+function getColumnCount(width: number) {
+  if (width >= 1320) return 7;
+  if (width >= 980) return 4;
+  if (width >= 700) return 2;
+  return 1;
+}
+
 export default function WeeklyScreen() {
+  const { width } = useWindowDimensions();
   const [weekOffset, setWeekOffset] = useState(0);
   const [isReviewExpanded, setIsReviewExpanded] = useState(true);
+
+  const columnCount = getColumnCount(width);
+  const isDesktopWeek = columnCount === 7;
+  const isCompactTaskCard = columnCount >= 4;
+
+  /*
+   * The page has 40px of horizontal padding. The remaining width is split
+   * between the active columns, including the gaps between day cards.
+   */
+  const gridGap = 12;
+  const pageHorizontalPadding = width < 700 ? 24 : 40;
+  const availableGridWidth = Math.max(
+    width - pageHorizontalPadding,
+    280
+  );
+  const dayColumnWidth =
+    (availableGridWidth - gridGap * (columnCount - 1)) /
+    columnCount;
 
   const {
     tasks,
@@ -68,12 +99,13 @@ export default function WeeklyScreen() {
   );
 
   /*
-   * The current week starts expanded. Previous and future weeks start
-   * collapsed so the task schedule remains the main focus.
+   * Wide desktop layouts start with the review collapsed so the full week
+   * stays visible. Narrow layouts keep the current-week summary expanded.
+   * Resizing the browser automatically switches between those defaults.
    */
   useEffect(() => {
-    setIsReviewExpanded(weekOffset === 0);
-  }, [weekOffset]);
+    setIsReviewExpanded(weekOffset === 0 && !isDesktopWeek);
+  }, [weekOffset, isDesktopWeek]);
 
   const firstDate = weekDays[0].dateKey;
   const lastDate = weekDays[6].dateKey;
@@ -92,7 +124,13 @@ export default function WeeklyScreen() {
       : weeklyReview.goalsProgressedCount;
 
   return (
-    <ScrollView style={styles.page} contentContainerStyle={styles.content}>
+    <ScrollView
+      style={styles.page}
+      contentContainerStyle={[
+        styles.content,
+        width < 700 && styles.contentNarrow,
+      ]}
+    >
       <View style={styles.header}>
         <Text style={styles.title}>Weekly Tasks</Text>
         <Text style={styles.subtitle}>
@@ -103,7 +141,12 @@ export default function WeeklyScreen() {
       <View style={styles.weekNavigationCard}>
         <Text style={styles.weekLabel}>{weekLabel}</Text>
 
-        <View style={styles.weekNavigationRow}>
+        <View
+          style={[
+            styles.weekNavigationRow,
+            width < 520 && styles.weekNavigationRowNarrow,
+          ]}
+        >
           <Pressable
             style={styles.navigationButton}
             onPress={() => setWeekOffset((current) => current - 1)}
@@ -264,7 +307,7 @@ export default function WeeklyScreen() {
         ) : null}
       </View>
 
-      <View style={styles.weekList}>
+      <View style={[styles.weekGrid, { gap: gridGap }]}>
         {weekDays.map((calendarDay) => {
           const dayTasks = getActiveTasksByDate(calendarDay.dateKey);
 
@@ -273,27 +316,58 @@ export default function WeeklyScreen() {
               key={calendarDay.dateKey}
               style={[
                 styles.daySection,
+                { width: dayColumnWidth },
                 calendarDay.isToday && styles.todaySection,
               ]}
             >
               <View style={styles.dayHeaderRow}>
                 <View style={styles.transparentView}>
-                  <Text style={styles.dayTitle}>{calendarDay.dayName}</Text>
-                  <Text style={styles.dayDate}>
+                  <Text
+                    style={[
+                      styles.dayTitle,
+                      isDesktopWeek && styles.dayTitleDesktop,
+                    ]}
+                  >
+                    {calendarDay.dayName}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.dayDate,
+                      isDesktopWeek && styles.dayDateDesktop,
+                    ]}
+                  >
                     {formatDateKey(calendarDay.dateKey, {
-                      month: 'long',
+                      month: isDesktopWeek ? 'short' : 'long',
                       day: 'numeric',
                     })}
                   </Text>
                 </View>
 
                 {calendarDay.isToday ? (
-                  <Text style={styles.todayBadge}>Today</Text>
+                  <Text
+                    style={[
+                      styles.todayBadge,
+                      isDesktopWeek && styles.todayBadgeDesktop,
+                    ]}
+                  >
+                    Today
+                  </Text>
                 ) : null}
               </View>
 
+              <View style={styles.dayCountRow}>
+                <Text style={styles.dayCountText}>
+                  {dayTasks.length}{' '}
+                  {dayTasks.length === 1 ? 'task' : 'tasks'}
+                </Text>
+              </View>
+
               {dayTasks.length === 0 ? (
-                <Text style={styles.emptyDayText}>Nothing scheduled.</Text>
+                <View style={styles.emptyDayCard}>
+                  <Text style={styles.emptyDayText}>
+                    Nothing scheduled.
+                  </Text>
+                </View>
               ) : (
                 <View style={styles.taskList}>
                   {dayTasks.map((task) => {
@@ -307,15 +381,26 @@ export default function WeeklyScreen() {
                         key={task.id}
                         style={[
                           styles.taskCard,
+                          isCompactTaskCard && styles.taskCardCompact,
                           isOverdue && styles.overdueTaskCard,
                         ]}
                       >
                         <View style={styles.taskTextWrap}>
                           <View style={styles.taskTitleRow}>
-                            <Text style={styles.taskTitle}>{task.title}</Text>
+                            <Text
+                              style={[
+                                styles.taskTitle,
+                                isCompactTaskCard &&
+                                  styles.taskTitleCompact,
+                              ]}
+                            >
+                              {task.title}
+                            </Text>
 
                             {isOverdue ? (
-                              <Text style={styles.overdueBadge}>Overdue</Text>
+                              <Text style={styles.overdueBadge}>
+                                Overdue
+                              </Text>
                             ) : null}
                           </View>
 
@@ -332,55 +417,83 @@ export default function WeeklyScreen() {
                           </Text>
 
                           <Text style={styles.taskMeta}>
-                            Priority: {getPriorityLabel(task.priority)}
+                            {getPriorityLabel(task.priority)} priority
                           </Text>
 
                           {linkedGoal ? (
-                            <Text style={styles.taskMeta}>
+                            <Text
+                              style={styles.taskMeta}
+                              numberOfLines={isCompactTaskCard ? 1 : undefined}
+                            >
                               Goal: {linkedGoal.title}
                             </Text>
                           ) : null}
 
                           {task.notes ? (
-                            <Text style={styles.taskNotes}>{task.notes}</Text>
+                            <Text
+                              style={styles.taskNotes}
+                              numberOfLines={isCompactTaskCard ? 2 : undefined}
+                            >
+                              {task.notes}
+                            </Text>
                           ) : null}
                         </View>
 
-                        <View style={styles.taskActions}>
+                        <View
+                          style={[
+                            styles.taskActions,
+                            isCompactTaskCard &&
+                              styles.taskActionsCompact,
+                          ]}
+                        >
                           {isOverdue ? (
                             <Pressable
-                              style={styles.todayButton}
+                              style={[
+                                styles.actionButton,
+                                styles.todayButton,
+                              ]}
                               onPress={() =>
                                 scheduleTask(task.id, todayDateKey)
                               }
                             >
                               <Text style={styles.actionButtonText}>
-                                Move to Today
+                                Today
                               </Text>
                             </Pressable>
                           ) : null}
 
                           <Pressable
-                            style={styles.inboxButton}
+                            style={[
+                              styles.actionButton,
+                              styles.inboxButton,
+                            ]}
                             onPress={() => moveTaskToInbox(task.id)}
                           >
                             <Text style={styles.actionButtonText}>
-                              Back to Inbox
+                              Inbox
                             </Text>
                           </Pressable>
 
                           <Pressable
-                            style={styles.doneButton}
+                            style={[
+                              styles.actionButton,
+                              styles.doneButton,
+                            ]}
                             onPress={() => completeTask(task.id)}
                           >
                             <Text style={styles.actionButtonText}>Done</Text>
                           </Pressable>
 
                           <Pressable
-                            style={styles.deleteButton}
+                            style={[
+                              styles.actionButton,
+                              styles.deleteButton,
+                            ]}
                             onPress={() => deleteTask(task.id)}
                           >
-                            <Text style={styles.actionButtonText}>Delete</Text>
+                            <Text style={styles.actionButtonText}>
+                              Delete
+                            </Text>
                           </Pressable>
                         </View>
                       </View>
@@ -399,6 +512,9 @@ export default function WeeklyScreen() {
 const styles = StyleSheet.create({
   page: { flex: 1 },
   content: { padding: 20, paddingBottom: 40 },
+  contentNarrow: {
+    paddingHorizontal: 12,
+  },
   header: { marginBottom: 18 },
   title: { fontSize: 34, fontWeight: '800', marginBottom: 8 },
   subtitle: { fontSize: 16, opacity: 0.7, lineHeight: 22 },
@@ -419,6 +535,9 @@ const styles = StyleSheet.create({
     gap: 8,
     marginTop: 12,
     backgroundColor: 'transparent',
+  },
+  weekNavigationRowNarrow: {
+    flexDirection: 'column',
   },
   navigationButton: {
     flex: 1,
@@ -505,7 +624,8 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
   },
   metricCard: {
-    width: '48%',
+    flexGrow: 1,
+    flexBasis: 220,
     paddingVertical: 12,
     paddingHorizontal: 10,
     borderRadius: 12,
@@ -528,12 +648,14 @@ const styles = StyleSheet.create({
   },
   streakRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 10,
     marginTop: 12,
     backgroundColor: 'transparent',
   },
   streakBadge: {
-    flex: 1,
+    flexGrow: 1,
+    flexBasis: 220,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 9,
@@ -556,25 +678,49 @@ const styles = StyleSheet.create({
     color: '#6b7280',
     fontWeight: '700',
   },
-  weekList: { gap: 18 },
+  weekGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'flex-start',
+    backgroundColor: 'transparent',
+  },
   daySection: {
+    minHeight: 220,
     backgroundColor: 'white',
-    padding: 14,
+    padding: 12,
     borderRadius: 14,
     borderWidth: 1,
     borderColor: '#e5e7eb',
   },
-  todaySection: { borderWidth: 3, borderColor: '#2563eb' },
+  todaySection: {
+    borderWidth: 3,
+    borderColor: '#2563eb',
+  },
   dayHeaderRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 10,
+    alignItems: 'flex-start',
+    gap: 6,
+    marginBottom: 8,
     backgroundColor: 'transparent',
   },
   transparentView: { backgroundColor: 'transparent' },
-  dayTitle: { fontSize: 24, fontWeight: '800', color: '#111827' },
-  dayDate: { marginTop: 2, fontSize: 14, color: '#6b7280' },
+  dayTitle: {
+    fontSize: 24,
+    fontWeight: '800',
+    color: '#111827',
+  },
+  dayTitleDesktop: {
+    fontSize: 16,
+  },
+  dayDate: {
+    marginTop: 2,
+    fontSize: 14,
+    color: '#6b7280',
+  },
+  dayDateDesktop: {
+    fontSize: 12,
+  },
   todayBadge: {
     color: '#2563eb',
     backgroundColor: '#dbeafe',
@@ -584,78 +730,122 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     overflow: 'hidden',
   },
-  emptyDayText: { fontSize: 15, color: '#6b7280' },
-  taskList: { gap: 10 },
-  taskCard: {
-    flexDirection: 'row',
+  todayBadgeDesktop: {
+    fontSize: 10,
+    paddingVertical: 3,
+    paddingHorizontal: 6,
+  },
+  dayCountRow: {
+    paddingVertical: 7,
+    paddingHorizontal: 9,
+    marginBottom: 9,
+    borderRadius: 9,
+    backgroundColor: '#f3f4f6',
+  },
+  dayCountText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#4b5563',
+  },
+  emptyDayCard: {
+    flex: 1,
+    minHeight: 100,
     alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 16,
-    borderRadius: 14,
+    justifyContent: 'center',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: '#d1d5db',
+    backgroundColor: '#f9fafb',
+  },
+  emptyDayText: {
+    fontSize: 13,
+    color: '#6b7280',
+    textAlign: 'center',
+  },
+  taskList: { gap: 8, backgroundColor: 'transparent' },
+  taskCard: {
+    padding: 14,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: '#e5e7eb',
     backgroundColor: 'white',
     gap: 12,
   },
+  taskCardCompact: {
+    padding: 10,
+    gap: 9,
+  },
   overdueTaskCard: {
     borderColor: '#f87171',
     backgroundColor: '#fef2f2',
   },
-  taskTextWrap: { flex: 1, backgroundColor: 'transparent' },
+  taskTextWrap: { backgroundColor: 'transparent' },
   taskTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
     flexWrap: 'wrap',
-    gap: 8,
+    gap: 6,
     backgroundColor: 'transparent',
   },
-  taskTitle: { fontSize: 17, fontWeight: '700', color: '#111827' },
+  taskTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  taskTitleCompact: {
+    fontSize: 14,
+  },
   overdueBadge: {
-    fontSize: 11,
+    fontSize: 9,
     fontWeight: '900',
     color: '#991b1b',
     backgroundColor: '#fee2e2',
-    paddingVertical: 4,
-    paddingHorizontal: 8,
+    paddingVertical: 3,
+    paddingHorizontal: 6,
     borderRadius: 999,
     overflow: 'hidden',
   },
-  taskMeta: { marginTop: 4, fontSize: 13, color: '#6b7280' },
+  taskMeta: { marginTop: 4, fontSize: 11, color: '#6b7280' },
   overdueText: { color: '#b91c1c', fontWeight: '800' },
   taskNotes: {
     marginTop: 6,
-    fontSize: 14,
+    fontSize: 12,
     color: '#374151',
-    lineHeight: 20,
+    lineHeight: 17,
   },
   taskActions: {
-    gap: 8,
-    alignItems: 'flex-end',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 7,
     backgroundColor: 'transparent',
+  },
+  taskActionsCompact: {
+    gap: 5,
+  },
+  actionButton: {
+    flexGrow: 1,
+    minWidth: 62,
+    alignItems: 'center',
+    paddingVertical: 7,
+    paddingHorizontal: 8,
+    borderRadius: 8,
   },
   todayButton: {
     backgroundColor: '#f97316',
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: 10,
   },
   inboxButton: {
     backgroundColor: '#2563eb',
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: 10,
   },
   doneButton: {
     backgroundColor: '#16a34a',
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: 10,
   },
   deleteButton: {
     backgroundColor: '#dc2626',
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: 10,
   },
-  actionButtonText: { color: 'white', fontWeight: '700' },
+  actionButtonText: {
+    color: 'white',
+    fontSize: 11,
+    fontWeight: '700',
+  },
 });
