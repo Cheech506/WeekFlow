@@ -4,6 +4,7 @@ import {
   ScrollView,
   StyleSheet,
   TextInput,
+  useWindowDimensions,
 } from 'react-native';
 
 import { Text, View } from '@/components/Themed';
@@ -55,6 +56,24 @@ function getProgressWidth(percentage: number): `${number}%` {
 }
 
 export default function TwelveWeekGoalsScreen() {
+  const { width } = useWindowDimensions();
+
+  const isDesktop = width >= 1100;
+  const isWideDesktop = width >= 1450;
+  const goalColumnCount = isWideDesktop ? 3 : isDesktop ? 2 : 1;
+  const goalGridGap = 14;
+  const pageHorizontalPadding = 40;
+  const availableGoalWidth = Math.max(
+    width - pageHorizontalPadding,
+    280
+  );
+  const goalCardWidth =
+    goalColumnCount === 1
+      ? availableGoalWidth
+      : (availableGoalWidth -
+          goalGridGap * (goalColumnCount - 1)) /
+        goalColumnCount;
+
   const [goalText, setGoalText] = useState('');
 
   const {
@@ -103,9 +122,17 @@ export default function TwelveWeekGoalsScreen() {
   return (
     <ScrollView
       style={styles.page}
-      contentContainerStyle={styles.content}
+      contentContainerStyle={[
+        styles.content,
+        isDesktop && styles.contentDesktop,
+      ]}
     >
-      <View style={styles.header}>
+      <View
+        style={[
+          styles.header,
+          isDesktop && styles.fullWidthPanel,
+        ]}
+      >
         <Text style={styles.title}>12 Week Goals</Text>
 
         <Text style={styles.subtitle}>
@@ -114,7 +141,12 @@ export default function TwelveWeekGoalsScreen() {
         </Text>
       </View>
 
-      <View style={styles.overviewCard}>
+      <View
+        style={[
+          styles.overviewCard,
+          isDesktop && styles.overviewDesktop,
+        ]}
+      >
         <Text style={styles.overviewTitle}>
           12 Week Overview
         </Text>
@@ -196,7 +228,12 @@ export default function TwelveWeekGoalsScreen() {
         </View>
       </View>
 
-      <View style={styles.addCard}>
+      <View
+        style={[
+          styles.addCard,
+          isDesktop && styles.addCardDesktop,
+        ]}
+      >
         <TextInput
           style={styles.input}
           placeholder="Add a 12 week goal..."
@@ -216,7 +253,13 @@ export default function TwelveWeekGoalsScreen() {
         </Pressable>
       </View>
 
-      <View style={styles.goalList}>
+      <View
+        style={[
+          styles.goalList,
+          isDesktop && styles.goalGrid,
+          { gap: goalGridGap },
+        ]}
+      >
         {isLoading ? (
           <View style={styles.emptyCard}>
             <Text style={styles.emptyTitle}>
@@ -258,7 +301,13 @@ export default function TwelveWeekGoalsScreen() {
               );
 
             return (
-              <View key={goal.id} style={styles.goalCard}>
+              <View
+                key={goal.id}
+                style={[
+                  styles.goalCard,
+                  isDesktop && { width: goalCardWidth },
+                ]}
+              >
                 <View style={styles.goalHeaderRow}>
                   <Pressable
                     style={styles.goalMain}
@@ -436,6 +485,22 @@ const styles = StyleSheet.create({
     padding: 20,
     paddingBottom: 40,
   },
+  contentDesktop: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'flex-start',
+    columnGap: 16,
+  },
+  fullWidthPanel: { width: '100%' },
+  overviewDesktop: {
+    width: '66%',
+    alignSelf: 'stretch',
+  },
+  addCardDesktop: {
+    width: '32%',
+    alignSelf: 'stretch',
+    justifyContent: 'center',
+  },
   header: {
     marginBottom: 20,
   },
@@ -556,6 +621,12 @@ const styles = StyleSheet.create({
   },
   goalList: {
     gap: 12,
+    width: '100%',
+  },
+  goalGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'flex-start',
   },
   goalCard: {
     padding: 16,

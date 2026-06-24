@@ -4,6 +4,7 @@ import {
   ScrollView,
   StyleSheet,
   TextInput,
+  useWindowDimensions,
 } from 'react-native';
 
 import { Text, View } from '@/components/Themed';
@@ -121,6 +122,11 @@ function getRecurringRuleDescription(rule: RecurringRule) {
 }
 
 export default function InboxScreen() {
+  const { width } = useWindowDimensions();
+
+  const isDesktop = width >= 1100;
+  const isWideDesktop = width >= 1400;
+
   const [taskText, setTaskText] = useState('');
   const [notesText, setNotesText] = useState('');
   const [priority, setPriority] = useState(0);
@@ -303,10 +309,18 @@ export default function InboxScreen() {
   return (
     <ScrollView
       style={styles.page}
-      contentContainerStyle={styles.content}
+      contentContainerStyle={[
+        styles.content,
+        isDesktop && styles.contentDesktop,
+      ]}
       keyboardShouldPersistTaps="handled"
     >
-      <View style={styles.header}>
+      <View
+        style={[
+          styles.header,
+          isDesktop && styles.fullWidthPanel,
+        ]}
+      >
         <Text style={styles.title}>Inbox</Text>
         <Text style={styles.subtitle}>
           Capture tasks, reminders, and random thoughts before
@@ -314,7 +328,12 @@ export default function InboxScreen() {
         </Text>
       </View>
 
-      <View style={styles.progressCard}>
+      <View
+        style={[
+          styles.progressCard,
+          isDesktop && styles.fullWidthPanel,
+        ]}
+      >
         <Text style={styles.progressTitle}>Inbox Overview</Text>
         <Text style={styles.progressText}>
           {inboxTasks.length} unscheduled task
@@ -326,7 +345,12 @@ export default function InboxScreen() {
         </Text>
       </View>
 
-      <View style={styles.section}>
+      <View
+        style={[
+          styles.section,
+          isDesktop && styles.workspacePrimary,
+        ]}
+      >
         <Text style={styles.sectionTitle}>Quick Task</Text>
         <Text style={styles.sectionSubtitle}>
           Create a one-time Inbox task or build a recurring
@@ -624,7 +648,12 @@ export default function InboxScreen() {
         </View>
       </View>
 
-      <View style={styles.section}>
+      <View
+        style={[
+          styles.section,
+          isDesktop && styles.workspaceSecondary,
+        ]}
+      >
         <Pressable
           style={styles.managerHeader}
           onPress={() =>
@@ -847,7 +876,12 @@ export default function InboxScreen() {
         ) : null}
       </View>
 
-      <View style={styles.section}>
+      <View
+        style={[
+          styles.section,
+          isDesktop && styles.fullWidthPanel,
+        ]}
+      >
         <Text style={styles.sectionTitle}>
           Brain Dump Notes
         </Text>
@@ -873,7 +907,12 @@ export default function InboxScreen() {
           </Pressable>
         </View>
 
-        <View style={styles.list}>
+        <View
+          style={[
+            styles.list,
+            isDesktop && styles.cardGrid,
+          ]}
+        >
           {activeBrainDumps.length === 0 ? (
             <View style={styles.emptyCard}>
               <Text style={styles.emptyTitle}>
@@ -888,7 +927,10 @@ export default function InboxScreen() {
             activeBrainDumps.map((brainDump) => (
               <View
                 key={brainDump.id}
-                style={styles.horizontalCard}
+                style={[
+                  styles.horizontalCard,
+                  isDesktop && styles.halfWidthCard,
+                ]}
               >
                 <View style={styles.flex}>
                   <Text style={styles.brainDumpBody}>
@@ -952,7 +994,12 @@ export default function InboxScreen() {
         </View>
       </View>
 
-      <View style={styles.section}>
+      <View
+        style={[
+          styles.section,
+          isDesktop && styles.fullWidthPanel,
+        ]}
+      >
         <Text style={styles.sectionTitle}>
           Unscheduled Tasks
         </Text>
@@ -961,7 +1008,12 @@ export default function InboxScreen() {
           Weekly.
         </Text>
 
-        <View style={styles.list}>
+        <View
+          style={[
+            styles.list,
+            isDesktop && styles.cardGrid,
+          ]}
+        >
           {inboxTasks.length === 0 ? (
             <View style={styles.emptyCard}>
               <Text style={styles.emptyTitle}>
@@ -983,7 +1035,10 @@ export default function InboxScreen() {
                 return (
                   <View
                     key={task.id}
-                    style={styles.taskCard}
+                    style={[
+                      styles.taskCard,
+                      isDesktop && styles.halfWidthCard,
+                    ]}
                   >
                     <Text style={styles.editTitle}>
                       Edit Task
@@ -1113,7 +1168,10 @@ export default function InboxScreen() {
               return (
                 <View
                   key={task.id}
-                  style={styles.taskCard}
+                  style={[
+                    styles.taskCard,
+                    isDesktop && styles.halfWidthCard,
+                  ]}
                 >
                   <View style={styles.horizontalCardInner}>
                     <View style={styles.flex}>
@@ -1194,11 +1252,12 @@ export default function InboxScreen() {
                     Schedule for:
                   </Text>
                   <ScrollView
-                    horizontal
+                    horizontal={!isWideDesktop}
                     showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={
-                      styles.horizontalRow
-                    }
+                    contentContainerStyle={[
+                      styles.horizontalRow,
+                      isWideDesktop && styles.horizontalRowDesktop,
+                    ]}
                   >
                     {scheduleOptions.map((option) => (
                       <Pressable
@@ -1251,6 +1310,22 @@ export default function InboxScreen() {
 const styles = StyleSheet.create({
   page: { flex: 1 },
   content: { padding: 20, paddingBottom: 40 },
+  contentDesktop: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'flex-start',
+    columnGap: 18,
+  },
+  fullWidthPanel: { width: '100%' },
+  workspacePrimary: { width: '58%' },
+  workspaceSecondary: { width: '40%' },
+  cardGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'flex-start',
+    columnGap: 14,
+  },
+  halfWidthCard: { width: '49%' },
   header: { marginBottom: 20 },
   title: {
     fontSize: 34,
@@ -1319,6 +1394,10 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   horizontalRow: { gap: 8, paddingRight: 4 },
+  horizontalRowDesktop: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
   row: {
     flexDirection: 'row',
     gap: 10,

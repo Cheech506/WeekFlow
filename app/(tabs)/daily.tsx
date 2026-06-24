@@ -2,6 +2,7 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  useWindowDimensions,
 } from 'react-native';
 
 import { Text, View } from '@/components/Themed';
@@ -33,6 +34,11 @@ function formatCreatedDate(value: string) {
 }
 
 export default function DailyScreen() {
+  const { width } = useWindowDimensions();
+
+  const isDesktop = width >= 1100;
+  const isWideDesktop = width >= 1400;
+
   const {
     tasks,
     completeTask,
@@ -85,9 +91,17 @@ export default function DailyScreen() {
   return (
     <ScrollView
       style={styles.page}
-      contentContainerStyle={styles.content}
+      contentContainerStyle={[
+        styles.content,
+        isDesktop && styles.contentDesktop,
+      ]}
     >
-      <View style={styles.header}>
+      <View
+        style={[
+          styles.header,
+          isDesktop && styles.fullWidthPanel,
+        ]}
+      >
         <Text style={styles.title}>Daily Tasks</Text>
 
         <Text style={styles.subtitle}>
@@ -95,7 +109,12 @@ export default function DailyScreen() {
         </Text>
       </View>
 
-      <View style={styles.progressCard}>
+      <View
+        style={[
+          styles.progressCard,
+          isDesktop && styles.fullWidthPanel,
+        ]}
+      >
         <Text style={styles.progressTitle}>
           Today's Progress
         </Text>
@@ -111,7 +130,12 @@ export default function DailyScreen() {
       </View>
 
       {overdueTasks.length > 0 ? (
-        <View style={styles.overdueSection}>
+        <View
+          style={[
+            styles.overdueSection,
+            isDesktop && styles.fullWidthPanel,
+          ]}
+        >
           <Text style={styles.overdueSectionTitle}>
             Overdue Tasks
           </Text>
@@ -121,14 +145,25 @@ export default function DailyScreen() {
             choose a new date, or return them to Inbox.
           </Text>
 
-          <View style={styles.overdueList}>
+          <View
+            style={[
+              styles.overdueList,
+              isDesktop && styles.cardGrid,
+            ]}
+          >
             {overdueTasks.map((task) => {
               const linkedGoal = goals.find(
                 (goal) => goal.id === task.goalId
               );
 
               return (
-                <View key={task.id} style={styles.overdueCard}>
+                <View
+                  key={task.id}
+                  style={[
+                    styles.overdueCard,
+                    isDesktop && styles.halfWidthCard,
+                  ]}
+                >
                   <View style={styles.overdueTopRow}>
                     <View style={styles.taskTextWrap}>
                       <View style={styles.overdueTitleRow}>
@@ -231,7 +266,12 @@ export default function DailyScreen() {
         </View>
       ) : null}
 
-      <View style={styles.streakCard}>
+      <View
+        style={[
+          styles.streakCard,
+          isDesktop && styles.dashboardHalf,
+        ]}
+      >
         <View style={styles.streakTextWrap}>
           <Text style={styles.streakTitle}>
             Progress & Streaks
@@ -316,7 +356,12 @@ export default function DailyScreen() {
         </Text>
       </View>
 
-      <View style={styles.weekProgressCard}>
+      <View
+        style={[
+          styles.weekProgressCard,
+          isDesktop && styles.dashboardHalf,
+        ]}
+      >
         <Text style={styles.weekProgressTitle}>
           Seven-Day Progress
         </Text>
@@ -328,7 +373,10 @@ export default function DailyScreen() {
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.weekDaysRow}
+          contentContainerStyle={[
+            styles.weekDaysRow,
+            isDesktop && styles.weekDaysRowDesktop,
+          ]}
         >
           {progressStats.weeklyDays.map((day) => {
             const hasCompletion = day.completedCount > 0;
@@ -390,7 +438,12 @@ export default function DailyScreen() {
         </View>
       </View>
 
-      <View style={styles.section}>
+      <View
+        style={[
+          styles.section,
+          isDesktop && styles.primaryColumn,
+        ]}
+      >
         <Text style={styles.sectionTitle}>
           Today's Tasks
         </Text>
@@ -475,7 +528,12 @@ export default function DailyScreen() {
         </View>
       </View>
 
-      <View style={styles.section}>
+      <View
+        style={[
+          styles.section,
+          isDesktop && styles.secondaryColumn,
+        ]}
+      >
         <Text style={styles.sectionTitle}>
           Brain Dump Notes
         </Text>
@@ -528,6 +586,25 @@ export default function DailyScreen() {
 const styles = StyleSheet.create({
   page: { flex: 1 },
   content: { padding: 20, paddingBottom: 40 },
+  contentDesktop: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'flex-start',
+    columnGap: 16,
+  },
+  fullWidthPanel: { width: '100%' },
+  dashboardHalf: {
+    width: '49%',
+    alignSelf: 'stretch',
+  },
+  primaryColumn: { width: '64%' },
+  secondaryColumn: { width: '34%' },
+  cardGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'flex-start',
+  },
+  halfWidthCard: { width: '49%' },
   header: { marginBottom: 20 },
   title: { fontSize: 34, fontWeight: '800', marginBottom: 8 },
   subtitle: { fontSize: 16, opacity: 0.7, lineHeight: 22 },
@@ -728,7 +805,12 @@ const styles = StyleSheet.create({
     color: '#6b7280',
   },
   weekDaysRow: { gap: 10, paddingBottom: 4 },
+  weekDaysRowDesktop: {
+    minWidth: '100%',
+    justifyContent: 'space-between',
+  },
   weekDayCard: {
+    flexGrow: 1,
     minWidth: 72,
     minHeight: 112,
     paddingVertical: 12,
