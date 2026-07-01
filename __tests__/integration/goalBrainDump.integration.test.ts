@@ -11,14 +11,27 @@ describe('goal and brain dump storage integration', () => {
     jest.resetModules();
   });
 
-  test('creates, completes, and deletes a goal', async () => {
+  test('creates, edits, completes, reopens, and deletes a goal', async () => {
     const goalStorage = await import('../../lib/goalStorage');
 
     const goal = await goalStorage.insertGoal(
-      '  Integration goal  '
+      '  Integration goal  ',
+      '2026-07-01',
+      '2026-09-23'
     );
 
     expect(goal.title).toBe('Integration goal');
+
+    const editedDates = await goalStorage.updateGoalDates(
+      goal.id,
+      '2026-07-08',
+      '2026-10-07'
+    );
+
+    let goals = await goalStorage.getGoals();
+
+    expect(goals[0].startDate).toBe(editedDates.startDate);
+    expect(goals[0].endDate).toBe(editedDates.endDate);
 
     const completedAt =
       await goalStorage.updateGoalCompletion(
@@ -26,10 +39,16 @@ describe('goal and brain dump storage integration', () => {
         true
       );
 
-    let goals = await goalStorage.getGoals();
+    goals = await goalStorage.getGoals();
 
     expect(goals[0].completed).toBe(true);
     expect(goals[0].completedAt).toBe(completedAt);
+
+    await goalStorage.updateGoalCompletion(goal.id, false);
+    goals = await goalStorage.getGoals();
+
+    expect(goals[0].completed).toBe(false);
+    expect(goals[0].completedAt).toBeNull();
 
     await goalStorage.deleteGoalById(goal.id);
     goals = await goalStorage.getGoals();

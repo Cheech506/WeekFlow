@@ -12,6 +12,7 @@ import {
   getGoals,
   insertGoal,
   updateGoalCompletion,
+  updateGoalDates,
   type StoredGoal,
 } from '@/lib/goalStorage';
 
@@ -21,7 +22,16 @@ type GoalContextValue = {
   goals: Goal[];
   isLoading: boolean;
   refreshGoals: () => Promise<void>;
-  addGoal: (title: string) => Promise<void>;
+  addGoal: (
+    title: string,
+    startDateKey?: string,
+    endDateKey?: string
+  ) => Promise<void>;
+  editGoalDates: (
+    id: number,
+    startDateKey: string,
+    endDateKey: string
+  ) => Promise<void>;
   toggleGoal: (id: number) => Promise<void>;
   deleteGoal: (id: number) => Promise<void>;
 };
@@ -49,16 +59,60 @@ export function GoalProvider({ children }: { children: React.ReactNode }) {
     refreshGoals();
   }, [refreshGoals]);
 
-  const addGoal = useCallback(async (title: string) => {
-    if (!title.trim()) return;
+  const addGoal = useCallback(
+    async (
+      title: string,
+      startDateKey?: string,
+      endDateKey?: string
+    ) => {
+      if (!title.trim()) return;
 
-    try {
-      const newGoal = await insertGoal(title);
-      setGoals((currentGoals) => [newGoal, ...currentGoals]);
-    } catch (error) {
-      console.error('Failed to add goal:', error);
-    }
-  }, []);
+      try {
+        const newGoal = await insertGoal(
+          title,
+          startDateKey,
+          endDateKey
+        );
+        setGoals((currentGoals) => [newGoal, ...currentGoals]);
+      } catch (error) {
+        console.error('Failed to add goal:', error);
+        throw error;
+      }
+    },
+    []
+  );
+
+  const editGoalDates = useCallback(
+    async (
+      id: number,
+      startDateKey: string,
+      endDateKey: string
+    ) => {
+      try {
+        const dates = await updateGoalDates(
+          id,
+          startDateKey,
+          endDateKey
+        );
+
+        setGoals((currentGoals) =>
+          currentGoals.map((goal) =>
+            goal.id === id
+              ? {
+                  ...goal,
+                  startDate: dates.startDate,
+                  endDate: dates.endDate,
+                }
+              : goal
+          )
+        );
+      } catch (error) {
+        console.error('Failed to update goal dates:', error);
+        throw error;
+      }
+    },
+    []
+  );
 
   const toggleGoal = useCallback(
     async (id: number) => {
@@ -106,6 +160,7 @@ export function GoalProvider({ children }: { children: React.ReactNode }) {
       isLoading,
       refreshGoals,
       addGoal,
+      editGoalDates,
       toggleGoal,
       deleteGoal,
     }),
@@ -114,6 +169,7 @@ export function GoalProvider({ children }: { children: React.ReactNode }) {
       isLoading,
       refreshGoals,
       addGoal,
+      editGoalDates,
       toggleGoal,
       deleteGoal,
     ]

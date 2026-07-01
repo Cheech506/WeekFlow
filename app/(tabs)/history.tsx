@@ -23,7 +23,11 @@ import {
   startOfLocalDay,
 } from '@/lib/dateUtils';
 
-type ContentFilter = 'all' | 'tasks' | 'brainDumps';
+type ContentFilter =
+  | 'all'
+  | 'tasks'
+  | 'goals'
+  | 'brainDumps';
 type PriorityFilter = 'all' | 0 | 1 | 2;
 type GoalFilter = 'all' | 'none' | number;
 
@@ -95,6 +99,31 @@ function formatArchivedDate(value: string | null) {
     hour: 'numeric',
     minute: '2-digit',
   });
+}
+
+function formatGoalDate(value: string) {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return 'Date unknown';
+  }
+
+  return date.toLocaleDateString([], {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+}
+
+function calculateProgressPercentage(
+  completedCount: number,
+  totalCount: number
+) {
+  if (totalCount === 0) {
+    return 0;
+  }
+
+  return Math.round((completedCount / totalCount) * 100);
 }
 
 function getPriorityLabel(priority: number) {
@@ -192,7 +221,7 @@ export default function HistoryScreen() {
     useState<PickedWeekFlowBackup | null>(null);
 
   const { tasks, refreshTasks } = useTasks();
-  const { goals, refreshGoals } = useGoals();
+  const { goals, refreshGoals, toggleGoal } = useGoals();
 
   const {
     getArchivedBrainDumps,
@@ -228,6 +257,22 @@ export default function HistoryScreen() {
       });
   }, [tasks]);
 
+  const allCompletedGoals = useMemo(() => {
+    return goals
+      .filter((goal) => goal.completed)
+      .sort((firstGoal, secondGoal) => {
+        const firstTime = firstGoal.completedAt
+          ? new Date(firstGoal.completedAt).getTime()
+          : 0;
+
+        const secondTime = secondGoal.completedAt
+          ? new Date(secondGoal.completedAt).getTime()
+          : 0;
+
+        return secondTime - firstTime;
+      });
+  }, [goals]);
+
   const sortedArchivedBrainDumps = useMemo(() => {
     return [...archivedBrainDumps].sort(
       (firstBrainDump, secondBrainDump) => {
@@ -247,7 +292,10 @@ export default function HistoryScreen() {
   const normalizedSearch = searchText.trim().toLowerCase();
 
   const filteredCompletedTasks = useMemo(() => {
-    if (contentFilter === 'brainDumps') {
+    if (
+      contentFilter === 'brainDumps' ||
+      contentFilter === 'goals'
+    ) {
       return [];
     }
 
@@ -291,8 +339,44 @@ export default function HistoryScreen() {
     priorityFilter,
   ]);
 
+  const filteredCompletedGoals = useMemo(() => {
+    if (
+      contentFilter === 'tasks' ||
+      contentFilter === 'brainDumps'
+    ) {
+      return [];
+    }
+
+    /*
+     * Priority and linked-goal filters apply to tasks only. A goal
+     * history search remains separate so the filters stay predictable.
+     */
+    if (
+      priorityFilter !== 'all' ||
+      goalFilter !== 'all'
+    ) {
+      return [];
+    }
+
+    return allCompletedGoals.filter((goal) => {
+      return (
+        normalizedSearch.length === 0 ||
+        goal.title.toLowerCase().includes(normalizedSearch)
+      );
+    });
+  }, [
+    allCompletedGoals,
+    contentFilter,
+    goalFilter,
+    normalizedSearch,
+    priorityFilter,
+  ]);
+
   const filteredBrainDumps = useMemo(() => {
-    if (contentFilter === 'tasks') {
+    if (
+      contentFilter === 'tasks' ||
+      contentFilter === 'goals'
+    ) {
       return [];
     }
 
@@ -330,6 +414,15 @@ export default function HistoryScreen() {
     [filteredCompletedTasks]
   );
 
+  const groupedCompletedGoals = useMemo(
+    () =>
+      groupHistoryItems(
+        filteredCompletedGoals,
+        (goal) => goal.completedAt
+      ),
+    [filteredCompletedGoals]
+  );
+
   const groupedBrainDumps = useMemo(
     () =>
       groupHistoryItems(
@@ -350,9 +443,9 @@ export default function HistoryScreen() {
 
     /*
      * Brain dumps do not have priority or goal values, so those
-     * filters are reset when Brain Dumps is selected.
+     * filters are reset when Goals or Brain Dumps is selected.
      */
-    if (filter === 'brainDumps') {
+    if (filter === 'brainDumps' || filter === 'goals') {
       setPriorityFilter('all');
       setGoalFilter('all');
     }
@@ -479,8 +572,8 @@ export default function HistoryScreen() {
         <Text style={styles.title}>History</Text>
 
         <Text style={styles.subtitle}>
-          Look back at completed tasks and thoughts you cleared
-          from your head.
+          Look back at completed tasks, finished goals, and thoughts
+          you cleared from your head.
         </Text>
       </View>
 
@@ -492,6 +585,8 @@ export default function HistoryScreen() {
         <Text style={styles.progressText}>
           {allCompletedTasks.length} completed task
           {allCompletedTasks.length === 1 ? '' : 's'} •{' '}
+          {allCompletedGoals.length} completed goal
+          {allCompletedGoals.length === 1 ? '' : 's'} •{' '}
           {archivedBrainDumps.length} archived brain dump
           {archivedBrainDumps.length === 1 ? '' : 's'}
         </Text>
@@ -504,7 +599,7 @@ export default function HistoryScreen() {
 
         <TextInput
           style={styles.searchInput}
-          placeholder="Search tasks, notes, goals, or brain dumps..."
+          placeholder="Search tasks, completed goals, notes, or brain dumps..."
           value={searchText}
           onChangeText={setSearchText}
           autoCapitalize="none"
@@ -556,6 +651,25 @@ export default function HistoryScreen() {
               ]}
             >
               Tasks
+            </Text>
+          </Pressable>
+
+          <Pressable
+            style={[
+              styles.filterButton,
+              contentFilter === 'goals' &&
+                styles.filterButtonSelected,
+            ]}
+            onPress={() => selectContentFilter('goals')}
+          >
+            <Text
+              style={[
+                styles.filterButtonText,
+                contentFilter === 'goals' &&
+                  styles.filterButtonTextSelected,
+              ]}
+            >
+              Goals
             </Text>
           </Pressable>
 
@@ -708,8 +822,10 @@ export default function HistoryScreen() {
         <View style={styles.filterSummaryRow}>
           <Text style={styles.filterSummaryText}>
             Showing {filteredCompletedTasks.length} task
-            {filteredCompletedTasks.length === 1 ? '' : 's'}{' '}
-            and {filteredBrainDumps.length} brain dump
+            {filteredCompletedTasks.length === 1 ? '' : 's'},{' '}
+            {filteredCompletedGoals.length} goal
+            {filteredCompletedGoals.length === 1 ? '' : 's'}, and{' '}
+            {filteredBrainDumps.length} brain dump
             {filteredBrainDumps.length === 1 ? '' : 's'}
           </Text>
 
@@ -726,7 +842,8 @@ export default function HistoryScreen() {
         </View>
       </View>
 
-      {contentFilter !== 'brainDumps' ? (
+      {contentFilter !== 'brainDumps' &&
+      contentFilter !== 'goals' ? (
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>
             Completed Tasks
@@ -825,6 +942,134 @@ export default function HistoryScreen() {
       ) : null}
 
       {contentFilter !== 'tasks' &&
+      contentFilter !== 'brainDumps' &&
+      priorityFilter === 'all' &&
+      goalFilter === 'all' ? (
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>
+            Completed Goals
+          </Text>
+
+          <Text style={styles.sectionSubtitle}>
+            Finished goals are removed from the active Goals screen.
+            Reopen one here if you want to continue working on it.
+          </Text>
+
+          {filteredCompletedGoals.length === 0 ? (
+            <View style={styles.emptyCard}>
+              <Text style={styles.emptyTitle}>
+                No completed goals found
+              </Text>
+
+              <Text style={styles.emptyText}>
+                Try changing the search or complete a goal from the
+                Goals screen.
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.groupList}>
+              {historyGroups.map((group) => {
+                const groupGoals =
+                  groupedCompletedGoals[group.key];
+
+                if (groupGoals.length === 0) {
+                  return null;
+                }
+
+                return (
+                  <View
+                    key={group.key}
+                    style={styles.historyGroup}
+                  >
+                    <View style={styles.groupHeaderRow}>
+                      <Text style={styles.groupTitle}>
+                        {group.title}
+                      </Text>
+
+                      <Text style={styles.groupCount}>
+                        {groupGoals.length}
+                      </Text>
+                    </View>
+
+                    <View style={styles.list}>
+                      {groupGoals.map((goal) => {
+                        const linkedTasks = tasks.filter(
+                          (task) => task.goalId === goal.id
+                        );
+                        const completedLinkedTasks =
+                          linkedTasks.filter(
+                            (task) => task.completed
+                          ).length;
+                        const progress =
+                          calculateProgressPercentage(
+                            completedLinkedTasks,
+                            linkedTasks.length
+                          );
+
+                        return (
+                          <View
+                            key={goal.id}
+                            style={styles.goalHistoryCard}
+                          >
+                            <View
+                              style={styles.goalHistoryHeaderRow}
+                            >
+                              <View
+                                style={styles.goalHistoryTextWrap}
+                              >
+                                <Text
+                                  style={styles.goalHistoryTitle}
+                                >
+                                  {goal.title}
+                                </Text>
+
+                                <Text style={styles.taskMeta}>
+                                  Goal dates:{' '}
+                                  {formatGoalDate(goal.startDate)} →{' '}
+                                  {formatGoalDate(goal.endDate)}
+                                </Text>
+
+                                <Text style={styles.taskMeta}>
+                                  Linked task progress: {progress}% ({' '}
+                                  {completedLinkedTasks} of{' '}
+                                  {linkedTasks.length})
+                                </Text>
+
+                                <Text style={styles.completedMeta}>
+                                  Completed:{' '}
+                                  {formatCompletedDate(
+                                    goal.completedAt
+                                  )}
+                                </Text>
+                              </View>
+
+                              <Pressable
+                                style={styles.restoreButton}
+                                onPress={() =>
+                                  toggleGoal(goal.id)
+                                }
+                              >
+                                <Text
+                                  style={styles.restoreButtonText}
+                                >
+                                  Reopen
+                                </Text>
+                              </Pressable>
+                            </View>
+                          </View>
+                        );
+                      })}
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
+          )}
+        </View>
+      ) : null}
+
+      {contentFilter !== 'tasks' &&
+      contentFilter !== 'goals' &&
       priorityFilter === 'all' &&
       goalFilter === 'all' ? (
         <View style={styles.section}>
@@ -1255,6 +1500,30 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#374151',
     lineHeight: 20,
+  },
+  goalHistoryCard: {
+    padding: 16,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#c4b5fd',
+    backgroundColor: '#faf5ff',
+  },
+  goalHistoryHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: 12,
+    backgroundColor: 'transparent',
+  },
+  goalHistoryTextWrap: {
+    flex: 1,
+    gap: 4,
+    backgroundColor: 'transparent',
+  },
+  goalHistoryTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#111827',
   },
   brainDumpCard: {
     flexDirection: 'row',

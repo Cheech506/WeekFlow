@@ -1,4 +1,8 @@
 import { getDb, migrateDb } from './db';
+import {
+  createDefaultGoalDateRange,
+  validateGoalDateRange,
+} from './goalUtils';
 
 export type StoredGoal = {
   id: number;
@@ -19,12 +23,6 @@ type GoalRow = {
   start_date: string;
   end_date: string;
 };
-
-function addDays(date: Date, days: number) {
-  const copy = new Date(date);
-  copy.setDate(copy.getDate() + days);
-  return copy;
-}
 
 export async function getGoals(): Promise<StoredGoal[]> {
   await migrateDb();
@@ -48,16 +46,24 @@ export async function getGoals(): Promise<StoredGoal[]> {
   }));
 }
 
-export async function insertGoal(title: string): Promise<StoredGoal> {
+export async function insertGoal(
+  title: string,
+  startDateKey?: string,
+  endDateKey?: string
+): Promise<StoredGoal> {
   await migrateDb();
 
   const db = await getDb();
+  const defaultDates = createDefaultGoalDateRange();
+  const dateRange = validateGoalDateRange(
+    startDateKey ?? defaultDates.startDateKey,
+    endDateKey ?? defaultDates.endDateKey
+  );
 
   const id = Date.now();
-  const now = new Date();
-  const createdAt = now.toISOString();
-  const startDate = now.toISOString();
-  const endDate = addDays(now, 84).toISOString();
+  const createdAt = new Date().toISOString();
+  const startDate = dateRange.startDateIso;
+  const endDate = dateRange.endDateIso;
 
   await db.runAsync(
     `
@@ -83,6 +89,34 @@ export async function insertGoal(title: string): Promise<StoredGoal> {
     completedAt: null,
     startDate,
     endDate,
+  };
+}
+
+export async function updateGoalDates(
+  id: number,
+  startDateKey: string,
+  endDateKey: string
+): Promise<{ startDate: string; endDate: string }> {
+  await migrateDb();
+
+  const db = await getDb();
+  const dateRange = validateGoalDateRange(
+    startDateKey,
+    endDateKey
+  );
+
+  await db.runAsync(
+    `
+    UPDATE goals
+    SET start_date = ?, end_date = ?
+    WHERE id = ?;
+    `,
+    [dateRange.startDateIso, dateRange.endDateIso, id]
+  );
+
+  return {
+    startDate: dateRange.startDateIso,
+    endDate: dateRange.endDateIso,
   };
 }
 

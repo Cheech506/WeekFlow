@@ -10,6 +10,11 @@ import {
 import { Text, View } from '@/components/Themed';
 import { useGoals } from '@/context/GoalContext';
 import { useTasks } from '@/context/TaskContext';
+import {
+  createDefaultGoalDateRange,
+  getGoalDateKey,
+  validateGoalDateRange,
+} from '@/lib/goalUtils';
 
 function formatGoalDate(value: string) {
   const date = new Date(value);
@@ -55,6 +60,33 @@ function getProgressWidth(percentage: number): `${number}%` {
   return `${safePercentage}%`;
 }
 
+function getGoalDateFeedback(
+  startDateKey: string,
+  endDateKey: string
+) {
+  try {
+    const range = validateGoalDateRange(
+      startDateKey,
+      endDateKey
+    );
+
+    return {
+      error: null,
+      recommendation: range.recommendation,
+      durationDays: range.durationDays,
+    };
+  } catch (error) {
+    return {
+      error:
+        error instanceof Error
+          ? error.message
+          : 'The goal dates are invalid.',
+      recommendation: null,
+      durationDays: null,
+    };
+  }
+}
+
 export default function TwelveWeekGoalsScreen() {
   const { width } = useWindowDimensions();
 
@@ -74,17 +106,42 @@ export default function TwelveWeekGoalsScreen() {
           goalGridGap * (goalColumnCount - 1)) /
         goalColumnCount;
 
+  const initialGoalDates = createDefaultGoalDateRange();
   const [goalText, setGoalText] = useState('');
+  const [goalStartDate, setGoalStartDate] = useState(
+    initialGoalDates.startDateKey
+  );
+  const [goalEndDate, setGoalEndDate] = useState(
+    initialGoalDates.endDateKey
+  );
+  const [goalFormMessage, setGoalFormMessage] = useState('');
+  const [editingGoalId, setEditingGoalId] = useState<
+    number | null
+  >(null);
+  const [editStartDate, setEditStartDate] = useState('');
+  const [editEndDate, setEditEndDate] = useState('');
+  const [editMessage, setEditMessage] = useState('');
 
   const {
     goals,
     isLoading,
     addGoal,
+    editGoalDates,
     toggleGoal,
     deleteGoal,
   } = useGoals();
 
   const { tasks } = useTasks();
+
+  const activeGoals = goals.filter((goal) => !goal.completed);
+  const addGoalDateFeedback = getGoalDateFeedback(
+    goalStartDate,
+    goalEndDate
+  );
+  const editGoalDateFeedback = getGoalDateFeedback(
+    editStartDate,
+    editEndDate
+  );
 
   const completedGoalCount = goals.filter(
     (goal) => goal.completed
@@ -112,11 +169,82 @@ export default function TwelveWeekGoalsScreen() {
 
   async function handleAddGoal() {
     if (!goalText.trim()) {
+      setGoalFormMessage('Enter a goal title first.');
       return;
     }
 
-    await addGoal(goalText);
-    setGoalText('');
+    if (addGoalDateFeedback.error) {
+      setGoalFormMessage(addGoalDateFeedback.error);
+      return;
+    }
+
+    try {
+      await addGoal(
+        goalText,
+        goalStartDate,
+        goalEndDate
+      );
+
+      const nextDefaultDates = createDefaultGoalDateRange();
+
+      setGoalText('');
+      setGoalStartDate(nextDefaultDates.startDateKey);
+      setGoalEndDate(nextDefaultDates.endDateKey);
+      setGoalFormMessage('');
+    } catch (error) {
+      setGoalFormMessage(
+        error instanceof Error
+          ? error.message
+          : 'The goal could not be added.'
+      );
+    }
+  }
+
+  function startEditingGoalDates(goalId: number) {
+    const goal = goals.find((item) => item.id === goalId);
+    if (!goal) return;
+
+    setEditingGoalId(goalId);
+    setEditStartDate(getGoalDateKey(goal.startDate));
+    setEditEndDate(getGoalDateKey(goal.endDate));
+    setEditMessage('');
+  }
+
+  function cancelEditingGoalDates() {
+    setEditingGoalId(null);
+    setEditStartDate('');
+    setEditEndDate('');
+    setEditMessage('');
+  }
+
+  async function handleSaveGoalDates(goalId: number) {
+    if (editGoalDateFeedback.error) {
+      setEditMessage(editGoalDateFeedback.error);
+      return;
+    }
+
+    try {
+      await editGoalDates(
+        goalId,
+        editStartDate,
+        editEndDate
+      );
+      cancelEditingGoalDates();
+    } catch (error) {
+      setEditMessage(
+        error instanceof Error
+          ? error.message
+          : 'The goal dates could not be updated.'
+      );
+    }
+  }
+
+  async function handleCompleteGoal(goalId: number) {
+    if (editingGoalId === goalId) {
+      cancelEditingGoalDates();
+    }
+
+    await toggleGoal(goalId);
   }
 
   return (
@@ -236,12 +364,62 @@ export default function TwelveWeekGoalsScreen() {
       >
         <TextInput
           style={styles.input}
-          placeholder="Add a 12 week goal..."
+          placeholder="Add a goal..."
           value={goalText}
-          onChangeText={setGoalText}
-          onSubmitEditing={handleAddGoal}
-          returnKeyType="done"
+          onChangeText={(value) => {
+            setGoalText(value);
+            setGoalFormMessage('');
+          }}
+          returnKeyType="next"
         />
+
+        <View style={styles.dateInputRow}>
+          <View style={styles.dateInputGroup}>
+            <Text style={styles.dateInputLabel}>Start date</Text>
+            <TextInput
+              style={styles.dateInput}
+              placeholder="YYYY-MM-DD"
+              value={goalStartDate}
+              onChangeText={(value) => {
+                setGoalStartDate(value);
+                setGoalFormMessage('');
+              }}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+          </View>
+
+          <View style={styles.dateInputGroup}>
+            <Text style={styles.dateInputLabel}>End date</Text>
+            <TextInput
+              style={styles.dateInput}
+              placeholder="YYYY-MM-DD"
+              value={goalEndDate}
+              onChangeText={(value) => {
+                setGoalEndDate(value);
+                setGoalFormMessage('');
+              }}
+              autoCapitalize="none"
+              autoCorrect={false}
+              onSubmitEditing={handleAddGoal}
+              returnKeyType="done"
+            />
+          </View>
+        </View>
+
+        {goalFormMessage || addGoalDateFeedback.error ? (
+          <Text style={styles.dateErrorText}>
+            {goalFormMessage || addGoalDateFeedback.error}
+          </Text>
+        ) : addGoalDateFeedback.recommendation ? (
+          <Text style={styles.dateRecommendationText}>
+            {addGoalDateFeedback.recommendation}
+          </Text>
+        ) : (
+          <Text style={styles.dateSuccessText}>
+            Recommended 12–13 week goal range.
+          </Text>
+        )}
 
         <Pressable
           style={styles.addButton}
@@ -266,19 +444,18 @@ export default function TwelveWeekGoalsScreen() {
               Loading goals...
             </Text>
           </View>
-        ) : goals.length === 0 ? (
+        ) : activeGoals.length === 0 ? (
           <View style={styles.emptyCard}>
             <Text style={styles.emptyTitle}>
-              No goals yet
+              No active goals
             </Text>
 
             <Text style={styles.emptyText}>
-              Add a 12 week goal to start planning the
-              bigger picture.
+              Add a goal or reopen a completed goal from History.
             </Text>
           </View>
         ) : (
-          goals.map((goal) => {
+          activeGoals.map((goal) => {
             /*
              * Goal progress is calculated from tasks linked
              * through the task's goalId field.
@@ -309,22 +486,11 @@ export default function TwelveWeekGoalsScreen() {
                 ]}
               >
                 <View style={styles.goalHeaderRow}>
-                  <Pressable
-                    style={styles.goalMain}
-                    onPress={() => toggleGoal(goal.id)}
-                  >
-                    <Text style={styles.checkbox}>
-                      {goal.completed ? '✅' : '⬜'}
-                    </Text>
+                  <View style={styles.goalMain}>
+                    <Text style={styles.checkbox}>⬜</Text>
 
                     <View style={styles.goalTextWrap}>
-                      <Text
-                        style={[
-                          styles.goalTitle,
-                          goal.completed &&
-                            styles.goalCompleted,
-                        ]}
-                      >
+                      <Text style={styles.goalTitle}>
                         {goal.title}
                       </Text>
 
@@ -332,17 +498,32 @@ export default function TwelveWeekGoalsScreen() {
                         {formatGoalDate(goal.startDate)} →{' '}
                         {formatGoalDate(goal.endDate)}
                       </Text>
-
-                      <Text style={styles.goalMeta}>
-                        Tap to{' '}
-                        {goal.completed
-                          ? 'mark active'
-                          : 'mark complete'}
-                      </Text>
                     </View>
-                  </Pressable>
+                  </View>
 
                   <View style={styles.goalActions}>
+                    <Pressable
+                      style={styles.editButton}
+                      onPress={() =>
+                        startEditingGoalDates(goal.id)
+                      }
+                    >
+                      <Text style={styles.editButtonText}>
+                        Edit Dates
+                      </Text>
+                    </Pressable>
+
+                    <Pressable
+                      style={styles.completeButton}
+                      onPress={() =>
+                        handleCompleteGoal(goal.id)
+                      }
+                    >
+                      <Text style={styles.completeButtonText}>
+                        Mark Complete
+                      </Text>
+                    </Pressable>
+
                     <Pressable
                       style={styles.deleteButton}
                       onPress={() => deleteGoal(goal.id)}
@@ -353,6 +534,86 @@ export default function TwelveWeekGoalsScreen() {
                     </Pressable>
                   </View>
                 </View>
+
+                {editingGoalId === goal.id ? (
+                  <View style={styles.editDatesCard}>
+                    <Text style={styles.editDatesTitle}>
+                      Edit Goal Dates
+                    </Text>
+
+                    <View style={styles.dateInputRow}>
+                      <View style={styles.dateInputGroup}>
+                        <Text style={styles.dateInputLabel}>
+                          Start date
+                        </Text>
+                        <TextInput
+                          style={styles.dateInput}
+                          value={editStartDate}
+                          onChangeText={(value) => {
+                            setEditStartDate(value);
+                            setEditMessage('');
+                          }}
+                          placeholder="YYYY-MM-DD"
+                          autoCapitalize="none"
+                          autoCorrect={false}
+                        />
+                      </View>
+
+                      <View style={styles.dateInputGroup}>
+                        <Text style={styles.dateInputLabel}>
+                          End date
+                        </Text>
+                        <TextInput
+                          style={styles.dateInput}
+                          value={editEndDate}
+                          onChangeText={(value) => {
+                            setEditEndDate(value);
+                            setEditMessage('');
+                          }}
+                          placeholder="YYYY-MM-DD"
+                          autoCapitalize="none"
+                          autoCorrect={false}
+                        />
+                      </View>
+                    </View>
+
+                    {editMessage || editGoalDateFeedback.error ? (
+                      <Text style={styles.dateErrorText}>
+                        {editMessage || editGoalDateFeedback.error}
+                      </Text>
+                    ) : editGoalDateFeedback.recommendation ? (
+                      <Text style={styles.dateRecommendationText}>
+                        {editGoalDateFeedback.recommendation}
+                      </Text>
+                    ) : (
+                      <Text style={styles.dateSuccessText}>
+                        Recommended 12–13 week goal range.
+                      </Text>
+                    )}
+
+                    <View style={styles.editDatesActions}>
+                      <Pressable
+                        style={styles.cancelButton}
+                        onPress={cancelEditingGoalDates}
+                      >
+                        <Text style={styles.cancelButtonText}>
+                          Cancel
+                        </Text>
+                      </Pressable>
+
+                      <Pressable
+                        style={styles.saveDatesButton}
+                        onPress={() =>
+                          handleSaveGoalDates(goal.id)
+                        }
+                      >
+                        <Text style={styles.saveDatesButtonText}>
+                          Save Dates
+                        </Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                ) : null}
 
                 <View style={styles.goalProgressSection}>
                   <View style={styles.progressHeaderRow}>
@@ -600,6 +861,47 @@ const styles = StyleSheet.create({
     gap: 10,
     marginBottom: 24,
   },
+  dateInputRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    backgroundColor: 'transparent',
+  },
+  dateInputGroup: {
+    flex: 1,
+    minWidth: 140,
+    backgroundColor: 'transparent',
+  },
+  dateInputLabel: {
+    marginBottom: 5,
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#374151',
+  },
+  dateInput: {
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 10,
+    paddingVertical: 11,
+    paddingHorizontal: 12,
+    fontSize: 14,
+    backgroundColor: 'white',
+  },
+  dateErrorText: {
+    fontSize: 12,
+    lineHeight: 17,
+    color: '#b91c1c',
+  },
+  dateRecommendationText: {
+    fontSize: 12,
+    lineHeight: 17,
+    color: '#9a3412',
+  },
+  dateSuccessText: {
+    fontSize: 12,
+    lineHeight: 17,
+    color: '#166534',
+  },
   input: {
     borderWidth: 1,
     borderColor: '#d1d5db',
@@ -638,6 +940,7 @@ const styles = StyleSheet.create({
   },
   goalHeaderRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'center',
     justifyContent: 'space-between',
     backgroundColor: 'transparent',
@@ -645,6 +948,7 @@ const styles = StyleSheet.create({
   },
   goalMain: {
     flex: 1,
+    minWidth: 220,
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: 'transparent',
@@ -658,7 +962,10 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
   },
   goalActions: {
-    alignItems: 'flex-end',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'flex-end',
+    gap: 8,
     backgroundColor: 'transparent',
   },
   goalTitle: {
@@ -674,6 +981,65 @@ const styles = StyleSheet.create({
     marginTop: 4,
     fontSize: 13,
     color: '#6b7280',
+  },
+  editDatesCard: {
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#c4b5fd',
+    backgroundColor: '#f5f3ff',
+    gap: 10,
+  },
+  editDatesTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#111827',
+  },
+  editDatesActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 8,
+    backgroundColor: 'transparent',
+  },
+  editButton: {
+    backgroundColor: '#e0e7ff',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+  },
+  editButtonText: {
+    color: '#3730a3',
+    fontWeight: '800',
+  },
+  completeButton: {
+    backgroundColor: '#15803d',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+  },
+  completeButtonText: {
+    color: 'white',
+    fontWeight: '800',
+  },
+  cancelButton: {
+    backgroundColor: '#e5e7eb',
+    paddingVertical: 9,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+  },
+  cancelButtonText: {
+    color: '#374151',
+    fontWeight: '800',
+  },
+  saveDatesButton: {
+    backgroundColor: '#7c3aed',
+    paddingVertical: 9,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+  },
+  saveDatesButtonText: {
+    color: 'white',
+    fontWeight: '800',
   },
   goalProgressSection: {
     padding: 14,
