@@ -7,6 +7,7 @@ import React, {
   useState,
 } from 'react';
 
+import { useTasks } from '@/context/TaskContext';
 import {
   deleteGoalById,
   getGoals,
@@ -41,6 +42,7 @@ const GoalContext = createContext<GoalContextValue | null>(null);
 export function GoalProvider({ children }: { children: React.ReactNode }) {
   const [goals, setGoals] = useState<Goal[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const { refreshTasks } = useTasks();
 
   const refreshGoals = useCallback(async () => {
     setIsLoading(true);
@@ -142,17 +144,25 @@ export function GoalProvider({ children }: { children: React.ReactNode }) {
     [goals]
   );
 
-  const deleteGoal = useCallback(async (id: number) => {
-    try {
-      await deleteGoalById(id);
+  const deleteGoal = useCallback(
+    async (id: number) => {
+      try {
+        await deleteGoalById(id);
 
-      setGoals((currentGoals) =>
-        currentGoals.filter((goal) => goal.id !== id)
-      );
-    } catch (error) {
-      console.error('Failed to delete goal:', error);
-    }
-  }, []);
+        setGoals((currentGoals) =>
+          currentGoals.filter((goal) => goal.id !== id)
+        );
+
+        // Reload task and recurring-rule state so deleted goal links disappear
+        // immediately from every screen without requiring an app restart.
+        await refreshTasks();
+      } catch (error) {
+        console.error('Failed to delete goal:', error);
+        throw error;
+      }
+    },
+    [refreshTasks]
+  );
 
   const value = useMemo(
     () => ({

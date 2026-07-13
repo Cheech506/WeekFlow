@@ -146,11 +146,37 @@ export async function deleteGoalById(id: number): Promise<void> {
 
   const db = await getDb();
 
-  await db.runAsync(
-    `
-    DELETE FROM goals
-    WHERE id = ?;
-    `,
-    [id]
-  );
+  /*
+   * A goal is only a planning relationship. Deleting it must not delete the
+   * user's tasks, task history, or recurring schedules. All relationship
+   * cleanup and the goal deletion happen in one transaction so a failure
+   * cannot leave the database partially updated.
+   */
+  await db.withTransactionAsync(async () => {
+    await db.runAsync(
+      `
+      UPDATE tasks
+      SET goal_id = NULL
+      WHERE goal_id = ?;
+      `,
+      [id]
+    );
+
+    await db.runAsync(
+      `
+      UPDATE recurring_rules
+      SET goal_id = NULL
+      WHERE goal_id = ?;
+      `,
+      [id]
+    );
+
+    await db.runAsync(
+      `
+      DELETE FROM goals
+      WHERE id = ?;
+      `,
+      [id]
+    );
+  });
 }

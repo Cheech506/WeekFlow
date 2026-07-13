@@ -56,6 +56,138 @@ describe('goal and brain dump storage integration', () => {
     expect(goals).toEqual([]);
   });
 
+  test('deleting a goal preserves linked tasks and recurring rules', async () => {
+    const { getDb, migrateDb } = await import('../../lib/db');
+    const goalStorage = await import('../../lib/goalStorage');
+
+    await migrateDb();
+    const db = await getDb();
+    const goal = await goalStorage.insertGoal(
+      'Linked goal',
+      '2026-07-01',
+      '2026-09-23'
+    );
+
+    await db.runAsync(
+      `
+      INSERT INTO tasks (
+        title,
+        day,
+        due_date,
+        notes,
+        priority,
+        goal_id,
+        completed,
+        created_at,
+        completed_at,
+        recurring_rule_id,
+        recurrence_occurrence_date
+      )
+      VALUES (?, 'Inbox', NULL, '', 0, ?, 0, ?, NULL, NULL, NULL);
+      `,
+      ['Linked task', goal.id, new Date().toISOString()]
+    );
+
+    await db.runAsync(
+      `
+      INSERT INTO recurring_rules (
+        title,
+        notes,
+        priority,
+        goal_id,
+        frequency,
+        start_date,
+        end_date,
+        weekdays,
+        active,
+        created_at
+      )
+      VALUES (?, '', 0, ?, 'daily', '2026-07-01', NULL, '[]', 1, ?);
+      `,
+      ['Linked recurring rule', goal.id, new Date().toISOString()]
+    );
+
+    await goalStorage.deleteGoalById(goal.id);
+
+    const storedGoal = await db.getFirstAsync<{ id: number }>(
+      'SELECT id FROM goals WHERE id = ?;',
+      [goal.id]
+    );
+    const storedTask = await db.getFirstAsync<{ goal_id: number | null }>(
+      'SELECT goal_id FROM tasks WHERE title = ?;',
+      ['Linked task']
+    );
+    const storedRule = await db.getFirstAsync<{ goal_id: number | null }>(
+      'SELECT goal_id FROM recurring_rules WHERE title = ?;',
+      ['Linked recurring rule']
+    );
+
+    expect(storedGoal).toBeNull();
+    expect(storedTask).not.toBeNull();
+    expect(storedTask?.goal_id).toBeNull();
+    expect(storedRule).not.toBeNull();
+    expect(storedRule?.goal_id).toBeNull();
+  });
+
+  test('rolls back relationship cleanup when goal deletion fails', async () => {
+    const { getDb, migrateDb } = await import('../../lib/db');
+    const goalStorage = await import('../../lib/goalStorage');
+
+    await migrateDb();
+    const db = await getDb();
+    const goal = await goalStorage.insertGoal(
+      'Rollback goal',
+      '2026-07-01',
+      '2026-09-23'
+    );
+
+    await db.runAsync(
+      `
+      INSERT INTO tasks (
+        title,
+        day,
+        due_date,
+        notes,
+        priority,
+        goal_id,
+        completed,
+        created_at,
+        completed_at,
+        recurring_rule_id,
+        recurrence_occurrence_date
+      )
+      VALUES (?, 'Inbox', NULL, '', 0, ?, 0, ?, NULL, NULL, NULL);
+      `,
+      ['Rollback task', goal.id, new Date().toISOString()]
+    );
+
+    await db.execAsync(`
+      CREATE TRIGGER fail_goal_delete
+      BEFORE DELETE ON goals
+      BEGIN
+        SELECT RAISE(ABORT, 'forced goal delete failure');
+      END;
+    `);
+
+    await expect(
+      goalStorage.deleteGoalById(goal.id)
+    ).rejects.toThrow('forced goal delete failure');
+
+    await db.execAsync('DROP TRIGGER fail_goal_delete;');
+
+    const storedGoal = await db.getFirstAsync<{ id: number }>(
+      'SELECT id FROM goals WHERE id = ?;',
+      [goal.id]
+    );
+    const storedTask = await db.getFirstAsync<{ goal_id: number | null }>(
+      'SELECT goal_id FROM tasks WHERE title = ?;',
+      ['Rollback task']
+    );
+
+    expect(storedGoal?.id).toBe(goal.id);
+    expect(storedTask?.goal_id).toBe(goal.id);
+  });
+
   test('creates, archives, restores, and deletes a brain dump', async () => {
     const brainStorage = await import(
       '../../lib/brainDumpStorage'
