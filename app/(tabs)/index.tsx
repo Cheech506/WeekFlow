@@ -122,6 +122,14 @@ export default function TwelveWeekGoalsScreen() {
   const [editEndDate, setEditEndDate] = useState('');
   const [editMessage, setEditMessage] = useState('');
 
+  /*
+   * Each goal keeps its own local expanded/collapsed state.
+   * This is intentionally UI-only state, so opening the linked-task
+   * list never writes to SQLite or changes the goal itself.
+   */
+  const [expandedLinkedTaskGoals, setExpandedLinkedTaskGoals] =
+    useState<Record<number, boolean>>({});
+
   const {
     goals,
     isLoading,
@@ -166,6 +174,13 @@ export default function TwelveWeekGoalsScreen() {
     completedLinkedTaskCount,
     allLinkedTasks.length
   );
+
+  function toggleLinkedTasks(goalId: number) {
+    setExpandedLinkedTaskGoals((current) => ({
+      ...current,
+      [goalId]: !current[goalId],
+    }));
+  }
 
   async function handleAddGoal() {
     if (!goalText.trim()) {
@@ -477,6 +492,9 @@ export default function TwelveWeekGoalsScreen() {
                 linkedTasks.length
               );
 
+            const areLinkedTasksExpanded =
+              expandedLinkedTaskGoals[goal.id] ?? false;
+
             return (
               <View
                 key={goal.id}
@@ -678,56 +696,82 @@ export default function TwelveWeekGoalsScreen() {
                 </View>
 
                 <View style={styles.linkedTasksSection}>
-                  <Text style={styles.linkedTasksTitle}>
-                    Linked Tasks ({completedLinkedTasks} of{' '}
-                    {linkedTasks.length} done)
-                  </Text>
+                  <Pressable
+                    style={styles.linkedTasksHeader}
+                    onPress={() => toggleLinkedTasks(goal.id)}
+                    accessibilityRole="button"
+                    accessibilityState={{
+                      expanded: areLinkedTasksExpanded,
+                    }}
+                    accessibilityLabel={`${
+                      areLinkedTasksExpanded ? 'Collapse' : 'Expand'
+                    } linked tasks for ${goal.title}`}
+                  >
+                    <View style={styles.linkedTasksHeaderText}>
+                      <Text style={styles.linkedTasksTitle}>
+                        Linked Tasks ({linkedTasks.length})
+                      </Text>
 
-                  {linkedTasks.length === 0 ? (
-                    <View style={styles.noLinkedTasksCard}>
-                      <Text style={styles.noLinkedTasksText}>
-                        No tasks are linked to this goal yet.
-                        Create or edit a task in Inbox to link it.
+                      <Text style={styles.linkedTasksSubtitle}>
+                        {completedLinkedTasks} of{' '}
+                        {linkedTasks.length} done
                       </Text>
                     </View>
-                  ) : (
-                    linkedTasks.map((task) => (
-                      <View
-                        key={task.id}
-                        style={styles.linkedTaskCard}
-                      >
-                        <View style={styles.linkedTaskTopRow}>
-                          <Text
-                            style={[
-                              styles.linkedTaskTitle,
-                              task.completed &&
-                                styles.linkedTaskCompleted,
-                            ]}
-                          >
-                            {task.completed ? '✅' : '⬜'}{' '}
-                            {task.title}
-                          </Text>
 
-                          <Text style={styles.linkedTaskBadge}>
-                            {task.completed
-                              ? 'Done'
-                              : task.day}
+                    <Text style={styles.linkedTasksChevron}>
+                      {areLinkedTasksExpanded ? '▼' : '▶'}
+                    </Text>
+                  </Pressable>
+
+                  {areLinkedTasksExpanded ? (
+                    <View style={styles.linkedTasksContent}>
+                      {linkedTasks.length === 0 ? (
+                        <View style={styles.noLinkedTasksCard}>
+                          <Text style={styles.noLinkedTasksText}>
+                            No tasks are linked to this goal yet.
+                            Create or edit a task in Inbox to link it.
                           </Text>
                         </View>
+                      ) : (
+                        linkedTasks.map((task) => (
+                          <View
+                            key={task.id}
+                            style={styles.linkedTaskCard}
+                          >
+                            <View style={styles.linkedTaskTopRow}>
+                              <Text
+                                style={[
+                                  styles.linkedTaskTitle,
+                                  task.completed &&
+                                    styles.linkedTaskCompleted,
+                                ]}
+                              >
+                                {task.completed ? '✅' : '⬜'}{' '}
+                                {task.title}
+                              </Text>
 
-                        <Text style={styles.linkedTaskMeta}>
-                          Priority:{' '}
-                          {getPriorityLabel(task.priority)}
-                        </Text>
+                              <Text style={styles.linkedTaskBadge}>
+                                {task.completed
+                                  ? 'Done'
+                                  : task.day}
+                              </Text>
+                            </View>
 
-                        {task.notes ? (
-                          <Text style={styles.linkedTaskNotes}>
-                            {task.notes}
-                          </Text>
-                        ) : null}
-                      </View>
-                    ))
-                  )}
+                            <Text style={styles.linkedTaskMeta}>
+                              Priority:{' '}
+                              {getPriorityLabel(task.priority)}
+                            </Text>
+
+                            {task.notes ? (
+                              <Text style={styles.linkedTaskNotes}>
+                                {task.notes}
+                              </Text>
+                            ) : null}
+                          </View>
+                        ))
+                      )}
+                    </View>
+                  ) : null}
                 </View>
               </View>
             );
@@ -1097,13 +1141,40 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     borderTopWidth: 1,
     borderTopColor: '#e5e7eb',
-    gap: 8,
+    backgroundColor: 'transparent',
+  },
+  linkedTasksHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    paddingVertical: 4,
+    backgroundColor: 'transparent',
+  },
+  linkedTasksHeaderText: {
+    flex: 1,
     backgroundColor: 'transparent',
   },
   linkedTasksTitle: {
     fontSize: 14,
     fontWeight: '800',
     color: '#111827',
+  },
+  linkedTasksSubtitle: {
+    marginTop: 2,
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#6b7280',
+  },
+  linkedTasksChevron: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#7c3aed',
+  },
+  linkedTasksContent: {
+    gap: 8,
+    marginTop: 10,
+    backgroundColor: 'transparent',
   },
   linkedTaskCard: {
     padding: 12,
