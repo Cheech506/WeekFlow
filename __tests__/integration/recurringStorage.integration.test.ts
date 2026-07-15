@@ -220,4 +220,130 @@ describe('recurring storage integration', () => {
       recurring_rule_id: null,
     });
   });
+  test('converts a standalone task into the first recurring occurrence without a duplicate', async () => {
+    const recurringStorage = await import(
+      '../../lib/recurringStorage'
+    );
+    const taskStorage = await import('../../lib/taskStorage');
+    const { getDb } = await import('../../lib/db');
+    const { getLocalDateKey } = await import(
+      '../../lib/dateUtils'
+    );
+
+    const today = getLocalDateKey(new Date());
+
+    await taskStorage.insertTask(
+      'Standalone task',
+      'Inbox',
+      'Original note',
+      0,
+      null
+    );
+
+    const [standaloneTask] = await taskStorage.getTasks();
+
+    const rule =
+      await recurringStorage.convertTaskToRecurringRule(
+        standaloneTask.id,
+        {
+          title: 'Converted recurring task',
+          notes: 'Updated note',
+          priority: 2,
+          frequency: 'daily',
+          startDate: today,
+        }
+      );
+
+    const db = await getDb();
+    const convertedTask = await db.getFirstAsync<{
+      title: string;
+      due_date: string | null;
+      notes: string | null;
+      priority: number;
+      recurring_rule_id: number | null;
+      recurrence_occurrence_date: string | null;
+    }>(
+      `
+      SELECT
+        title,
+        due_date,
+        notes,
+        priority,
+        recurring_rule_id,
+        recurrence_occurrence_date
+      FROM tasks
+      WHERE id = ?;
+      `,
+      [standaloneTask.id]
+    );
+
+    const firstOccurrenceCount =
+      await db.getFirstAsync<{ count: number }>(
+        `
+        SELECT COUNT(*) AS count
+        FROM tasks
+        WHERE recurring_rule_id = ?
+          AND recurrence_occurrence_date = ?;
+        `,
+        [rule.id, today]
+      );
+
+    expect(convertedTask).toEqual({
+      title: 'Converted recurring task',
+      due_date: today,
+      notes: 'Updated note',
+      priority: 2,
+      recurring_rule_id: rule.id,
+      recurrence_occurrence_date: today,
+    });
+    expect(firstOccurrenceCount?.count).toBe(1);
+  });
+
+  test('rejects converting a completed task and leaves the database unchanged', async () => {
+    const recurringStorage = await import(
+      '../../lib/recurringStorage'
+    );
+    const taskStorage = await import('../../lib/taskStorage');
+    const { getDb } = await import('../../lib/db');
+    const { getLocalDateKey } = await import(
+      '../../lib/dateUtils'
+    );
+
+    await taskStorage.insertTask('Completed task', 'Inbox');
+    const [task] = await taskStorage.getTasks();
+    await taskStorage.completeTaskById(task.id);
+
+    await expect(
+      recurringStorage.convertTaskToRecurringRule(task.id, {
+        title: 'Should not convert',
+        frequency: 'daily',
+        startDate: getLocalDateKey(new Date()),
+      })
+    ).rejects.toThrow(
+      'A completed task cannot be converted into a recurring task.'
+    );
+
+    const db = await getDb();
+    const ruleCount = await db.getFirstAsync<{ count: number }>(
+      'SELECT COUNT(*) AS count FROM recurring_rules;'
+    );
+    const unchangedTask = await db.getFirstAsync<{
+      completed: number;
+      recurring_rule_id: number | null;
+    }>(
+      `
+      SELECT completed, recurring_rule_id
+      FROM tasks
+      WHERE id = ?;
+      `,
+      [task.id]
+    );
+
+    expect(ruleCount?.count).toBe(0);
+    expect(unchangedTask).toEqual({
+      completed: 1,
+      recurring_rule_id: null,
+    });
+  });
+
 });

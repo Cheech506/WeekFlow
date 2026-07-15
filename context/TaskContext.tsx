@@ -8,6 +8,7 @@ import {
 
 import { getLocalDateKey } from '@/lib/dateUtils';
 import {
+  convertTaskToRecurringRule,
   deleteRecurringRuleById,
   ensureRecurringOccurrences,
   getRecurringRules,
@@ -52,6 +53,10 @@ type TaskContextValue = {
     dueDate?: string | null
   ) => Promise<void>;
   createRecurringTask: (
+    input: CreateRecurringRuleInput
+  ) => Promise<void>;
+  convertTaskToRecurring: (
+    taskId: number,
     input: CreateRecurringRuleInput
   ) => Promise<void>;
   toggleRecurringRule: (id: number) => Promise<void>;
@@ -138,6 +143,14 @@ export function TaskProvider({ children }: { children: ReactNode }) {
     input: CreateRecurringRuleInput
   ) {
     await insertRecurringRule(input);
+    await loadTasks();
+  }
+
+  async function convertTaskToRecurring(
+    taskId: number,
+    input: CreateRecurringRuleInput
+  ) {
+    await convertTaskToRecurringRule(taskId, input);
     await loadTasks();
   }
 
@@ -247,6 +260,7 @@ export function TaskProvider({ children }: { children: ReactNode }) {
         refreshTasks: loadTasks,
         addTask,
         createRecurringTask,
+        convertTaskToRecurring,
         toggleRecurringRule,
         deleteRecurringRule,
         editTask,

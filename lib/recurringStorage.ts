@@ -1,4 +1,7 @@
-import { getDayNameFromDateKey } from './dateUtils';
+import {
+  getDayNameFromDateKey,
+  parseLocalDateKey,
+} from './dateUtils';
 import { getDb, migrateDb } from './db';
 import {
   getRecurringOccurrenceDateKeys,
@@ -300,6 +303,170 @@ export async function insertRecurringRule(
 
   const rule: RecurringRule = {
     id: result.lastInsertRowId,
+    title,
+    notes,
+    priority,
+    goalId,
+    frequency,
+    startDate,
+    endDate,
+    weekdays,
+    active: true,
+    createdAt,
+  };
+
+  await ensureRecurringOccurrences();
+  return rule;
+}
+
+/**
+ * Converts an existing unfinished standalone task into the first occurrence
+ * of a new recurring schedule. The task and recurring rule are linked in one
+ * transaction before future occurrences are generated, so the start date
+ * cannot be duplicated by the recurrence generator.
+ */
+export async function convertTaskToRecurringRule(
+  taskId: number,
+  input: CreateRecurringRuleInput
+): Promise<RecurringRule> {
+  await migrateDb();
+
+  const normalizedInput =
+    validateAndNormalizeRecurringRuleInput(input);
+
+  const {
+    title,
+    notes,
+    priority,
+    goalId,
+    frequency,
+    startDate,
+    endDate,
+    weekdays,
+  } = normalizedInput;
+
+  const parsedStartDate = parseLocalDateKey(startDate);
+  const dayName = getDayNameFromDateKey(startDate);
+
+  if (!dayName || !parsedStartDate) {
+    throw new Error('Recurring task start date is invalid.');
+  }
+
+  if (
+    frequency === 'certainDays' &&
+    !weekdays.includes(parsedStartDate.getDay())
+  ) {
+    throw new Error(
+      'The first scheduled date must be one of the selected weekdays.'
+    );
+  }
+
+  const db = await getDb();
+  const createdAt = new Date().toISOString();
+  let ruleId: number | null = null;
+
+  await db.withTransactionAsync(async () => {
+    const task = await db.getFirstAsync<{
+      completed: number;
+      recurring_rule_id: number | null;
+    }>(
+      `
+      SELECT completed, recurring_rule_id
+      FROM tasks
+      WHERE id = ?;
+      `,
+      [taskId]
+    );
+
+    if (!task) {
+      throw new Error('The task could not be found.');
+    }
+
+    if (task.completed === 1) {
+      throw new Error(
+        'A completed task cannot be converted into a recurring task.'
+      );
+    }
+
+    if (task.recurring_rule_id !== null) {
+      throw new Error(
+        'This task already belongs to a recurring schedule.'
+      );
+    }
+
+    const result = await db.runAsync(
+      `
+      INSERT INTO recurring_rules (
+        title,
+        notes,
+        priority,
+        goal_id,
+        frequency,
+        start_date,
+        end_date,
+        weekdays,
+        active,
+        created_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?);
+      `,
+      [
+        title,
+        notes,
+        priority,
+        goalId,
+        frequency,
+        startDate,
+        endDate,
+        JSON.stringify(weekdays),
+        createdAt,
+      ]
+    );
+
+    ruleId = result.lastInsertRowId;
+
+    const updateResult = await db.runAsync(
+      `
+      UPDATE tasks
+      SET
+        title = ?,
+        day = ?,
+        due_date = ?,
+        notes = ?,
+        priority = ?,
+        goal_id = ?,
+        recurring_rule_id = ?,
+        recurrence_occurrence_date = ?
+      WHERE id = ?
+        AND completed = 0
+        AND recurring_rule_id IS NULL;
+      `,
+      [
+        title,
+        dayName,
+        startDate,
+        notes,
+        priority,
+        goalId,
+        ruleId,
+        startDate,
+        taskId,
+      ]
+    );
+
+    if (updateResult.changes !== 1) {
+      throw new Error(
+        'The task changed before it could be converted. Please try again.'
+      );
+    }
+  });
+
+  if (ruleId === null) {
+    throw new Error('The recurring schedule could not be created.');
+  }
+
+  const rule: RecurringRule = {
+    id: ruleId,
     title,
     notes,
     priority,
