@@ -1,5 +1,6 @@
 import {
   getDayNameFromDateKey,
+  getLocalDateKey,
   parseLocalDateKey,
 } from './dateUtils';
 import { getDb, migrateDb } from './db';
@@ -48,6 +49,8 @@ export type CreateRecurringRuleInput = {
   endDate?: string | null;
   weekdays?: number[];
 };
+
+export type UpdateRecurringRuleInput = CreateRecurringRuleInput;
 
 type RecurringRuleRow = {
   id: number;
@@ -481,6 +484,136 @@ export async function convertTaskToRecurringRule(
 
   await ensureRecurringOccurrences();
   return rule;
+}
+
+/**
+ * Updates a saved recurring schedule without rewriting completed history.
+ *
+ * Unfinished occurrences from the effective date forward are rebuilt from
+ * the updated rule. Earlier unfinished occurrences keep their occurrence
+ * dates but receive the schedule's updated descriptive fields.
+ *
+ * Paused rules remain paused. Their future unfinished occurrences are
+ * removed during the rebuild and are generated from the updated rule only
+ * after the schedule is resumed.
+ */
+export async function updateRecurringRuleById(
+  id: number,
+  input: UpdateRecurringRuleInput,
+  effectiveDate: string = getLocalDateKey(new Date())
+): Promise<void> {
+  await migrateDb();
+
+  const normalizedInput =
+    validateAndNormalizeRecurringRuleInput(input);
+  const parsedEffectiveDate =
+    parseLocalDateKey(effectiveDate);
+
+  if (!parsedEffectiveDate) {
+    throw new Error(
+      'The recurring schedule effective date is invalid.'
+    );
+  }
+
+  const db = await getDb();
+
+  const existingRule = await db.getFirstAsync<{
+    id: number;
+  }>(
+    `
+    SELECT id
+    FROM recurring_rules
+    WHERE id = ?;
+    `,
+    [id]
+  );
+
+  if (!existingRule) {
+    throw new Error(
+      'The recurring schedule could not be found.'
+    );
+  }
+
+  const {
+    title,
+    notes,
+    priority,
+    goalId,
+    frequency,
+    startDate,
+    endDate,
+    weekdays,
+  } = normalizedInput;
+
+  await db.withTransactionAsync(async () => {
+    const updateResult = await db.runAsync(
+      `
+      UPDATE recurring_rules
+      SET
+        title = ?,
+        notes = ?,
+        priority = ?,
+        goal_id = ?,
+        frequency = ?,
+        start_date = ?,
+        end_date = ?,
+        weekdays = ?
+      WHERE id = ?;
+      `,
+      [
+        title,
+        notes,
+        priority,
+        goalId,
+        frequency,
+        startDate,
+        endDate,
+        JSON.stringify(weekdays),
+        id,
+      ]
+    );
+
+    if (updateResult.changes !== 1) {
+      throw new Error(
+        'The recurring schedule changed before it could be updated.'
+      );
+    }
+
+    /*
+     * Future unfinished occurrences are rebuilt instead of being moved onto
+     * a potentially different frequency pattern. Completed occurrences are
+     * never deleted or rewritten.
+     */
+    await db.runAsync(
+      `
+      DELETE FROM tasks
+      WHERE recurring_rule_id = ?
+        AND completed = 0
+        AND recurrence_occurrence_date >= ?;
+      `,
+      [id, effectiveDate]
+    );
+
+    /*
+     * Unfinished occurrences before the rebuild point remain as outstanding
+     * tasks, but their editable schedule details stay consistent.
+     */
+    await db.runAsync(
+      `
+      UPDATE tasks
+      SET
+        title = ?,
+        notes = ?,
+        priority = ?,
+        goal_id = ?
+      WHERE recurring_rule_id = ?
+        AND completed = 0;
+      `,
+      [title, notes, priority, goalId, id]
+    );
+  });
+
+  await ensureRecurringOccurrences();
 }
 
 export async function setRecurringRuleActive(

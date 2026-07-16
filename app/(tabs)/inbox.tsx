@@ -30,7 +30,8 @@ type RepeatEndPreset =
   | 'none'
   | 'twoWeeks'
   | 'fourWeeks'
-  | 'twelveWeeks';
+  | 'twelveWeeks'
+  | 'custom';
 
 const selectableWeekdays = [
   { index: 1, label: 'Mon' },
@@ -62,6 +63,7 @@ const repeatEndChoices: {
   { value: 'twoWeeks', label: '2 Weeks', days: 14 },
   { value: 'fourWeeks', label: '4 Weeks', days: 28 },
   { value: 'twelveWeeks', label: '12 Weeks', days: 84 },
+  { value: 'custom', label: 'Custom Date', days: null },
 ];
 
 function getPriorityLabel(priority: number) {
@@ -93,6 +95,66 @@ function getRepeatEndDate(
   }
 
   return getLocalDateKey(addDays(startDate, option.days));
+}
+
+function resolveRepeatEndDate(
+  startDateKey: string,
+  preset: RepeatEndPreset,
+  customEndDate: string
+) {
+  const startDate = parseLocalDateKey(startDateKey);
+
+  if (!startDate) {
+    throw new Error(
+      'Enter a valid start date in YYYY-MM-DD format.'
+    );
+  }
+
+  if (preset === 'none') return null;
+
+  if (preset === 'custom') {
+    const trimmedEndDate = customEndDate.trim();
+    const endDate = parseLocalDateKey(trimmedEndDate);
+
+    if (!endDate) {
+      throw new Error(
+        'Enter a valid custom end date in YYYY-MM-DD format.'
+      );
+    }
+
+    if (endDate.getTime() < startDate.getTime()) {
+      throw new Error(
+        'The recurring end date cannot be before the start date.'
+      );
+    }
+
+    return getLocalDateKey(endDate);
+  }
+
+  return getRepeatEndDate(startDateKey, preset);
+}
+
+function getRepeatEndPresetFromDates(
+  startDateKey: string,
+  endDateKey: string | null
+): RepeatEndPreset {
+  if (!endDateKey) return 'none';
+
+  const startDate = parseLocalDateKey(startDateKey);
+  const endDate = parseLocalDateKey(endDateKey);
+
+  if (!startDate || !endDate) return 'custom';
+
+  const differenceInDays = Math.round(
+    (endDate.getTime() - startDate.getTime()) /
+      (24 * 60 * 60 * 1000)
+  );
+
+  if (differenceInDays === 14) return 'twoWeeks';
+  if (differenceInDays === 28) return 'fourWeeks';
+  if (differenceInDays === 84) return 'twelveWeeks';
+
+  return 'custom';
 }
 
 function getRecurringRuleDescription(rule: RecurringRule) {
@@ -144,6 +206,10 @@ export default function InboxScreen() {
   >([]);
   const [repeatEndPreset, setRepeatEndPreset] =
     useState<RepeatEndPreset>('none');
+  const [customRepeatEndDate, setCustomRepeatEndDate] =
+    useState('');
+  const [useCustomRepeatStartDate, setUseCustomRepeatStartDate] =
+    useState(false);
   const [repeatError, setRepeatError] = useState('');
   const [
     isRecurringManagerExpanded,
@@ -151,6 +217,25 @@ export default function InboxScreen() {
   ] = useState(false);
   const [confirmDeleteRuleId, setConfirmDeleteRuleId] =
     useState<number | null>(null);
+  const [editingRuleId, setEditingRuleId] =
+    useState<number | null>(null);
+  const [editRuleTitle, setEditRuleTitle] = useState('');
+  const [editRuleNotes, setEditRuleNotes] = useState('');
+  const [editRulePriority, setEditRulePriority] = useState(0);
+  const [editRuleGoalId, setEditRuleGoalId] =
+    useState<number | null>(null);
+  const [editRuleFrequency, setEditRuleFrequency] =
+    useState<RecurrenceFrequency>('daily');
+  const [editRuleStartDate, setEditRuleStartDate] =
+    useState('');
+  const [editRuleEndPreset, setEditRuleEndPreset] =
+    useState<RepeatEndPreset>('none');
+  const [editRuleEndDate, setEditRuleEndDate] =
+    useState('');
+  const [editRuleWeekdays, setEditRuleWeekdays] = useState<
+    number[]
+  >([]);
+  const [editRuleError, setEditRuleError] = useState('');
 
   const [editingTaskId, setEditingTaskId] =
     useState<number | null>(null);
@@ -167,6 +252,12 @@ export default function InboxScreen() {
     useState<number[]>([]);
   const [editRepeatEndPreset, setEditRepeatEndPreset] =
     useState<RepeatEndPreset>('none');
+  const [editCustomRepeatEndDate, setEditCustomRepeatEndDate] =
+    useState('');
+  const [
+    editUseCustomRepeatStartDate,
+    setEditUseCustomRepeatStartDate,
+  ] = useState(false);
   const [editRepeatError, setEditRepeatError] =
     useState('');
 
@@ -176,6 +267,7 @@ export default function InboxScreen() {
     addTask,
     createRecurringTask,
     convertTaskToRecurring,
+    updateRecurringTask,
     toggleRecurringRule,
     deleteRecurringRule,
     editTask,
@@ -207,6 +299,8 @@ export default function InboxScreen() {
     setRepeatStartDate(getLocalDateKey(new Date()));
     setSelectedWeekdays([]);
     setRepeatEndPreset('none');
+    setCustomRepeatEndDate('');
+    setUseCustomRepeatStartDate(false);
     setRepeatError('');
   }
 
@@ -262,9 +356,10 @@ export default function InboxScreen() {
         goalId: selectedGoalId,
         frequency: repeatChoice,
         startDate: repeatStartDate,
-        endDate: getRepeatEndDate(
+        endDate: resolveRepeatEndDate(
           repeatStartDate,
-          repeatEndPreset
+          repeatEndPreset,
+          customRepeatEndDate
         ),
         weekdays:
           repeatChoice === 'certainDays'
@@ -309,6 +404,12 @@ export default function InboxScreen() {
     setEditRepeatStartDate(initialStartDate);
     setEditSelectedWeekdays([]);
     setEditRepeatEndPreset('none');
+    setEditCustomRepeatEndDate('');
+    setEditUseCustomRepeatStartDate(
+      !scheduleOptions.some(
+        (option) => option.dateKey === initialStartDate
+      )
+    );
     setEditRepeatError('');
   }
 
@@ -322,6 +423,8 @@ export default function InboxScreen() {
     setEditRepeatStartDate(getLocalDateKey(new Date()));
     setEditSelectedWeekdays([]);
     setEditRepeatEndPreset('none');
+    setEditCustomRepeatEndDate('');
+    setEditUseCustomRepeatStartDate(false);
     setEditRepeatError('');
   }
 
@@ -375,9 +478,10 @@ export default function InboxScreen() {
         goalId: editGoalId,
         frequency: editRepeatChoice,
         startDate: editRepeatStartDate,
-        endDate: getRepeatEndDate(
+        endDate: resolveRepeatEndDate(
           editRepeatStartDate,
-          editRepeatEndPreset
+          editRepeatEndPreset,
+          editCustomRepeatEndDate
         ),
         weekdays:
           editRepeatChoice === 'certainDays'
@@ -392,6 +496,100 @@ export default function InboxScreen() {
         error instanceof Error
           ? error.message
           : 'The task could not be converted into a recurring task.'
+      );
+    }
+  }
+
+  function startEditingRecurringRule(rule: RecurringRule) {
+    setEditingRuleId(rule.id);
+    setEditRuleTitle(rule.title);
+    setEditRuleNotes(rule.notes ?? '');
+    setEditRulePriority(rule.priority);
+    setEditRuleGoalId(rule.goalId);
+    setEditRuleFrequency(rule.frequency);
+    setEditRuleStartDate(rule.startDate);
+    setEditRuleEndPreset(
+      getRepeatEndPresetFromDates(
+        rule.startDate,
+        rule.endDate
+      )
+    );
+    setEditRuleEndDate(rule.endDate ?? '');
+    setEditRuleWeekdays(rule.weekdays);
+    setEditRuleError('');
+    setConfirmDeleteRuleId(null);
+  }
+
+  function cancelEditingRecurringRule() {
+    setEditingRuleId(null);
+    setEditRuleTitle('');
+    setEditRuleNotes('');
+    setEditRulePriority(0);
+    setEditRuleGoalId(null);
+    setEditRuleFrequency('daily');
+    setEditRuleStartDate('');
+    setEditRuleEndPreset('none');
+    setEditRuleEndDate('');
+    setEditRuleWeekdays([]);
+    setEditRuleError('');
+  }
+
+  function toggleEditRuleWeekday(weekday: number) {
+    setEditRuleWeekdays((current) =>
+      current.includes(weekday)
+        ? current.filter((item) => item !== weekday)
+        : [...current, weekday]
+    );
+    setEditRuleError('');
+  }
+
+  async function handleSaveRecurringRule() {
+    if (editingRuleId === null) return;
+
+    if (!editRuleTitle.trim()) {
+      setEditRuleError(
+        'A recurring task needs a title.'
+      );
+      return;
+    }
+
+    if (
+      editRuleFrequency === 'certainDays' &&
+      editRuleWeekdays.length === 0
+    ) {
+      setEditRuleError(
+        'Choose at least one weekday for Certain Days.'
+      );
+      return;
+    }
+
+    try {
+      setEditRuleError('');
+
+      await updateRecurringTask(editingRuleId, {
+        title: editRuleTitle,
+        notes: editRuleNotes,
+        priority: editRulePriority,
+        goalId: editRuleGoalId,
+        frequency: editRuleFrequency,
+        startDate: editRuleStartDate,
+        endDate: resolveRepeatEndDate(
+          editRuleStartDate,
+          editRuleEndPreset,
+          editRuleEndDate
+        ),
+        weekdays:
+          editRuleFrequency === 'certainDays'
+            ? editRuleWeekdays
+            : [],
+      });
+
+      cancelEditingRecurringRule();
+    } catch (error) {
+      setEditRuleError(
+        error instanceof Error
+          ? error.message
+          : 'The recurring schedule could not be updated.'
       );
     }
   }
@@ -631,6 +829,7 @@ export default function InboxScreen() {
               >
                 {scheduleOptions.map((option) => {
                   const selected =
+                    !useCustomRepeatStartDate &&
                     repeatStartDate === option.dateKey;
 
                   return (
@@ -641,11 +840,11 @@ export default function InboxScreen() {
                         selected &&
                           styles.dateButtonSelected,
                       ]}
-                      onPress={() =>
-                        setRepeatStartDate(
-                          option.dateKey
-                        )
-                      }
+                      onPress={() => {
+                        setRepeatStartDate(option.dateKey);
+                        setUseCustomRepeatStartDate(false);
+                        setRepeatError('');
+                      }}
                     >
                       <Text
                         style={[
@@ -670,7 +869,68 @@ export default function InboxScreen() {
                     </Pressable>
                   );
                 })}
+                <Pressable
+                  style={[
+                    styles.dateButton,
+                    useCustomRepeatStartDate &&
+                      styles.dateButtonSelected,
+                  ]}
+                  onPress={() => {
+                    setUseCustomRepeatStartDate(true);
+                    setRepeatError('');
+                  }}
+                >
+                  <Text
+                    style={[
+                      styles.dateDay,
+                      useCustomRepeatStartDate &&
+                        styles.selectedText,
+                    ]}
+                  >
+                    Custom
+                  </Text>
+                  <Text
+                    style={[
+                      styles.dateDate,
+                      useCustomRepeatStartDate &&
+                        styles.selectedText,
+                    ]}
+                  >
+                    Date
+                  </Text>
+                </Pressable>
               </ScrollView>
+
+              {useCustomRepeatStartDate ? (
+                <>
+                  <Text style={styles.pickerLabel}>
+                    Custom first date (YYYY-MM-DD):
+                  </Text>
+                  <TextInput
+                    style={styles.input}
+                    value={repeatStartDate}
+                    onChangeText={(value) => {
+                      setRepeatStartDate(value);
+                      setRepeatError('');
+
+                      if (repeatChoice === 'certainDays') {
+                        const date = parseLocalDateKey(value);
+
+                        if (date) {
+                          setSelectedWeekdays((current) =>
+                            current.includes(date.getDay())
+                              ? current
+                              : [...current, date.getDay()]
+                          );
+                        }
+                      }
+                    }}
+                    placeholder="YYYY-MM-DD"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                  />
+                </>
+              ) : null}
 
               <Text style={styles.pickerLabel}>
                 Repeat until:
@@ -688,9 +948,10 @@ export default function InboxScreen() {
                       repeatEndPreset === choice.value &&
                         styles.endSelected,
                     ]}
-                    onPress={() =>
-                      setRepeatEndPreset(choice.value)
-                    }
+                    onPress={() => {
+                      setRepeatEndPreset(choice.value);
+                      setRepeatError('');
+                    }}
                   >
                     <Text
                       style={[
@@ -705,7 +966,24 @@ export default function InboxScreen() {
                 ))}
               </ScrollView>
 
-              {repeatEndPreset !== 'none' ? (
+              {repeatEndPreset === 'custom' ? (
+                <>
+                  <Text style={styles.pickerLabel}>
+                    Custom end date (YYYY-MM-DD):
+                  </Text>
+                  <TextInput
+                    style={styles.input}
+                    value={customRepeatEndDate}
+                    onChangeText={(value) => {
+                      setCustomRepeatEndDate(value);
+                      setRepeatError('');
+                    }}
+                    placeholder="YYYY-MM-DD"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                  />
+                </>
+              ) : repeatEndPreset !== 'none' ? (
                 <Text style={styles.endDateText}>
                   Ends:{' '}
                   {formatDateKey(
@@ -861,7 +1139,333 @@ export default function InboxScreen() {
                       </Text>
                     ) : null}
 
+                    {editingRuleId === rule.id ? (
+                      <View style={styles.seriesEditPanel}>
+                        <Text style={styles.editTitle}>
+                          Edit Saved Schedule
+                        </Text>
+                        <Text style={styles.seriesEditHelp}>
+                          Completed occurrences stay unchanged.
+                          Unfinished occurrences from today forward
+                          are rebuilt from the updated schedule. A
+                          paused schedule stays paused.
+                        </Text>
+
+                        <TextInput
+                          style={styles.input}
+                          value={editRuleTitle}
+                          onChangeText={setEditRuleTitle}
+                          placeholder="Recurring task title"
+                        />
+
+                        <TextInput
+                          style={[
+                            styles.input,
+                            styles.notesInput,
+                          ]}
+                          value={editRuleNotes}
+                          onChangeText={setEditRuleNotes}
+                          placeholder="Notes... optional"
+                          multiline
+                        />
+
+                        <Text style={styles.pickerLabel}>
+                          Priority:
+                        </Text>
+                        <View style={styles.rowWrap}>
+                          {[0, 1, 2].map((level) => (
+                            <Pressable
+                              key={level}
+                              style={[
+                                styles.pill,
+                                editRulePriority === level &&
+                                  styles.prioritySelected,
+                              ]}
+                              onPress={() =>
+                                setEditRulePriority(level)
+                              }
+                            >
+                              <Text
+                                style={[
+                                  styles.pillText,
+                                  editRulePriority === level &&
+                                    styles.selectedText,
+                                ]}
+                              >
+                                {getPriorityLabel(level)}
+                              </Text>
+                            </Pressable>
+                          ))}
+                        </View>
+
+                        <Text style={styles.pickerLabel}>
+                          Link to goal:
+                        </Text>
+                        <ScrollView
+                          horizontal={!isWideDesktop}
+                          showsHorizontalScrollIndicator={false}
+                          contentContainerStyle={[
+                            styles.horizontalRow,
+                            isWideDesktop &&
+                              styles.horizontalRowDesktop,
+                          ]}
+                        >
+                          <Pressable
+                            style={[
+                              styles.pill,
+                              editRuleGoalId === null &&
+                                styles.goalSelected,
+                            ]}
+                            onPress={() =>
+                              setEditRuleGoalId(null)
+                            }
+                          >
+                            <Text
+                              style={[
+                                styles.pillText,
+                                editRuleGoalId === null &&
+                                  styles.selectedText,
+                              ]}
+                            >
+                              None
+                            </Text>
+                          </Pressable>
+
+                          {goals.map((goal) => (
+                            <Pressable
+                              key={goal.id}
+                              style={[
+                                styles.pill,
+                                editRuleGoalId === goal.id &&
+                                  styles.goalSelected,
+                              ]}
+                              onPress={() =>
+                                setEditRuleGoalId(goal.id)
+                              }
+                            >
+                              <Text
+                                style={[
+                                  styles.pillText,
+                                  editRuleGoalId === goal.id &&
+                                    styles.selectedText,
+                                ]}
+                              >
+                                {goal.title}
+                              </Text>
+                            </Pressable>
+                          ))}
+                        </ScrollView>
+
+                        <Text style={styles.pickerLabel}>
+                          Repeat:
+                        </Text>
+                        <View style={styles.rowWrap}>
+                          {repeatChoices
+                            .filter(
+                              (choice) =>
+                                choice.value !== 'none'
+                            )
+                            .map((choice) => (
+                              <Pressable
+                                key={choice.value}
+                                style={[
+                                  styles.pill,
+                                  editRuleFrequency ===
+                                    choice.value &&
+                                    styles.repeatSelected,
+                                ]}
+                                onPress={() => {
+                                  setEditRuleFrequency(
+                                    choice.value as RecurrenceFrequency
+                                  );
+                                  setEditRuleError('');
+                                }}
+                              >
+                                <Text
+                                  style={[
+                                    styles.pillText,
+                                    editRuleFrequency ===
+                                      choice.value &&
+                                      styles.selectedText,
+                                  ]}
+                                >
+                                  {choice.label}
+                                </Text>
+                              </Pressable>
+                            ))}
+                        </View>
+
+                        {editRuleFrequency ===
+                        'certainDays' ? (
+                          <View style={styles.rowWrap}>
+                            {selectableWeekdays.map(
+                              (weekday) => {
+                                const selected =
+                                  editRuleWeekdays.includes(
+                                    weekday.index
+                                  );
+
+                                return (
+                                  <Pressable
+                                    key={weekday.index}
+                                    style={[
+                                      styles.weekdayButton,
+                                      selected &&
+                                        styles.weekdaySelected,
+                                    ]}
+                                    onPress={() =>
+                                      toggleEditRuleWeekday(
+                                        weekday.index
+                                      )
+                                    }
+                                  >
+                                    <Text
+                                      style={[
+                                        styles.weekdayText,
+                                        selected &&
+                                          styles.selectedText,
+                                      ]}
+                                    >
+                                      {weekday.label}
+                                    </Text>
+                                  </Pressable>
+                                );
+                              }
+                            )}
+                          </View>
+                        ) : null}
+
+                        <Text style={styles.pickerLabel}>
+                          Start date (YYYY-MM-DD):
+                        </Text>
+                        <TextInput
+                          style={styles.input}
+                          value={editRuleStartDate}
+                          onChangeText={(value) => {
+                            setEditRuleStartDate(value);
+                            setEditRuleError('');
+                          }}
+                          placeholder="YYYY-MM-DD"
+                          autoCapitalize="none"
+                          autoCorrect={false}
+                        />
+
+                        <Text style={styles.pickerLabel}>
+                          Repeat until:
+                        </Text>
+                        <ScrollView
+                          horizontal
+                          showsHorizontalScrollIndicator={false}
+                          contentContainerStyle={styles.horizontalRow}
+                        >
+                          {repeatEndChoices.map((choice) => (
+                            <Pressable
+                              key={choice.value}
+                              style={[
+                                styles.pill,
+                                editRuleEndPreset === choice.value &&
+                                  styles.endSelected,
+                              ]}
+                              onPress={() => {
+                                setEditRuleEndPreset(choice.value);
+                                setEditRuleError('');
+                              }}
+                            >
+                              <Text
+                                style={[
+                                  styles.pillText,
+                                  editRuleEndPreset === choice.value &&
+                                    styles.selectedText,
+                                ]}
+                              >
+                                {choice.label}
+                              </Text>
+                            </Pressable>
+                          ))}
+                        </ScrollView>
+
+                        {editRuleEndPreset === 'custom' ? (
+                          <>
+                            <Text style={styles.pickerLabel}>
+                              Custom end date (YYYY-MM-DD):
+                            </Text>
+                            <TextInput
+                              style={styles.input}
+                              value={editRuleEndDate}
+                              onChangeText={(value) => {
+                                setEditRuleEndDate(value);
+                                setEditRuleError('');
+                              }}
+                              placeholder="YYYY-MM-DD"
+                              autoCapitalize="none"
+                              autoCorrect={false}
+                            />
+                          </>
+                        ) : editRuleEndPreset !== 'none' ? (
+                          <Text style={styles.endDateText}>
+                            Ends:{' '}
+                            {formatDateKey(
+                              getRepeatEndDate(
+                                editRuleStartDate,
+                                editRuleEndPreset
+                              ) ?? editRuleStartDate
+                            )}
+                          </Text>
+                        ) : null}
+
+                        {editRuleError ? (
+                          <Text style={styles.errorText}>
+                            {editRuleError}
+                          </Text>
+                        ) : null}
+
+                        <View style={styles.rowWrap}>
+                          <Pressable
+                            style={[
+                              styles.smallButton,
+                              styles.doneButton,
+                            ]}
+                            onPress={handleSaveRecurringRule}
+                          >
+                            <Text style={styles.buttonText}>
+                              Save Schedule
+                            </Text>
+                          </Pressable>
+
+                          <Pressable
+                            style={[
+                              styles.smallButton,
+                              styles.cancelButton,
+                            ]}
+                            onPress={
+                              cancelEditingRecurringRule
+                            }
+                          >
+                            <Text style={styles.buttonText}>
+                              Cancel
+                            </Text>
+                          </Pressable>
+                        </View>
+                      </View>
+                    ) : null}
+
                     <View style={styles.rowWrap}>
+                      {editingRuleId !== rule.id ? (
+                        <Pressable
+                          style={[
+                            styles.smallButton,
+                            styles.editButton,
+                          ]}
+                          onPress={() =>
+                            startEditingRecurringRule(rule)
+                          }
+                        >
+                          <Text style={styles.buttonText}>
+                            Edit Schedule
+                          </Text>
+                        </Pressable>
+                      ) : null}
+
                       <Pressable
                         style={[
                           styles.smallButton,
@@ -1358,6 +1962,7 @@ export default function InboxScreen() {
                             >
                               {scheduleOptions.map((option) => {
                                 const selected =
+                                  !editUseCustomRepeatStartDate &&
                                   editRepeatStartDate ===
                                   option.dateKey;
 
@@ -1372,6 +1977,9 @@ export default function InboxScreen() {
                                     onPress={() => {
                                       setEditRepeatStartDate(
                                         option.dateKey
+                                      );
+                                      setEditUseCustomRepeatStartDate(
+                                        false
                                       );
                                       setEditRepeatError('');
 
@@ -1423,7 +2031,80 @@ export default function InboxScreen() {
                                   </Pressable>
                                 );
                               })}
+                              <Pressable
+                                style={[
+                                  styles.dateButton,
+                                  editUseCustomRepeatStartDate &&
+                                    styles.dateButtonSelected,
+                                ]}
+                                onPress={() => {
+                                  setEditUseCustomRepeatStartDate(
+                                    true
+                                  );
+                                  setEditRepeatError('');
+                                }}
+                              >
+                                <Text
+                                  style={[
+                                    styles.dateDay,
+                                    editUseCustomRepeatStartDate &&
+                                      styles.selectedText,
+                                  ]}
+                                >
+                                  Custom
+                                </Text>
+                                <Text
+                                  style={[
+                                    styles.dateDate,
+                                    editUseCustomRepeatStartDate &&
+                                      styles.selectedText,
+                                  ]}
+                                >
+                                  Date
+                                </Text>
+                              </Pressable>
                             </ScrollView>
+
+                            {editUseCustomRepeatStartDate ? (
+                              <>
+                                <Text style={styles.pickerLabel}>
+                                  Custom first date (YYYY-MM-DD):
+                                </Text>
+                                <TextInput
+                                  style={styles.input}
+                                  value={editRepeatStartDate}
+                                  onChangeText={(value) => {
+                                    setEditRepeatStartDate(value);
+                                    setEditRepeatError('');
+
+                                    if (
+                                      editRepeatChoice ===
+                                      'certainDays'
+                                    ) {
+                                      const date =
+                                        parseLocalDateKey(value);
+
+                                      if (date) {
+                                        setEditSelectedWeekdays(
+                                          (current) =>
+                                            current.includes(
+                                              date.getDay()
+                                            )
+                                              ? current
+                                              : [
+                                                  ...current,
+                                                  date.getDay(),
+                                                ]
+                                        );
+                                      }
+                                    }
+                                  }}
+                                  placeholder="YYYY-MM-DD"
+                                  autoCapitalize="none"
+                                  autoCorrect={false}
+                                />
+                              </>
+                            ) : null}
 
                             <Text style={styles.pickerLabel}>
                               Repeat until:
@@ -1446,11 +2127,12 @@ export default function InboxScreen() {
                                       choice.value &&
                                       styles.endSelected,
                                   ]}
-                                  onPress={() =>
+                                  onPress={() => {
                                     setEditRepeatEndPreset(
                                       choice.value
-                                    )
-                                  }
+                                    );
+                                    setEditRepeatError('');
+                                  }}
                                 >
                                   <Text
                                     style={[
@@ -1466,10 +2148,25 @@ export default function InboxScreen() {
                               ))}
                             </ScrollView>
 
-                            {editRepeatEndPreset !== 'none' ? (
-                              <Text
-                                style={styles.endDateText}
-                              >
+                            {editRepeatEndPreset === 'custom' ? (
+                              <>
+                                <Text style={styles.pickerLabel}>
+                                  Custom end date (YYYY-MM-DD):
+                                </Text>
+                                <TextInput
+                                  style={styles.input}
+                                  value={editCustomRepeatEndDate}
+                                  onChangeText={(value) => {
+                                    setEditCustomRepeatEndDate(value);
+                                    setEditRepeatError('');
+                                  }}
+                                  placeholder="YYYY-MM-DD"
+                                  autoCapitalize="none"
+                                  autoCorrect={false}
+                                />
+                              </>
+                            ) : editRepeatEndPreset !== 'none' ? (
+                              <Text style={styles.endDateText}>
                                 Ends:{' '}
                                 {formatDateKey(
                                   getRepeatEndDate(
@@ -1813,6 +2510,20 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#115e59',
     lineHeight: 19,
+  },
+  seriesEditPanel: {
+    marginTop: 10,
+    gap: 10,
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+    backgroundColor: '#eff6ff',
+  },
+  seriesEditHelp: {
+    fontSize: 12,
+    lineHeight: 18,
+    color: '#1e3a8a',
   },
   weekdayButton: {
     minWidth: 54,

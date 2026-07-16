@@ -346,4 +346,277 @@ describe('recurring storage integration', () => {
     });
   });
 
+
+  test('updates a saved schedule while preserving completed history and rebuilding future tasks', async () => {
+    const recurringStorage = await import(
+      '../../lib/recurringStorage'
+    );
+    const taskStorage = await import('../../lib/taskStorage');
+    const { getDb } = await import('../../lib/db');
+    const {
+      addDays,
+      getLocalDateKey,
+    } = await import('../../lib/dateUtils');
+
+    const todayDate = new Date();
+    const today = getLocalDateKey(todayDate);
+    const tomorrow = getLocalDateKey(
+      addDays(todayDate, 1)
+    );
+    const nextWeek = getLocalDateKey(
+      addDays(todayDate, 7)
+    );
+
+    const rule = await recurringStorage.insertRecurringRule({
+      title: 'Original daily task',
+      notes: 'Original note',
+      priority: 0,
+      frequency: 'daily',
+      startDate: today,
+    });
+
+    const db = await getDb();
+
+    const firstOccurrence = await db.getFirstAsync<{
+      id: number;
+    }>(
+      `
+      SELECT id
+      FROM tasks
+      WHERE recurring_rule_id = ?
+        AND recurrence_occurrence_date = ?;
+      `,
+      [rule.id, today]
+    );
+
+    expect(firstOccurrence).not.toBeNull();
+
+    await taskStorage.completeTaskById(
+      firstOccurrence!.id
+    );
+
+    await recurringStorage.updateRecurringRuleById(
+      rule.id,
+      {
+        title: 'Updated weekly task',
+        notes: 'Updated note',
+        priority: 2,
+        goalId: 77,
+        frequency: 'weekly',
+        startDate: today,
+        endDate: null,
+        weekdays: [],
+      },
+      today
+    );
+
+    const updatedRule = await db.getFirstAsync<{
+      title: string;
+      notes: string | null;
+      priority: number;
+      goal_id: number | null;
+      frequency: string;
+      start_date: string;
+      end_date: string | null;
+      active: number;
+    }>(
+      `
+      SELECT
+        title,
+        notes,
+        priority,
+        goal_id,
+        frequency,
+        start_date,
+        end_date,
+        active
+      FROM recurring_rules
+      WHERE id = ?;
+      `,
+      [rule.id]
+    );
+
+    const completedOccurrence =
+      await db.getFirstAsync<{
+        title: string;
+        notes: string | null;
+        priority: number;
+        completed: number;
+        recurring_rule_id: number | null;
+      }>(
+        `
+        SELECT
+          title,
+          notes,
+          priority,
+          completed,
+          recurring_rule_id
+        FROM tasks
+        WHERE recurring_rule_id = ?
+          AND recurrence_occurrence_date = ?;
+        `,
+        [rule.id, today]
+      );
+
+    const removedDailyOccurrence =
+      await db.getFirstAsync(
+        `
+        SELECT id
+        FROM tasks
+        WHERE recurring_rule_id = ?
+          AND recurrence_occurrence_date = ?;
+        `,
+        [rule.id, tomorrow]
+      );
+
+    const rebuiltWeeklyOccurrence =
+      await db.getFirstAsync<{
+        title: string;
+        notes: string | null;
+        priority: number;
+        goal_id: number | null;
+        completed: number;
+      }>(
+        `
+        SELECT
+          title,
+          notes,
+          priority,
+          goal_id,
+          completed
+        FROM tasks
+        WHERE recurring_rule_id = ?
+          AND recurrence_occurrence_date = ?;
+        `,
+        [rule.id, nextWeek]
+      );
+
+    expect(updatedRule).toEqual({
+      title: 'Updated weekly task',
+      notes: 'Updated note',
+      priority: 2,
+      goal_id: 77,
+      frequency: 'weekly',
+      start_date: today,
+      end_date: null,
+      active: 1,
+    });
+
+    /*
+     * Completed history keeps the exact details that were true when the
+     * occurrence was completed.
+     */
+    expect(completedOccurrence).toEqual({
+      title: 'Original daily task',
+      notes: 'Original note',
+      priority: 0,
+      completed: 1,
+      recurring_rule_id: rule.id,
+    });
+
+    expect(removedDailyOccurrence).toBeNull();
+    expect(rebuiltWeeklyOccurrence).toEqual({
+      title: 'Updated weekly task',
+      notes: 'Updated note',
+      priority: 2,
+      goal_id: 77,
+      completed: 0,
+    });
+  });
+
+
+  test('keeps an edited paused schedule paused until it is resumed', async () => {
+    const recurringStorage = await import(
+      '../../lib/recurringStorage'
+    );
+    const { getDb } = await import('../../lib/db');
+    const {
+      addDays,
+      getLocalDateKey,
+    } = await import('../../lib/dateUtils');
+
+    const todayDate = new Date();
+    const today = getLocalDateKey(todayDate);
+    const nextWeek = getLocalDateKey(
+      addDays(todayDate, 7)
+    );
+
+    const rule = await recurringStorage.insertRecurringRule({
+      title: 'Paused daily task',
+      frequency: 'daily',
+      startDate: today,
+    });
+
+    await recurringStorage.setRecurringRuleActive(
+      rule.id,
+      false
+    );
+
+    await recurringStorage.updateRecurringRuleById(
+      rule.id,
+      {
+        title: 'Paused weekly task',
+        frequency: 'weekly',
+        startDate: today,
+      },
+      today
+    );
+
+    const db = await getDb();
+    const pausedRule = await db.getFirstAsync<{
+      title: string;
+      frequency: string;
+      active: number;
+    }>(
+      `
+      SELECT title, frequency, active
+      FROM recurring_rules
+      WHERE id = ?;
+      `,
+      [rule.id]
+    );
+
+    const whilePaused = await db.getFirstAsync<{
+      count: number;
+    }>(
+      `
+      SELECT COUNT(*) AS count
+      FROM tasks
+      WHERE recurring_rule_id = ?
+        AND completed = 0;
+      `,
+      [rule.id]
+    );
+
+    expect(pausedRule).toEqual({
+      title: 'Paused weekly task',
+      frequency: 'weekly',
+      active: 0,
+    });
+    expect(whilePaused?.count).toBe(0);
+
+    await recurringStorage.setRecurringRuleActive(
+      rule.id,
+      true
+    );
+
+    const resumedOccurrence = await db.getFirstAsync<{
+      title: string;
+      completed: number;
+    }>(
+      `
+      SELECT title, completed
+      FROM tasks
+      WHERE recurring_rule_id = ?
+        AND recurrence_occurrence_date = ?;
+      `,
+      [rule.id, nextWeek]
+    );
+
+    expect(resumedOccurrence).toEqual({
+      title: 'Paused weekly task',
+      completed: 0,
+    });
+  });
+
 });

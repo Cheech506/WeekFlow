@@ -14,10 +14,12 @@ import {
   getRecurringRules,
   insertRecurringRule,
   setRecurringRuleActive,
+  updateRecurringRuleById,
   type CreateRecurringRuleInput,
   type DeleteRecurringRuleMode,
   type RecurrenceFrequency,
   type RecurringRule,
+  type UpdateRecurringRuleInput,
 } from '@/lib/recurringStorage';
 import {
   completeTaskById,
@@ -36,6 +38,7 @@ export type {
   DeleteRecurringRuleMode,
   RecurrenceFrequency,
   RecurringRule,
+  UpdateRecurringRuleInput,
   Task,
 };
 
@@ -58,6 +61,10 @@ type TaskContextValue = {
   convertTaskToRecurring: (
     taskId: number,
     input: CreateRecurringRuleInput
+  ) => Promise<void>;
+  updateRecurringTask: (
+    id: number,
+    input: UpdateRecurringRuleInput
   ) => Promise<void>;
   toggleRecurringRule: (id: number) => Promise<void>;
   deleteRecurringRule: (
@@ -151,6 +158,14 @@ export function TaskProvider({ children }: { children: ReactNode }) {
     input: CreateRecurringRuleInput
   ) {
     await convertTaskToRecurringRule(taskId, input);
+    await loadTasks();
+  }
+
+  async function updateRecurringTask(
+    id: number,
+    input: UpdateRecurringRuleInput
+  ) {
+    await updateRecurringRuleById(id, input);
     await loadTasks();
   }
 
@@ -261,6 +276,7 @@ export function TaskProvider({ children }: { children: ReactNode }) {
         addTask,
         createRecurringTask,
         convertTaskToRecurring,
+        updateRecurringTask,
         toggleRecurringRule,
         deleteRecurringRule,
         editTask,
