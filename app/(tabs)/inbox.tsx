@@ -32,6 +32,7 @@ type RepeatEndPreset =
   | 'fourWeeks'
   | 'twelveWeeks'
   | 'custom';
+type RecurringEditScope = 'single' | 'future';
 
 const selectableWeekdays = [
   { index: 1, label: 'Mon' },
@@ -260,6 +261,8 @@ export default function InboxScreen() {
   ] = useState(false);
   const [editRepeatError, setEditRepeatError] =
     useState('');
+  const [editRecurringScope, setEditRecurringScope] =
+    useState<RecurringEditScope>('single');
 
   const {
     tasks,
@@ -268,6 +271,7 @@ export default function InboxScreen() {
     createRecurringTask,
     convertTaskToRecurring,
     updateRecurringTask,
+    updateRecurringTaskFromOccurrence,
     toggleRecurringRule,
     deleteRecurringRule,
     editTask,
@@ -394,22 +398,49 @@ export default function InboxScreen() {
   function startEditingTask(task: Task) {
     const initialStartDate =
       task.dueDate ?? getLocalDateKey(new Date());
+    const recurringRule =
+      task.recurringRuleId === null
+        ? null
+        : recurringRules.find(
+            (rule) => rule.id === task.recurringRuleId
+          ) ?? null;
+    const recurringEffectiveDate =
+      task.recurrenceOccurrenceDate ?? initialStartDate;
 
     setEditingTaskId(task.id);
     setEditTaskText(task.title);
     setEditNotesText(task.notes ?? '');
     setEditPriority(task.priority);
     setEditGoalId(task.goalId);
-    setEditRepeatChoice('none');
-    setEditRepeatStartDate(initialStartDate);
-    setEditSelectedWeekdays([]);
-    setEditRepeatEndPreset('none');
-    setEditCustomRepeatEndDate('');
-    setEditUseCustomRepeatStartDate(
-      !scheduleOptions.some(
-        (option) => option.dateKey === initialStartDate
-      )
-    );
+    setEditRecurringScope('single');
+
+    if (recurringRule) {
+      setEditRepeatChoice(recurringRule.frequency);
+      setEditRepeatStartDate(recurringEffectiveDate);
+      setEditSelectedWeekdays(recurringRule.weekdays);
+      setEditRepeatEndPreset(
+        getRepeatEndPresetFromDates(
+          recurringEffectiveDate,
+          recurringRule.endDate
+        )
+      );
+      setEditCustomRepeatEndDate(
+        recurringRule.endDate ?? ''
+      );
+      setEditUseCustomRepeatStartDate(false);
+    } else {
+      setEditRepeatChoice('none');
+      setEditRepeatStartDate(initialStartDate);
+      setEditSelectedWeekdays([]);
+      setEditRepeatEndPreset('none');
+      setEditCustomRepeatEndDate('');
+      setEditUseCustomRepeatStartDate(
+        !scheduleOptions.some(
+          (option) => option.dateKey === initialStartDate
+        )
+      );
+    }
+
     setEditRepeatError('');
   }
 
@@ -425,6 +456,7 @@ export default function InboxScreen() {
     setEditRepeatEndPreset('none');
     setEditCustomRepeatEndDate('');
     setEditUseCustomRepeatStartDate(false);
+    setEditRecurringScope('single');
     setEditRepeatError('');
   }
 
@@ -442,10 +474,77 @@ export default function InboxScreen() {
       return;
     }
 
-    if (
-      task.recurringRuleId !== null ||
-      editRepeatChoice === 'none'
-    ) {
+    if (task.recurringRuleId !== null) {
+      try {
+        setEditRepeatError('');
+
+        if (editRecurringScope === 'single') {
+          await editTask(
+            editingTaskId,
+            editTaskText,
+            editNotesText,
+            editPriority,
+            editGoalId
+          );
+        } else {
+          if (editRepeatChoice === 'none') {
+            throw new Error(
+              'Choose a repeat frequency for future occurrences.'
+            );
+          }
+
+          if (
+            editRepeatChoice === 'certainDays' &&
+            editSelectedWeekdays.length === 0
+          ) {
+            throw new Error(
+              'Choose at least one weekday for Certain Days.'
+            );
+          }
+
+          const effectiveDate =
+            task.recurrenceOccurrenceDate;
+
+          if (!effectiveDate) {
+            throw new Error(
+              'The recurring occurrence date could not be found.'
+            );
+          }
+
+          await updateRecurringTaskFromOccurrence(
+            editingTaskId,
+            {
+              title: editTaskText,
+              notes: editNotesText,
+              priority: editPriority,
+              goalId: editGoalId,
+              frequency: editRepeatChoice,
+              endDate: resolveRepeatEndDate(
+                effectiveDate,
+                editRepeatEndPreset,
+                editCustomRepeatEndDate
+              ),
+              weekdays:
+                editRepeatChoice === 'certainDays'
+                  ? editSelectedWeekdays
+                  : [],
+            }
+          );
+        }
+
+        cancelEditingTask();
+      } catch (error) {
+        setEditRepeatError(
+          error instanceof Error
+            ? error.message
+            : 'The recurring task could not be updated.'
+        );
+      }
+
+      return;
+    }
+
+    if (editRepeatChoice === 'none') {
       await editTask(
         editingTaskId,
         editTaskText,
@@ -2187,12 +2286,258 @@ export default function InboxScreen() {
                       </>
                     ) : (
                       <View style={styles.recurringSetup}>
-                        <Text style={styles.recurringHelp}>
-                          This task already belongs to a recurring
-                          schedule. Saving here edits only this
-                          occurrence. Series editing is handled in
-                          the recurring-task manager.
+                        <Text style={styles.pickerLabel}>
+                          Apply changes to:
                         </Text>
+                        <View style={styles.rowWrap}>
+                          <Pressable
+                            style={[
+                              styles.pill,
+                              editRecurringScope === 'single' &&
+                                styles.repeatSelected,
+                            ]}
+                            onPress={() => {
+                              setEditRecurringScope('single');
+                              setEditRepeatError('');
+                            }}
+                          >
+                            <Text
+                              style={[
+                                styles.pillText,
+                                editRecurringScope === 'single' &&
+                                  styles.selectedText,
+                              ]}
+                            >
+                              This Occurrence Only
+                            </Text>
+                          </Pressable>
+                          <Pressable
+                            style={[
+                              styles.pill,
+                              editRecurringScope === 'future' &&
+                                styles.repeatSelected,
+                            ]}
+                            onPress={() => {
+                              setEditRecurringScope('future');
+                              setEditRepeatError('');
+                            }}
+                          >
+                            <Text
+                              style={[
+                                styles.pillText,
+                                editRecurringScope === 'future' &&
+                                  styles.selectedText,
+                              ]}
+                            >
+                              This & Future Occurrences
+                            </Text>
+                          </Pressable>
+                        </View>
+
+                        <Text style={styles.recurringHelp}>
+                          {editRecurringScope === 'single'
+                            ? 'Only this task changes. The saved schedule and every other occurrence stay untouched.'
+                            : 'This task becomes the first occurrence of the revised schedule. Earlier tasks and completed History stay untouched.'}
+                        </Text>
+
+                        {editRecurringScope === 'future' ? (
+                          <>
+                            <Text style={styles.pickerLabel}>
+                              Changes begin:
+                            </Text>
+                            <Text style={styles.endDateText}>
+                              {formatDateKey(
+                                task.recurrenceOccurrenceDate ??
+                                  editRepeatStartDate
+                              )}
+                            </Text>
+
+                            <Text style={styles.pickerLabel}>
+                              Repeat:
+                            </Text>
+                            <ScrollView
+                              horizontal
+                              showsHorizontalScrollIndicator={false}
+                              contentContainerStyle={
+                                styles.horizontalRow
+                              }
+                            >
+                              {repeatChoices
+                                .filter(
+                                  (choice) =>
+                                    choice.value !== 'none'
+                                )
+                                .map((choice) => (
+                                  <Pressable
+                                    key={choice.value}
+                                    style={[
+                                      styles.pill,
+                                      editRepeatChoice ===
+                                        choice.value &&
+                                        styles.repeatSelected,
+                                    ]}
+                                    onPress={() => {
+                                      setEditRepeatChoice(
+                                        choice.value
+                                      );
+                                      setEditRepeatError('');
+
+                                      if (
+                                        choice.value ===
+                                          'certainDays' &&
+                                        editSelectedWeekdays.length ===
+                                          0
+                                      ) {
+                                        const effectiveDate =
+                                          parseLocalDateKey(
+                                            task.recurrenceOccurrenceDate ??
+                                              editRepeatStartDate
+                                          );
+
+                                        if (effectiveDate) {
+                                          setEditSelectedWeekdays([
+                                            effectiveDate.getDay(),
+                                          ]);
+                                        }
+                                      }
+                                    }}
+                                  >
+                                    <Text
+                                      style={[
+                                        styles.pillText,
+                                        editRepeatChoice ===
+                                          choice.value &&
+                                          styles.selectedText,
+                                      ]}
+                                    >
+                                      {choice.label}
+                                    </Text>
+                                  </Pressable>
+                                ))}
+                            </ScrollView>
+
+                            {editRepeatChoice ===
+                            'certainDays' ? (
+                              <>
+                                <Text style={styles.pickerLabel}>
+                                  Repeat on:
+                                </Text>
+                                <View style={styles.rowWrap}>
+                                  {selectableWeekdays.map(
+                                    (weekday) => {
+                                      const selected =
+                                        editSelectedWeekdays.includes(
+                                          weekday.index
+                                        );
+
+                                      return (
+                                        <Pressable
+                                          key={weekday.index}
+                                          style={[
+                                            styles.pill,
+                                            selected &&
+                                              styles.weekdaySelected,
+                                          ]}
+                                          onPress={() =>
+                                            toggleEditSelectedWeekday(
+                                              weekday.index
+                                            )
+                                          }
+                                        >
+                                          <Text
+                                            style={[
+                                              styles.pillText,
+                                              selected &&
+                                                styles.selectedText,
+                                            ]}
+                                          >
+                                            {weekday.label}
+                                          </Text>
+                                        </Pressable>
+                                      );
+                                    }
+                                  )}
+                                </View>
+                              </>
+                            ) : null}
+
+                            <Text style={styles.pickerLabel}>
+                              Repeat until:
+                            </Text>
+                            <ScrollView
+                              horizontal
+                              showsHorizontalScrollIndicator={false}
+                              contentContainerStyle={
+                                styles.horizontalRow
+                              }
+                            >
+                              {repeatEndChoices.map((choice) => (
+                                <Pressable
+                                  key={choice.value}
+                                  style={[
+                                    styles.pill,
+                                    editRepeatEndPreset ===
+                                      choice.value &&
+                                      styles.endSelected,
+                                  ]}
+                                  onPress={() => {
+                                    setEditRepeatEndPreset(
+                                      choice.value
+                                    );
+                                    setEditRepeatError('');
+                                  }}
+                                >
+                                  <Text
+                                    style={[
+                                      styles.pillText,
+                                      editRepeatEndPreset ===
+                                        choice.value &&
+                                        styles.selectedText,
+                                    ]}
+                                  >
+                                    {choice.label}
+                                  </Text>
+                                </Pressable>
+                              ))}
+                            </ScrollView>
+
+                            {editRepeatEndPreset === 'custom' ? (
+                              <>
+                                <Text style={styles.pickerLabel}>
+                                  Custom end date (YYYY-MM-DD):
+                                </Text>
+                                <TextInput
+                                  style={styles.input}
+                                  value={editCustomRepeatEndDate}
+                                  onChangeText={(value) => {
+                                    setEditCustomRepeatEndDate(value);
+                                    setEditRepeatError('');
+                                  }}
+                                  placeholder="YYYY-MM-DD"
+                                  autoCapitalize="none"
+                                  autoCorrect={false}
+                                />
+                              </>
+                            ) : editRepeatEndPreset !== 'none' ? (
+                              <Text style={styles.endDateText}>
+                                Ends:{' '}
+                                {formatDateKey(
+                                  getRepeatEndDate(
+                                    task.recurrenceOccurrenceDate ??
+                                      editRepeatStartDate,
+                                    editRepeatEndPreset
+                                  ) ?? editRepeatStartDate
+                                )}
+                              </Text>
+                            ) : null}
+                          </>
+                        ) : null}
+
+                        {editRepeatError ? (
+                          <Text style={styles.errorText}>
+                            {editRepeatError}
+                          </Text>
+                        ) : null}
                       </View>
                     )}
 
@@ -2205,10 +2550,13 @@ export default function InboxScreen() {
                         onPress={handleSaveEditedTask}
                       >
                         <Text style={styles.buttonText}>
-                          {task.recurringRuleId === null &&
-                          editRepeatChoice !== 'none'
-                            ? 'Save & Make Recurring'
-                            : 'Save'}
+                          {task.recurringRuleId !== null
+                            ? editRecurringScope === 'future'
+                              ? 'Save This & Future'
+                              : 'Save Occurrence'
+                            : editRepeatChoice !== 'none'
+                              ? 'Save & Make Recurring'
+                              : 'Save'}
                         </Text>
                       </Pressable>
                       <Pressable

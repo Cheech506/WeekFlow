@@ -52,6 +52,11 @@ export type CreateRecurringRuleInput = {
 
 export type UpdateRecurringRuleInput = CreateRecurringRuleInput;
 
+export type UpdateRecurringRuleFromOccurrenceInput = Omit<
+  CreateRecurringRuleInput,
+  'startDate'
+>;
+
 type RecurringRuleRow = {
   id: number;
   title: string;
@@ -610,6 +615,184 @@ export async function updateRecurringRuleById(
         AND completed = 0;
       `,
       [title, notes, priority, goalId, id]
+    );
+  });
+
+  await ensureRecurringOccurrences();
+}
+
+/**
+ * Applies recurring changes from one unfinished occurrence forward.
+ *
+ * The selected task is preserved as the first revised occurrence, including
+ * when it was moved to Inbox or rescheduled. Earlier occurrences and every
+ * completed History item keep their existing details. Later unfinished
+ * occurrences are rebuilt from the revised schedule.
+ */
+export async function updateRecurringRuleFromOccurrence(
+  taskId: number,
+  input: UpdateRecurringRuleFromOccurrenceInput
+): Promise<void> {
+  await migrateDb();
+  const db = await getDb();
+
+  await db.withTransactionAsync(async () => {
+    const task = await db.getFirstAsync<{
+      completed: number;
+      recurring_rule_id: number | null;
+      recurrence_occurrence_date: string | null;
+    }>(
+      `
+      SELECT
+        completed,
+        recurring_rule_id,
+        recurrence_occurrence_date
+      FROM tasks
+      WHERE id = ?;
+      `,
+      [taskId]
+    );
+
+    if (!task) {
+      throw new Error('The recurring occurrence could not be found.');
+    }
+
+    if (task.completed === 1) {
+      throw new Error(
+        'A completed occurrence cannot change future tasks.'
+      );
+    }
+
+    if (
+      task.recurring_rule_id === null ||
+      !task.recurrence_occurrence_date
+    ) {
+      throw new Error(
+        'This task does not belong to a recurring schedule.'
+      );
+    }
+
+    const effectiveDate = task.recurrence_occurrence_date;
+    const parsedEffectiveDate = parseLocalDateKey(effectiveDate);
+
+    if (!parsedEffectiveDate) {
+      throw new Error(
+        'The recurring occurrence date is invalid.'
+      );
+    }
+
+    const existingRule = await db.getFirstAsync<{
+      id: number;
+    }>(
+      `
+      SELECT id
+      FROM recurring_rules
+      WHERE id = ?;
+      `,
+      [task.recurring_rule_id]
+    );
+
+    if (!existingRule) {
+      throw new Error(
+        'The recurring schedule could not be found.'
+      );
+    }
+
+    const normalizedInput =
+      validateAndNormalizeRecurringRuleInput({
+        ...input,
+        startDate: effectiveDate,
+      });
+
+    const {
+      title,
+      notes,
+      priority,
+      goalId,
+      frequency,
+      endDate,
+      weekdays,
+    } = normalizedInput;
+
+    const updateRuleResult = await db.runAsync(
+      `
+      UPDATE recurring_rules
+      SET
+        title = ?,
+        notes = ?,
+        priority = ?,
+        goal_id = ?,
+        frequency = ?,
+        start_date = ?,
+        end_date = ?,
+        weekdays = ?
+      WHERE id = ?;
+      `,
+      [
+        title,
+        notes,
+        priority,
+        goalId,
+        frequency,
+        effectiveDate,
+        endDate,
+        JSON.stringify(weekdays),
+        task.recurring_rule_id,
+      ]
+    );
+
+    if (updateRuleResult.changes !== 1) {
+      throw new Error(
+        'The recurring schedule changed before it could be updated.'
+      );
+    }
+
+    /*
+     * Keep the selected task in place. Its due date and Inbox/scheduled state
+     * are user choices and should not be reset by a series edit.
+     */
+    const updateTaskResult = await db.runAsync(
+      `
+      UPDATE tasks
+      SET
+        title = ?,
+        notes = ?,
+        priority = ?,
+        goal_id = ?
+      WHERE id = ?
+        AND completed = 0
+        AND recurring_rule_id = ?
+        AND recurrence_occurrence_date = ?;
+      `,
+      [
+        title,
+        notes,
+        priority,
+        goalId,
+        taskId,
+        task.recurring_rule_id,
+        effectiveDate,
+      ]
+    );
+
+    if (updateTaskResult.changes !== 1) {
+      throw new Error(
+        'The selected occurrence changed before it could be updated.'
+      );
+    }
+
+    /*
+     * Only later unfinished occurrences are rebuilt. Earlier unfinished
+     * tasks and all completed History entries remain exactly as they were.
+     */
+    await db.runAsync(
+      `
+      DELETE FROM tasks
+      WHERE recurring_rule_id = ?
+        AND completed = 0
+        AND recurrence_occurrence_date > ?;
+      `,
+      [task.recurring_rule_id, effectiveDate]
     );
   });
 
