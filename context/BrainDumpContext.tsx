@@ -7,8 +7,10 @@ import React, {
   useState,
 } from 'react';
 
+import { useTasks } from '@/context/TaskContext';
 import {
   archiveBrainDumpById,
+  convertBrainDumpToTaskById,
   deleteBrainDumpById,
   getBrainDumps,
   insertBrainDump,
@@ -26,6 +28,7 @@ type BrainDumpContextValue = {
   archiveBrainDump: (id: number) => Promise<void>;
   restoreBrainDump: (id: number) => Promise<void>;
   deleteBrainDump: (id: number) => Promise<void>;
+  turnBrainDumpIntoTask: (id: number) => Promise<void>;
   getActiveBrainDumps: () => BrainDump[];
   getArchivedBrainDumps: () => BrainDump[];
 };
@@ -39,6 +42,7 @@ export function BrainDumpProvider({
 }) {
   const [brainDumps, setBrainDumps] = useState<BrainDump[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const { refreshTasks } = useTasks();
 
   const refreshBrainDumps = useCallback(async () => {
     setIsLoading(true);
@@ -116,6 +120,31 @@ export function BrainDumpProvider({
     }
   }, []);
 
+  const turnBrainDumpIntoTask = useCallback(
+    async (id: number) => {
+      try {
+        /*
+         * The storage layer creates the task and removes the note in one
+         * transaction. Refreshing TaskContext afterward makes the new Inbox
+         * task appear everywhere without risking a duplicate note/task pair.
+         */
+        await convertBrainDumpToTaskById(id);
+        await refreshTasks();
+
+        setBrainDumps((currentBrainDumps) =>
+          currentBrainDumps.filter((brainDump) => brainDump.id !== id)
+        );
+      } catch (error) {
+        console.error(
+          'Failed to turn brain dump into task:',
+          error
+        );
+        throw error;
+      }
+    },
+    [refreshTasks]
+  );
+
   const getActiveBrainDumps = useCallback(() => {
     return brainDumps.filter((brainDump) => !brainDump.archived);
   }, [brainDumps]);
@@ -133,6 +162,7 @@ export function BrainDumpProvider({
       archiveBrainDump,
       restoreBrainDump,
       deleteBrainDump,
+      turnBrainDumpIntoTask,
       getActiveBrainDumps,
       getArchivedBrainDumps,
     }),
@@ -144,6 +174,7 @@ export function BrainDumpProvider({
       archiveBrainDump,
       restoreBrainDump,
       deleteBrainDump,
+      turnBrainDumpIntoTask,
       getActiveBrainDumps,
       getArchivedBrainDumps,
     ]

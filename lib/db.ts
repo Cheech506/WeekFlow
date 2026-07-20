@@ -15,6 +15,245 @@ type DuplicateRecurringOccurrenceTask = {
   completed: number;
 };
 
+/**
+ * Removes broken references that may exist in older databases or data that was
+ * created before WeekFlow started validating relationships consistently.
+ *
+ * The repair is intentionally conservative:
+ * - Missing goals are unlinked instead of deleting tasks or recurring rules.
+ * - Broken recurring identities are detached and become standalone tasks.
+ * - Exceptions for missing schedules are removed because they cannot affect
+ *   generation without the schedule they belonged to.
+ */
+async function repairOrphanedRelationships(
+  db: SQLite.SQLiteDatabase
+) {
+  await db.runAsync(`
+    UPDATE tasks
+    SET goal_id = NULL
+    WHERE goal_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1
+        FROM goals
+        WHERE goals.id = tasks.goal_id
+      );
+  `);
+
+  await db.runAsync(`
+    UPDATE recurring_rules
+    SET goal_id = NULL
+    WHERE goal_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1
+        FROM goals
+        WHERE goals.id = recurring_rules.goal_id
+      );
+  `);
+
+  await db.runAsync(`
+    UPDATE tasks
+    SET recurring_rule_id = NULL,
+        recurrence_occurrence_date = NULL
+    WHERE
+      (
+        recurring_rule_id IS NULL
+        AND recurrence_occurrence_date IS NOT NULL
+      )
+      OR
+      (
+        recurring_rule_id IS NOT NULL
+        AND recurrence_occurrence_date IS NULL
+      )
+      OR
+      (
+        recurring_rule_id IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1
+          FROM recurring_rules
+          WHERE recurring_rules.id = tasks.recurring_rule_id
+        )
+      );
+  `);
+
+  await db.runAsync(`
+    DELETE FROM recurring_occurrence_exceptions
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM recurring_rules
+      WHERE recurring_rules.id =
+        recurring_occurrence_exceptions.recurring_rule_id
+    );
+  `);
+}
+
+/**
+ * Adds lightweight SQLite triggers that act like foreign-key guardrails.
+ *
+ * The existing WeekFlow tables predate SQL foreign-key declarations, so these
+ * triggers protect every write without rebuilding the user's database. The
+ * storage functions still perform their own transaction logic; the triggers
+ * are the final safety net for restores, older code, and direct database writes.
+ */
+async function createRelationshipTriggers(
+  db: SQLite.SQLiteDatabase
+) {
+  await db.execAsync(`
+    CREATE TRIGGER IF NOT EXISTS
+      trg_tasks_goal_exists_insert
+    BEFORE INSERT ON tasks
+    WHEN NEW.goal_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM goals WHERE id = NEW.goal_id
+      )
+    BEGIN
+      SELECT RAISE(ABORT, 'Task goal does not exist.');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS
+      trg_tasks_goal_exists_update
+    BEFORE UPDATE OF goal_id ON tasks
+    WHEN NEW.goal_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM goals WHERE id = NEW.goal_id
+      )
+    BEGIN
+      SELECT RAISE(ABORT, 'Task goal does not exist.');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS
+      trg_rules_goal_exists_insert
+    BEFORE INSERT ON recurring_rules
+    WHEN NEW.goal_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM goals WHERE id = NEW.goal_id
+      )
+    BEGIN
+      SELECT RAISE(ABORT, 'Recurring rule goal does not exist.');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS
+      trg_rules_goal_exists_update
+    BEFORE UPDATE OF goal_id ON recurring_rules
+    WHEN NEW.goal_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM goals WHERE id = NEW.goal_id
+      )
+    BEGIN
+      SELECT RAISE(ABORT, 'Recurring rule goal does not exist.');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS
+      trg_tasks_recurring_identity_insert
+    BEFORE INSERT ON tasks
+    WHEN
+      (
+        NEW.recurring_rule_id IS NULL
+        AND NEW.recurrence_occurrence_date IS NOT NULL
+      )
+      OR
+      (
+        NEW.recurring_rule_id IS NOT NULL
+        AND NEW.recurrence_occurrence_date IS NULL
+      )
+      OR
+      (
+        NEW.recurring_rule_id IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1
+          FROM recurring_rules
+          WHERE id = NEW.recurring_rule_id
+        )
+      )
+    BEGIN
+      SELECT RAISE(ABORT, 'Recurring task identity is invalid.');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS
+      trg_tasks_recurring_identity_update
+    BEFORE UPDATE OF
+      recurring_rule_id,
+      recurrence_occurrence_date
+    ON tasks
+    WHEN
+      (
+        NEW.recurring_rule_id IS NULL
+        AND NEW.recurrence_occurrence_date IS NOT NULL
+      )
+      OR
+      (
+        NEW.recurring_rule_id IS NOT NULL
+        AND NEW.recurrence_occurrence_date IS NULL
+      )
+      OR
+      (
+        NEW.recurring_rule_id IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1
+          FROM recurring_rules
+          WHERE id = NEW.recurring_rule_id
+        )
+      )
+    BEGIN
+      SELECT RAISE(ABORT, 'Recurring task identity is invalid.');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS
+      trg_exceptions_rule_exists_insert
+    BEFORE INSERT ON recurring_occurrence_exceptions
+    WHEN NOT EXISTS (
+      SELECT 1
+      FROM recurring_rules
+      WHERE id = NEW.recurring_rule_id
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'Recurring exception rule does not exist.');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS
+      trg_exceptions_rule_exists_update
+    BEFORE UPDATE OF recurring_rule_id
+    ON recurring_occurrence_exceptions
+    WHEN NOT EXISTS (
+      SELECT 1
+      FROM recurring_rules
+      WHERE id = NEW.recurring_rule_id
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'Recurring exception rule does not exist.');
+    END;
+
+    /*
+     * These cleanup triggers mirror the app's normal delete workflows. They
+     * protect the database even when a row is removed outside those workflows.
+     */
+    CREATE TRIGGER IF NOT EXISTS
+      trg_goals_cleanup_after_delete
+    AFTER DELETE ON goals
+    BEGIN
+      UPDATE tasks
+      SET goal_id = NULL
+      WHERE goal_id = OLD.id;
+
+      UPDATE recurring_rules
+      SET goal_id = NULL
+      WHERE goal_id = OLD.id;
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS
+      trg_rules_cleanup_after_delete
+    AFTER DELETE ON recurring_rules
+    BEGIN
+      UPDATE tasks
+      SET recurring_rule_id = NULL,
+          recurrence_occurrence_date = NULL
+      WHERE recurring_rule_id = OLD.id;
+
+      DELETE FROM recurring_occurrence_exceptions
+      WHERE recurring_rule_id = OLD.id;
+    END;
+  `);
+}
+
 export async function getDb() {
   if (!dbPromise) {
     dbPromise = SQLite.openDatabaseAsync('weekflow.db');
@@ -233,6 +472,13 @@ async function runMigrations() {
   );
 
   /*
+   * Repair broken links before adding database guardrails. This keeps every
+   * user-created task and recurring rule while removing references to records
+   * that no longer exist.
+   */
+  await repairOrphanedRelationships(db);
+
+  /*
    * Older databases or manually restored data may contain duplicate recurring
    * identities from before the unique index existed. Repair those rows without
    * deleting tasks so the index can always be created safely.
@@ -259,6 +505,7 @@ async function runMigrations() {
     ON recurring_rules (active);
   `);
 
+  await createRelationshipTriggers(db);
   await backfillLegacyTaskDueDates(db);
 }
 

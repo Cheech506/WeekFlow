@@ -377,6 +377,32 @@ describe('recurring storage integration', () => {
 
     const db = await getDb();
 
+    /*
+     * Referential-integrity checks now require every stored goal ID to point
+     * to a real goal, so this test creates the goal it assigns to the rule.
+     */
+    await db.runAsync(
+      `
+      INSERT INTO goals (
+        id,
+        title,
+        completed,
+        created_at,
+        completed_at,
+        start_date,
+        end_date
+      )
+      VALUES (?, ?, 0, ?, NULL, ?, ?);
+      `,
+      [
+        77,
+        'Updated schedule goal',
+        '2026-07-20T09:00:00.000Z',
+        '2026-07-20T12:00:00.000Z',
+        '2026-10-12T12:00:00.000Z',
+      ]
+    );
+
     const firstOccurrence = await db.getFirstAsync<{
       id: number;
     }>(
@@ -655,6 +681,32 @@ describe('recurring storage integration', () => {
     });
 
     const db = await getDb();
+
+    /*
+     * Referential-integrity checks now require every stored goal ID to point
+     * to a real goal, so this test creates the goal it assigns to the rule.
+     */
+    await db.runAsync(
+      `
+      INSERT INTO goals (
+        id,
+        title,
+        completed,
+        created_at,
+        completed_at,
+        start_date,
+        end_date
+      )
+      VALUES (?, ?, 0, ?, NULL, ?, ?);
+      `,
+      [
+        88,
+        'Future schedule goal',
+        '2026-07-20T09:00:00.000Z',
+        '2026-07-20T12:00:00.000Z',
+        '2026-10-12T12:00:00.000Z',
+      ]
+    );
     const earlierTask = await db.getFirstAsync<{ id: number }>(
       `
       SELECT id

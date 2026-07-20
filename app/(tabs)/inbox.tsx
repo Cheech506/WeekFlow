@@ -285,6 +285,7 @@ export default function InboxScreen() {
     addBrainDump,
     archiveBrainDump,
     deleteBrainDump,
+    turnBrainDumpIntoTask,
     getActiveBrainDumps,
   } = useBrainDumps();
 
@@ -387,12 +388,8 @@ export default function InboxScreen() {
     setBrainDumpText('');
   }
 
-  async function handleTurnBrainDumpIntoTask(
-    id: number,
-    body: string
-  ) {
-    await addTask(body, 'Inbox');
-    await deleteBrainDump(id);
+  async function handleTurnBrainDumpIntoTask(id: number) {
+    await turnBrainDumpIntoTask(id);
   }
 
   function startEditingTask(task: Task) {
@@ -1745,8 +1742,7 @@ export default function InboxScreen() {
                     ]}
                     onPress={() =>
                       handleTurnBrainDumpIntoTask(
-                        brainDump.id,
-                        brainDump.body
+                        brainDump.id
                       )
                     }
                   >

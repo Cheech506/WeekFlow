@@ -217,4 +217,70 @@ describe('goal and brain dump storage integration', () => {
 
     expect(notes).toEqual([]);
   });
+
+  test('turns an active brain dump into one Inbox task atomically', async () => {
+    const brainStorage = await import(
+      '../../lib/brainDumpStorage'
+    );
+    const taskStorage = await import('../../lib/taskStorage');
+
+    const note = await brainStorage.insertBrainDump(
+      '  Convert this idea  '
+    );
+
+    await brainStorage.convertBrainDumpToTaskById(note.id);
+
+    const notes = await brainStorage.getBrainDumps();
+    const tasks = await taskStorage.getTasks();
+
+    expect(notes).toEqual([]);
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0]).toMatchObject({
+      title: 'Convert this idea',
+      day: 'Inbox',
+      dueDate: null,
+      notes: null,
+      priority: 0,
+      goalId: null,
+      completed: false,
+      recurringRuleId: null,
+      recurrenceOccurrenceDate: null,
+    });
+  });
+
+  test('keeps the brain dump when task creation fails during conversion', async () => {
+    const { getDb, migrateDb } = await import('../../lib/db');
+    const brainStorage = await import(
+      '../../lib/brainDumpStorage'
+    );
+    const taskStorage = await import('../../lib/taskStorage');
+
+    const note = await brainStorage.insertBrainDump(
+      'Force brain conversion rollback'
+    );
+
+    await migrateDb();
+    const db = await getDb();
+
+    await db.execAsync(`
+      CREATE TRIGGER fail_brain_dump_conversion
+      BEFORE INSERT ON tasks
+      WHEN NEW.title = 'Force brain conversion rollback'
+      BEGIN
+        SELECT RAISE(ABORT, 'forced conversion rollback');
+      END;
+    `);
+
+    await expect(
+      brainStorage.convertBrainDumpToTaskById(note.id)
+    ).rejects.toThrow('forced conversion rollback');
+
+    const notes = await brainStorage.getBrainDumps();
+    const tasks = await taskStorage.getTasks();
+
+    expect(notes).toHaveLength(1);
+    expect(notes[0].body).toBe('Force brain conversion rollback');
+    expect(tasks).toEqual([]);
+  });
+
 });
