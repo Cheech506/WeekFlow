@@ -35,9 +35,13 @@ export type RecurringOccurrenceException = {
   createdAt: string;
 };
 
+export const DELETE_RECURRING_RULE_MODES = [
+  'stopOnly',
+  'deleteUnfinished',
+] as const;
+
 export type DeleteRecurringRuleMode =
-  | 'stopOnly'
-  | 'deleteUnfinished';
+  (typeof DELETE_RECURRING_RULE_MODES)[number];
 
 export type CreateRecurringRuleInput = {
   title: string;
@@ -85,6 +89,13 @@ function isRecurrenceFrequency(
   );
 }
 
+function isDeleteRecurringRuleMode(
+  value: string
+): value is DeleteRecurringRuleMode {
+  return DELETE_RECURRING_RULE_MODES.includes(
+    value as DeleteRecurringRuleMode
+  );
+}
 
 function parseStoredWeekdays(value: string) {
   try {
@@ -806,7 +817,7 @@ export async function setRecurringRuleActive(
   await migrateDb();
   const db = await getDb();
 
-  await db.runAsync(
+  const updateResult = await db.runAsync(
     `
     UPDATE recurring_rules
     SET active = ?
@@ -814,6 +825,12 @@ export async function setRecurringRuleActive(
     `,
     [active ? 1 : 0, id]
   );
+
+  if (updateResult.changes !== 1) {
+    throw new Error(
+      'The recurring schedule could not be found.'
+    );
+  }
 
   if (active) {
     await ensureRecurringOccurrences();
@@ -838,10 +855,33 @@ export async function deleteRecurringRuleById(
   id: number,
   mode: DeleteRecurringRuleMode
 ): Promise<void> {
+  if (!isDeleteRecurringRuleMode(mode)) {
+    throw new Error(
+      'Recurring schedule delete option is invalid.'
+    );
+  }
+
   await migrateDb();
   const db = await getDb();
 
   await db.withTransactionAsync(async () => {
+    const existingRule = await db.getFirstAsync<{
+      id: number;
+    }>(
+      `
+      SELECT id
+      FROM recurring_rules
+      WHERE id = ?;
+      `,
+      [id]
+    );
+
+    if (!existingRule) {
+      throw new Error(
+        'The recurring schedule could not be found.'
+      );
+    }
+
     if (mode === 'deleteUnfinished') {
       await db.runAsync(
         `
@@ -876,12 +916,18 @@ export async function deleteRecurringRuleById(
       [id]
     );
 
-    await db.runAsync(
+    const deleteResult = await db.runAsync(
       `
       DELETE FROM recurring_rules
       WHERE id = ?;
       `,
       [id]
     );
+
+    if (deleteResult.changes !== 1) {
+      throw new Error(
+        'The recurring schedule changed before it could be deleted.'
+      );
+    }
   });
 }

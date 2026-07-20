@@ -1048,4 +1048,253 @@ describe('recurring storage integration', () => {
     });
   });
 
+
+  test('does not regenerate a recurring occurrence moved back to Inbox', async () => {
+    const recurringStorage = await import(
+      '../../lib/recurringStorage'
+    );
+    const taskStorage = await import('../../lib/taskStorage');
+    const { getDb } = await import('../../lib/db');
+    const { getLocalDateKey } = await import(
+      '../../lib/dateUtils'
+    );
+
+    const today = getLocalDateKey(new Date());
+    const rule = await recurringStorage.insertRecurringRule({
+      title: 'Move-safe recurring task',
+      frequency: 'daily',
+      startDate: today,
+    });
+
+    const db = await getDb();
+    const occurrence = await db.getFirstAsync<{ id: number }>(
+      `
+      SELECT id
+      FROM tasks
+      WHERE recurring_rule_id = ?
+        AND recurrence_occurrence_date = ?;
+      `,
+      [rule.id, today]
+    );
+
+    expect(occurrence).not.toBeNull();
+
+    await taskStorage.moveTaskToInboxById(occurrence!.id);
+    await recurringStorage.ensureRecurringOccurrences();
+
+    const rows = await db.getAllAsync<{
+      id: number;
+      day: string;
+      due_date: string | null;
+    }>(
+      `
+      SELECT id, day, due_date
+      FROM tasks
+      WHERE recurring_rule_id = ?
+        AND recurrence_occurrence_date = ?;
+      `,
+      [rule.id, today]
+    );
+
+    expect(rows).toEqual([
+      {
+        id: occurrence!.id,
+        day: 'Inbox',
+        due_date: null,
+      },
+    ]);
+  });
+
+  test('does not regenerate a deleted recurring occurrence', async () => {
+    const recurringStorage = await import(
+      '../../lib/recurringStorage'
+    );
+    const taskStorage = await import('../../lib/taskStorage');
+    const { getDb } = await import('../../lib/db');
+    const { getLocalDateKey } = await import(
+      '../../lib/dateUtils'
+    );
+
+    const today = getLocalDateKey(new Date());
+    const rule = await recurringStorage.insertRecurringRule({
+      title: 'Delete-safe recurring task',
+      frequency: 'daily',
+      startDate: today,
+    });
+
+    const db = await getDb();
+    const occurrence = await db.getFirstAsync<{ id: number }>(
+      `
+      SELECT id
+      FROM tasks
+      WHERE recurring_rule_id = ?
+        AND recurrence_occurrence_date = ?;
+      `,
+      [rule.id, today]
+    );
+
+    expect(occurrence).not.toBeNull();
+
+    await taskStorage.deleteTaskById(occurrence!.id);
+    await recurringStorage.ensureRecurringOccurrences();
+    await recurringStorage.ensureRecurringOccurrences();
+
+    const remainingCount = await db.getFirstAsync<{
+      count: number;
+    }>(
+      `
+      SELECT COUNT(*) AS count
+      FROM tasks
+      WHERE recurring_rule_id = ?
+        AND recurrence_occurrence_date = ?;
+      `,
+      [rule.id, today]
+    );
+
+    const exceptionCount = await db.getFirstAsync<{
+      count: number;
+    }>(
+      `
+      SELECT COUNT(*) AS count
+      FROM recurring_occurrence_exceptions
+      WHERE recurring_rule_id = ?
+        AND occurrence_date = ?;
+      `,
+      [rule.id, today]
+    );
+
+    expect(remainingCount?.count).toBe(0);
+    expect(exceptionCount?.count).toBe(1);
+  });
+
+  test('does not duplicate a completed recurring occurrence', async () => {
+    const recurringStorage = await import(
+      '../../lib/recurringStorage'
+    );
+    const taskStorage = await import('../../lib/taskStorage');
+    const { getDb } = await import('../../lib/db');
+    const { getLocalDateKey } = await import(
+      '../../lib/dateUtils'
+    );
+
+    const today = getLocalDateKey(new Date());
+    const rule = await recurringStorage.insertRecurringRule({
+      title: 'Completed recurring task',
+      frequency: 'daily',
+      startDate: today,
+    });
+
+    const db = await getDb();
+    const occurrence = await db.getFirstAsync<{ id: number }>(
+      `
+      SELECT id
+      FROM tasks
+      WHERE recurring_rule_id = ?
+        AND recurrence_occurrence_date = ?;
+      `,
+      [rule.id, today]
+    );
+
+    expect(occurrence).not.toBeNull();
+
+    await taskStorage.completeTaskById(occurrence!.id);
+    await recurringStorage.ensureRecurringOccurrences();
+
+    const rows = await db.getAllAsync<{
+      id: number;
+      completed: number;
+    }>(
+      `
+      SELECT id, completed
+      FROM tasks
+      WHERE recurring_rule_id = ?
+        AND recurrence_occurrence_date = ?;
+      `,
+      [rule.id, today]
+    );
+
+    expect(rows).toEqual([
+      {
+        id: occurrence!.id,
+        completed: 1,
+      },
+    ]);
+  });
+
+  test('rejects an invalid recurring delete option without changing data', async () => {
+    const recurringStorage = await import(
+      '../../lib/recurringStorage'
+    );
+    const { getDb } = await import('../../lib/db');
+    const { getLocalDateKey } = await import(
+      '../../lib/dateUtils'
+    );
+
+    const rule = await recurringStorage.insertRecurringRule({
+      title: 'Keep this recurring schedule',
+      frequency: 'daily',
+      startDate: getLocalDateKey(new Date()),
+    });
+
+    const db = await getDb();
+    const beforeTaskCount = await db.getFirstAsync<{
+      count: number;
+    }>(
+      `
+      SELECT COUNT(*) AS count
+      FROM tasks
+      WHERE recurring_rule_id = ?;
+      `,
+      [rule.id]
+    );
+
+    await expect(
+      recurringStorage.deleteRecurringRuleById(
+        rule.id,
+        'invalid-mode' as never
+      )
+    ).rejects.toThrow(
+      'Recurring schedule delete option is invalid.'
+    );
+
+    const remainingRule = await db.getFirstAsync<{ id: number }>(
+      'SELECT id FROM recurring_rules WHERE id = ?;',
+      [rule.id]
+    );
+    const afterTaskCount = await db.getFirstAsync<{
+      count: number;
+    }>(
+      `
+      SELECT COUNT(*) AS count
+      FROM tasks
+      WHERE recurring_rule_id = ?;
+      `,
+      [rule.id]
+    );
+
+    expect(remainingRule).toEqual({ id: rule.id });
+    expect(afterTaskCount?.count).toBe(beforeTaskCount?.count);
+  });
+
+  test('reports missing recurring schedules instead of silently succeeding', async () => {
+    const recurringStorage = await import(
+      '../../lib/recurringStorage'
+    );
+
+    await expect(
+      recurringStorage.setRecurringRuleActive(999999, false)
+    ).rejects.toThrow(
+      'The recurring schedule could not be found.'
+    );
+
+    await expect(
+      recurringStorage.deleteRecurringRuleById(
+        999999,
+        'stopOnly'
+      )
+    ).rejects.toThrow(
+      'The recurring schedule could not be found.'
+    );
+  });
+
 });

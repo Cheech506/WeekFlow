@@ -5,6 +5,16 @@ import { getNextOccurrenceDateKey } from './dateUtils';
 let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
 let migrationPromise: Promise<void> | null = null;
 
+type DuplicateRecurringOccurrenceGroup = {
+  recurring_rule_id: number;
+  recurrence_occurrence_date: string;
+};
+
+type DuplicateRecurringOccurrenceTask = {
+  id: number;
+  completed: number;
+};
+
 export async function getDb() {
   if (!dbPromise) {
     dbPromise = SQLite.openDatabaseAsync('weekflow.db');
@@ -72,6 +82,62 @@ async function backfillLegacyTaskDueDates(
       `,
       [dueDate, task.id]
     );
+  }
+}
+
+/**
+ * Repairs legacy duplicate recurring identities before the unique index is
+ * created.
+ *
+ * Every task row is preserved. One task keeps the recurring identity, while
+ * the extra rows are detached and become normal standalone tasks. Completed
+ * History is preferred as the canonical row because a completed occurrence
+ * should continue to block that same schedule/date from being generated again.
+ */
+async function repairDuplicateRecurringOccurrenceIdentities(
+  db: SQLite.SQLiteDatabase
+) {
+  const duplicateGroups =
+    await db.getAllAsync<DuplicateRecurringOccurrenceGroup>(`
+      SELECT
+        recurring_rule_id,
+        recurrence_occurrence_date
+      FROM tasks
+      WHERE recurring_rule_id IS NOT NULL
+        AND recurrence_occurrence_date IS NOT NULL
+      GROUP BY
+        recurring_rule_id,
+        recurrence_occurrence_date
+      HAVING COUNT(*) > 1;
+    `);
+
+  for (const group of duplicateGroups) {
+    const matchingTasks =
+      await db.getAllAsync<DuplicateRecurringOccurrenceTask>(
+        `
+        SELECT id, completed
+        FROM tasks
+        WHERE recurring_rule_id = ?
+          AND recurrence_occurrence_date = ?
+        ORDER BY completed DESC, id ASC;
+        `,
+        [
+          group.recurring_rule_id,
+          group.recurrence_occurrence_date,
+        ]
+      );
+
+    for (const duplicateTask of matchingTasks.slice(1)) {
+      await db.runAsync(
+        `
+        UPDATE tasks
+        SET recurring_rule_id = NULL,
+            recurrence_occurrence_date = NULL
+        WHERE id = ?;
+        `,
+        [duplicateTask.id]
+      );
+    }
   }
 }
 
@@ -165,6 +231,13 @@ async function runMigrations() {
     'archived_at',
     'TEXT'
   );
+
+  /*
+   * Older databases or manually restored data may contain duplicate recurring
+   * identities from before the unique index existed. Repair those rows without
+   * deleting tasks so the index can always be created safely.
+   */
+  await repairDuplicateRecurringOccurrenceIdentities(db);
 
   /*
    * occurrence_date is the generated occurrence's permanent identity.

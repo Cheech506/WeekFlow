@@ -173,7 +173,7 @@ export function getRecurringOccurrenceDateKeys(
   currentDate: Date = new Date(),
   horizonDays: number = 30
 ): string[] {
-  if (!rule.active) {
+  if (!rule.active || Number.isNaN(currentDate.getTime())) {
     return [];
   }
 
@@ -186,10 +186,18 @@ export function getRecurringOccurrenceDateKeys(
     return [];
   }
 
+  /*
+   * A generation window must always be finite. Flooring decimal values keeps
+   * the API predictable and protects the day-by-day loop from invalid input.
+   */
+  const safeHorizonDays = Number.isFinite(horizonDays)
+    ? Math.max(0, Math.floor(horizonDays))
+    : 0;
+
   const today = startOfLocalDay(currentDate);
   const horizonEnd = addDays(
     today,
-    Math.max(0, horizonDays)
+    safeHorizonDays
   );
 
   const generationStart =

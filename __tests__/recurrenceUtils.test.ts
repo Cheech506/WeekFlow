@@ -175,4 +175,39 @@ describe('recurrenceUtils', () => {
 
     expect(pausedDates).toEqual([]);
   });
+
+  test('uses a safe finite generation window for edge-case inputs', () => {
+    const rule = makeRecurringRule({
+      frequency: 'daily',
+      startDate: '2026-06-23',
+    });
+
+    expect(
+      getRecurringOccurrenceDateKeys(
+        rule,
+        new Date(2026, 5, 23, 12),
+        1.9
+      )
+    ).toEqual([
+      '2026-06-23',
+      '2026-06-24',
+    ]);
+
+    expect(
+      getRecurringOccurrenceDateKeys(
+        rule,
+        new Date(2026, 5, 23, 12),
+        Number.POSITIVE_INFINITY
+      )
+    ).toEqual(['2026-06-23']);
+
+    expect(
+      getRecurringOccurrenceDateKeys(
+        rule,
+        new Date(Number.NaN),
+        30
+      )
+    ).toEqual([]);
+  });
+
 });
