@@ -1,5 +1,8 @@
 import type { StoredBrainDump } from './brainDumpStorage';
-import { parseLocalDateKey } from './dateUtils';
+import {
+  DAY_NAMES,
+  parseLocalDateKey,
+} from './dateUtils';
 import type { StoredGoal } from './goalStorage';
 import { RECURRENCE_FREQUENCIES } from './recurrenceUtils';
 import type {
@@ -9,14 +12,28 @@ import type {
 import type { Task } from './taskStorage';
 
 export const BACKUP_FORMAT = 'weekflow-backup';
-export const BACKUP_VERSION = 2;
+export const BACKUP_VERSION = 3;
+export const BACKUP_DATA_MODEL_VERSION = 1;
+
+export type BackupCounts = {
+  tasks: number;
+  goals: number;
+  brainDumps: number;
+  recurringRules: number;
+  recurringExceptions: number;
+};
+
+export type BackupMetadata = {
+  appVersion: string;
+  dataModelVersion: typeof BACKUP_DATA_MODEL_VERSION;
+};
 
 type LegacyTask = Omit<
   Task,
   'recurringRuleId' | 'recurrenceOccurrenceDate'
 >;
 
-type LegacyWeekFlowBackup = {
+type LegacyWeekFlowBackupV1 = {
   format: typeof BACKUP_FORMAT;
   version: 1;
   exportedAt: string;
@@ -27,10 +44,18 @@ type LegacyWeekFlowBackup = {
   };
 };
 
+type LegacyWeekFlowBackupV2 = {
+  format: typeof BACKUP_FORMAT;
+  version: 2;
+  exportedAt: string;
+  data: WeekFlowBackup['data'];
+};
+
 export type WeekFlowBackup = {
   format: typeof BACKUP_FORMAT;
   version: typeof BACKUP_VERSION;
   exportedAt: string;
+  metadata: BackupMetadata;
   data: {
     tasks: Task[];
     goals: StoredGoal[];
@@ -40,23 +65,44 @@ export type WeekFlowBackup = {
   };
 };
 
-export type BackupCounts = {
-  tasks: number;
-  goals: number;
-  brainDumps: number;
-  recurringRules: number;
+export type BackupPreview = {
+  sourceVersion: 1 | 2 | typeof BACKUP_VERSION;
+  currentVersion: typeof BACKUP_VERSION;
+  exportedAt: string;
+  appVersion: string;
+  dataModelVersion: number;
+  counts: BackupCounts;
+};
+
+export type ParsedWeekFlowBackup = {
+  backup: WeekFlowBackup;
+  preview: BackupPreview;
 };
 
 export type PickedWeekFlowBackup = {
   fileName: string;
   backup: WeekFlowBackup;
-  counts: BackupCounts;
+  preview: BackupPreview;
 };
 
 export type ExportedWeekFlowBackup = {
   fileName: string;
-  counts: BackupCounts;
+  preview: BackupPreview;
 };
+
+export class BackupValidationError extends Error {
+  constructor(
+    public readonly code: string,
+    message: string
+  ) {
+    super(message);
+    this.name = 'BackupValidationError';
+  }
+}
+
+function fail(code: string, message: string): never {
+  throw new BackupValidationError(code, message);
+}
 
 function isRecord(
   value: unknown
@@ -78,8 +124,32 @@ function isNullableInteger(value: unknown) {
   return (
     value === null ||
     (typeof value === 'number' &&
-      Number.isInteger(value))
+      Number.isSafeInteger(value))
   );
+}
+
+function isPositiveInteger(value: unknown) {
+  return (
+    typeof value === 'number' &&
+    Number.isSafeInteger(value) &&
+    value > 0
+  );
+}
+
+function isIsoTimestamp(
+  value: unknown
+): value is string {
+  return (
+    typeof value === 'string' &&
+    value.includes('T') &&
+    Number.isFinite(Date.parse(value))
+  );
+}
+
+function isNullableIsoTimestamp(
+  value: unknown
+): value is string | null {
+  return value === null || isIsoTimestamp(value);
 }
 
 function isValidDateKey(
@@ -97,169 +167,438 @@ function isValidNullableDateKey(
   return value === null || isValidDateKey(value);
 }
 
-function isBaseTask(value: unknown): value is LegacyTask {
-  if (!isRecord(value)) {
-    return false;
-  }
-
+function isValidTaskDay(value: unknown) {
   return (
-    typeof value.id === 'number' &&
-    Number.isInteger(value.id) &&
-    typeof value.title === 'string' &&
-    typeof value.day === 'string' &&
-    isValidNullableDateKey(value.dueDate) &&
-    isNullableString(value.notes) &&
-    typeof value.priority === 'number' &&
-    Number.isInteger(value.priority) &&
-    value.priority >= 0 &&
-    value.priority <= 2 &&
-    isNullableInteger(value.goalId) &&
-    typeof value.completed === 'boolean' &&
-    typeof value.createdAt === 'string' &&
-    isNullableString(value.completedAt)
+    value === 'Inbox' ||
+    DAY_NAMES.includes(
+      value as (typeof DAY_NAMES)[number]
+    )
   );
 }
 
-function isTask(value: unknown): value is Task {
-  if (!isRecord(value) || !isBaseTask(value)) {
-    return false;
+function hasMatchingStatusTimestamp(
+  activeState: boolean,
+  timestamp: string | null
+) {
+  return activeState
+    ? timestamp !== null
+    : timestamp === null;
+}
+
+function validateBaseTask(
+  value: unknown,
+  label: string
+): asserts value is LegacyTask {
+  if (!isRecord(value)) {
+    fail('INVALID_TASK', `${label} is not an object.`);
   }
 
-  const record = value as Record<string, unknown>;
+  if (!isPositiveInteger(value.id)) {
+    fail('INVALID_TASK', `${label} has an invalid ID.`);
+  }
 
+  if (
+    typeof value.title !== 'string' ||
+    value.title.trim().length === 0
+  ) {
+    fail('INVALID_TASK', `${label} has an empty title.`);
+  }
+
+  if (!isValidTaskDay(value.day)) {
+    fail('INVALID_TASK', `${label} has an invalid day value.`);
+  }
+
+  if (!isValidNullableDateKey(value.dueDate)) {
+    fail('INVALID_TASK', `${label} has an invalid due date.`);
+  }
+
+  if (!isNullableString(value.notes)) {
+    fail('INVALID_TASK', `${label} has invalid notes.`);
+  }
+
+  if (
+    typeof value.priority !== 'number' ||
+    !Number.isInteger(value.priority) ||
+    value.priority < 0 ||
+    value.priority > 2
+  ) {
+    fail(
+      'INVALID_TASK',
+      `${label} has an invalid priority. Expected 0, 1, or 2.`
+    );
+  }
+
+  if (!isNullableInteger(value.goalId)) {
+    fail('INVALID_TASK', `${label} has an invalid goal link.`);
+  }
+
+  if (typeof value.completed !== 'boolean') {
+    fail('INVALID_TASK', `${label} has an invalid completed value.`);
+  }
+
+  if (!isIsoTimestamp(value.createdAt)) {
+    fail('INVALID_TASK', `${label} has an invalid created timestamp.`);
+  }
+
+  if (!isNullableIsoTimestamp(value.completedAt)) {
+    fail('INVALID_TASK', `${label} has an invalid completed timestamp.`);
+  }
+
+  if (
+    !hasMatchingStatusTimestamp(
+      value.completed,
+      value.completedAt
+    )
+  ) {
+    fail(
+      'INVALID_TASK',
+      `${label} has a completion status that does not match its completed timestamp.`
+    );
+  }
+}
+
+function validateTask(
+  value: unknown,
+  label: string
+): asserts value is Task {
+  validateBaseTask(value, label);
+
+  const record = value as unknown as Record<string, unknown>;
   const recurringRuleId = record.recurringRuleId;
-  const occurrenceDate =
-    record.recurrenceOccurrenceDate;
+  const occurrenceDate = record.recurrenceOccurrenceDate;
 
   const isNormalTask =
     recurringRuleId === null &&
     occurrenceDate === null;
 
   const isRecurringTask =
-    typeof recurringRuleId === 'number' &&
-    Number.isInteger(recurringRuleId) &&
+    isPositiveInteger(recurringRuleId) &&
     isValidDateKey(occurrenceDate);
 
-  return isNormalTask || isRecurringTask;
-}
-
-function isGoal(value: unknown): value is StoredGoal {
-  if (!isRecord(value)) {
-    return false;
-  }
-
-  return (
-    typeof value.id === 'number' &&
-    Number.isInteger(value.id) &&
-    typeof value.title === 'string' &&
-    typeof value.completed === 'boolean' &&
-    typeof value.createdAt === 'string' &&
-    isNullableString(value.completedAt) &&
-    typeof value.startDate === 'string' &&
-    typeof value.endDate === 'string'
-  );
-}
-
-function isBrainDump(
-  value: unknown
-): value is StoredBrainDump {
-  if (!isRecord(value)) {
-    return false;
-  }
-
-  return (
-    typeof value.id === 'number' &&
-    Number.isInteger(value.id) &&
-    typeof value.body === 'string' &&
-    typeof value.archived === 'boolean' &&
-    typeof value.createdAt === 'string' &&
-    isNullableString(value.archivedAt)
-  );
-}
-
-function isRecurringRule(
-  value: unknown
-): value is RecurringRule {
-  if (!isRecord(value)) {
-    return false;
-  }
-
-  const startDate = isValidDateKey(value.startDate)
-    ? parseLocalDateKey(value.startDate)
-    : null;
-
-  const endDate = isValidNullableDateKey(value.endDate)
-    ? value.endDate
-      ? parseLocalDateKey(value.endDate)
-      : null
-    : null;
-
-  const hasValidDateRange =
-    startDate !== null &&
-    (value.endDate === null ||
-      (endDate !== null && endDate >= startDate));
-
-  const hasValidWeekdays =
-    Array.isArray(value.weekdays) &&
-    value.weekdays.every(
-      (weekday) =>
-        typeof weekday === 'number' &&
-        Number.isInteger(weekday) &&
-        weekday >= 0 &&
-        weekday <= 6
+  if (!isNormalTask && !isRecurringTask) {
+    fail(
+      'INVALID_TASK',
+      `${label} has an incomplete or invalid recurring occurrence link.`
     );
-
-  const hasRequiredCertainDays =
-    value.frequency !== 'certainDays' ||
-    (Array.isArray(value.weekdays) &&
-      value.weekdays.length > 0);
-
-  return (
-    typeof value.id === 'number' &&
-    Number.isInteger(value.id) &&
-    typeof value.title === 'string' &&
-    value.title.trim().length > 0 &&
-    isNullableString(value.notes) &&
-    typeof value.priority === 'number' &&
-    Number.isInteger(value.priority) &&
-    value.priority >= 0 &&
-    value.priority <= 2 &&
-    isNullableInteger(value.goalId) &&
-    typeof value.frequency === 'string' &&
-    RECURRENCE_FREQUENCIES.includes(
-      value.frequency as RecurringRule['frequency']
-    ) &&
-    hasValidDateRange &&
-    hasValidWeekdays &&
-    hasRequiredCertainDays &&
-    typeof value.active === 'boolean' &&
-    typeof value.createdAt === 'string'
-  );
+  }
 }
 
-function isRecurringException(
-  value: unknown
-): value is RecurringOccurrenceException {
+function validateGoal(
+  value: unknown,
+  label: string
+): asserts value is StoredGoal {
   if (!isRecord(value)) {
-    return false;
+    fail('INVALID_GOAL', `${label} is not an object.`);
   }
 
-  return (
-    typeof value.recurringRuleId === 'number' &&
-    Number.isInteger(value.recurringRuleId) &&
-    isValidDateKey(value.occurrenceDate) &&
-    typeof value.createdAt === 'string'
-  );
+  if (!isPositiveInteger(value.id)) {
+    fail('INVALID_GOAL', `${label} has an invalid ID.`);
+  }
+
+  if (
+    typeof value.title !== 'string' ||
+    value.title.trim().length === 0
+  ) {
+    fail('INVALID_GOAL', `${label} has an empty title.`);
+  }
+
+  if (typeof value.completed !== 'boolean') {
+    fail('INVALID_GOAL', `${label} has an invalid completed value.`);
+  }
+
+  if (!isIsoTimestamp(value.createdAt)) {
+    fail('INVALID_GOAL', `${label} has an invalid created timestamp.`);
+  }
+
+  if (!isNullableIsoTimestamp(value.completedAt)) {
+    fail('INVALID_GOAL', `${label} has an invalid completed timestamp.`);
+  }
+
+  if (
+    !hasMatchingStatusTimestamp(
+      value.completed,
+      value.completedAt
+    )
+  ) {
+    fail(
+      'INVALID_GOAL',
+      `${label} has a completion status that does not match its completed timestamp.`
+    );
+  }
+
+  if (
+    !isIsoTimestamp(value.startDate) ||
+    !isIsoTimestamp(value.endDate)
+  ) {
+    fail('INVALID_GOAL', `${label} has invalid goal dates.`);
+  }
+
+  if (Date.parse(value.endDate) < Date.parse(value.startDate)) {
+    fail(
+      'INVALID_GOAL',
+      `${label} ends before its start date.`
+    );
+  }
 }
 
-function hasUniqueIds(items: { id: number }[]) {
-  return (
-    new Set(items.map((item) => item.id)).size ===
+function validateBrainDump(
+  value: unknown,
+  label: string
+): asserts value is StoredBrainDump {
+  if (!isRecord(value)) {
+    fail('INVALID_BRAIN_DUMP', `${label} is not an object.`);
+  }
+
+  if (!isPositiveInteger(value.id)) {
+    fail('INVALID_BRAIN_DUMP', `${label} has an invalid ID.`);
+  }
+
+  if (
+    typeof value.body !== 'string' ||
+    value.body.trim().length === 0
+  ) {
+    fail('INVALID_BRAIN_DUMP', `${label} is empty.`);
+  }
+
+  if (typeof value.archived !== 'boolean') {
+    fail('INVALID_BRAIN_DUMP', `${label} has an invalid archived value.`);
+  }
+
+  if (!isIsoTimestamp(value.createdAt)) {
+    fail(
+      'INVALID_BRAIN_DUMP',
+      `${label} has an invalid created timestamp.`
+    );
+  }
+
+  if (!isNullableIsoTimestamp(value.archivedAt)) {
+    fail(
+      'INVALID_BRAIN_DUMP',
+      `${label} has an invalid archived timestamp.`
+    );
+  }
+
+  if (
+    !hasMatchingStatusTimestamp(
+      value.archived,
+      value.archivedAt
+    )
+  ) {
+    fail(
+      'INVALID_BRAIN_DUMP',
+      `${label} has an archived status that does not match its archived timestamp.`
+    );
+  }
+}
+
+function validateRecurringRule(
+  value: unknown,
+  label: string
+): asserts value is RecurringRule {
+  if (!isRecord(value)) {
+    fail('INVALID_RECURRING_RULE', `${label} is not an object.`);
+  }
+
+  if (!isPositiveInteger(value.id)) {
+    fail('INVALID_RECURRING_RULE', `${label} has an invalid ID.`);
+  }
+
+  if (
+    typeof value.title !== 'string' ||
+    value.title.trim().length === 0
+  ) {
+    fail('INVALID_RECURRING_RULE', `${label} has an empty title.`);
+  }
+
+  if (!isNullableString(value.notes)) {
+    fail('INVALID_RECURRING_RULE', `${label} has invalid notes.`);
+  }
+
+  if (
+    typeof value.priority !== 'number' ||
+    !Number.isInteger(value.priority) ||
+    value.priority < 0 ||
+    value.priority > 2
+  ) {
+    fail(
+      'INVALID_RECURRING_RULE',
+      `${label} has an invalid priority. Expected 0, 1, or 2.`
+    );
+  }
+
+  if (!isNullableInteger(value.goalId)) {
+    fail(
+      'INVALID_RECURRING_RULE',
+      `${label} has an invalid goal link.`
+    );
+  }
+
+  if (
+    typeof value.frequency !== 'string' ||
+    !RECURRENCE_FREQUENCIES.includes(
+      value.frequency as RecurringRule['frequency']
+    )
+  ) {
+    fail(
+      'INVALID_RECURRING_RULE',
+      `${label} has an unsupported recurrence frequency.`
+    );
+  }
+
+  if (!isValidDateKey(value.startDate)) {
+    fail(
+      'INVALID_RECURRING_RULE',
+      `${label} has an invalid start date.`
+    );
+  }
+
+  if (!isValidNullableDateKey(value.endDate)) {
+    fail(
+      'INVALID_RECURRING_RULE',
+      `${label} has an invalid end date.`
+    );
+  }
+
+  if (
+    value.endDate !== null &&
+    value.endDate < value.startDate
+  ) {
+    fail(
+      'INVALID_RECURRING_RULE',
+      `${label} ends before its start date.`
+    );
+  }
+
+  if (
+    !Array.isArray(value.weekdays) ||
+    value.weekdays.some(
+      (weekday) =>
+        typeof weekday !== 'number' ||
+        !Number.isInteger(weekday) ||
+        weekday < 0 ||
+        weekday > 6
+    )
+  ) {
+    fail(
+      'INVALID_RECURRING_RULE',
+      `${label} contains an invalid weekday.`
+    );
+  }
+
+  if (
+    new Set(value.weekdays).size !==
+    value.weekdays.length
+  ) {
+    fail(
+      'INVALID_RECURRING_RULE',
+      `${label} contains duplicate weekdays.`
+    );
+  }
+
+  if (
+    value.frequency === 'certainDays' &&
+    value.weekdays.length === 0
+  ) {
+    fail(
+      'INVALID_RECURRING_RULE',
+      `${label} must select at least one weekday.`
+    );
+  }
+
+  if (typeof value.active !== 'boolean') {
+    fail(
+      'INVALID_RECURRING_RULE',
+      `${label} has an invalid active value.`
+    );
+  }
+
+  if (!isIsoTimestamp(value.createdAt)) {
+    fail(
+      'INVALID_RECURRING_RULE',
+      `${label} has an invalid created timestamp.`
+    );
+  }
+}
+
+function validateRecurringException(
+  value: unknown,
+  label: string
+): asserts value is RecurringOccurrenceException {
+  if (!isRecord(value)) {
+    fail('INVALID_EXCEPTION', `${label} is not an object.`);
+  }
+
+  if (!isPositiveInteger(value.recurringRuleId)) {
+    fail(
+      'INVALID_EXCEPTION',
+      `${label} has an invalid recurring schedule link.`
+    );
+  }
+
+  if (!isValidDateKey(value.occurrenceDate)) {
+    fail(
+      'INVALID_EXCEPTION',
+      `${label} has an invalid occurrence date.`
+    );
+  }
+
+  if (!isIsoTimestamp(value.createdAt)) {
+    fail(
+      'INVALID_EXCEPTION',
+      `${label} has an invalid created timestamp.`
+    );
+  }
+}
+
+function validateMetadata(
+  value: unknown
+): asserts value is BackupMetadata {
+  if (!isRecord(value)) {
+    fail(
+      'INVALID_METADATA',
+      'The backup is missing its metadata section.'
+    );
+  }
+
+  if (
+    typeof value.appVersion !== 'string' ||
+    value.appVersion.trim().length === 0
+  ) {
+    fail(
+      'INVALID_METADATA',
+      'The backup metadata has an invalid app version.'
+    );
+  }
+
+  if (
+    value.dataModelVersion !==
+    BACKUP_DATA_MODEL_VERSION
+  ) {
+    fail(
+      'UNSUPPORTED_DATA_MODEL',
+      `This backup uses data model version ${String(
+        value.dataModelVersion
+      )}, but this copy of WeekFlow supports version ${BACKUP_DATA_MODEL_VERSION}.`
+    );
+  }
+}
+
+function assertUniqueIds(
+  items: { id: number }[],
+  label: string
+) {
+  if (
+    new Set(items.map((item) => item.id)).size !==
     items.length
-  );
+  ) {
+    fail(
+      'DUPLICATE_IDS',
+      `The backup contains duplicate ${label} IDs.`
+    );
+  }
 }
 
-function hasUniqueRecurringOccurrences(
+function validateUniqueRecurringOccurrences(
   tasks: Task[]
 ) {
   const keys = tasks
@@ -273,10 +612,15 @@ function hasUniqueRecurringOccurrences(
         `${task.recurringRuleId}:${task.recurrenceOccurrenceDate}`
     );
 
-  return new Set(keys).size === keys.length;
+  if (new Set(keys).size !== keys.length) {
+    fail(
+      'DUPLICATE_OCCURRENCES',
+      'The backup contains duplicate recurring task occurrences.'
+    );
+  }
 }
 
-function hasUniqueExceptions(
+function validateUniqueExceptions(
   exceptions: RecurringOccurrenceException[]
 ) {
   const keys = exceptions.map(
@@ -284,7 +628,12 @@ function hasUniqueExceptions(
       `${exception.recurringRuleId}:${exception.occurrenceDate}`
   );
 
-  return new Set(keys).size === keys.length;
+  if (new Set(keys).size !== keys.length) {
+    fail(
+      'DUPLICATE_EXCEPTIONS',
+      'The backup contains duplicate recurring exceptions.'
+    );
+  }
 }
 
 function validateRelationships(
@@ -300,65 +649,141 @@ function validateRelationships(
     )
   );
 
-  if (
-    backup.data.tasks.some(
+  const taskWithMissingGoal =
+    backup.data.tasks.find(
       (task) =>
         task.goalId !== null &&
         !goalIds.has(task.goalId)
-    )
-  ) {
-    throw new Error(
-      'The backup contains a task linked to a missing goal.'
+    );
+
+  if (taskWithMissingGoal) {
+    fail(
+      'MISSING_GOAL',
+      `Task "${taskWithMissingGoal.title}" is linked to a goal that is not included in the backup.`
     );
   }
 
-  if (
-    backup.data.recurringRules.some(
+  const ruleWithMissingGoal =
+    backup.data.recurringRules.find(
       (rule) =>
         rule.goalId !== null &&
         !goalIds.has(rule.goalId)
-    )
-  ) {
-    throw new Error(
-      'The backup contains a recurring rule linked to a missing goal.'
+    );
+
+  if (ruleWithMissingGoal) {
+    fail(
+      'MISSING_GOAL',
+      `Recurring schedule "${ruleWithMissingGoal.title}" is linked to a goal that is not included in the backup.`
     );
   }
 
-  if (
-    backup.data.tasks.some(
+  const taskWithMissingRule =
+    backup.data.tasks.find(
       (task) =>
         task.recurringRuleId !== null &&
-        !recurringRuleIds.has(
-          task.recurringRuleId
-        )
-    )
-  ) {
-    throw new Error(
-      'The backup contains a task linked to a missing recurring rule.'
+        !recurringRuleIds.has(task.recurringRuleId)
+    );
+
+  if (taskWithMissingRule) {
+    fail(
+      'MISSING_RECURRING_RULE',
+      `Task "${taskWithMissingRule.title}" is linked to a recurring schedule that is not included in the backup.`
     );
   }
 
-  if (
-    backup.data.recurringExceptions.some(
+  const exceptionWithMissingRule =
+    backup.data.recurringExceptions.find(
       (exception) =>
         !recurringRuleIds.has(
           exception.recurringRuleId
         )
-    )
-  ) {
-    throw new Error(
-      'The backup contains an exception linked to a missing recurring rule.'
+    );
+
+  if (exceptionWithMissingRule) {
+    fail(
+      'MISSING_RECURRING_RULE',
+      `The skipped occurrence on ${exceptionWithMissingRule.occurrenceDate} is linked to a recurring schedule that is not included in the backup.`
     );
   }
 }
 
-function normalizeLegacyBackup(
-  backup: LegacyWeekFlowBackup
+function validateData(
+  value: Record<string, unknown>
+): WeekFlowBackup['data'] {
+  const requiredArrays = [
+    'tasks',
+    'goals',
+    'brainDumps',
+    'recurringRules',
+    'recurringExceptions',
+  ] as const;
+
+  for (const field of requiredArrays) {
+    if (!Array.isArray(value[field])) {
+      fail(
+        'MISSING_SECTION',
+        `The backup is missing the ${field} list.`
+      );
+    }
+  }
+
+  const tasks = value.tasks as unknown[];
+  const goals = value.goals as unknown[];
+  const brainDumps = value.brainDumps as unknown[];
+  const recurringRules = value.recurringRules as unknown[];
+  const recurringExceptions =
+    value.recurringExceptions as unknown[];
+
+  tasks.forEach((task, index) =>
+    validateTask(task, `Task ${index + 1}`)
+  );
+
+  goals.forEach((goal, index) =>
+    validateGoal(goal, `Goal ${index + 1}`)
+  );
+
+  brainDumps.forEach((brainDump, index) =>
+    validateBrainDump(
+      brainDump,
+      `Brain Dump ${index + 1}`
+    )
+  );
+
+  recurringRules.forEach((rule, index) =>
+    validateRecurringRule(
+      rule,
+      `Recurring schedule ${index + 1}`
+    )
+  );
+
+  recurringExceptions.forEach((exception, index) =>
+    validateRecurringException(
+      exception,
+      `Recurring exception ${index + 1}`
+    )
+  );
+
+  return {
+    tasks: tasks as Task[],
+    goals: goals as StoredGoal[],
+    brainDumps: brainDumps as StoredBrainDump[],
+    recurringRules: recurringRules as RecurringRule[],
+    recurringExceptions:
+      recurringExceptions as RecurringOccurrenceException[],
+  };
+}
+
+function normalizeLegacyBackupV1(
+  backup: LegacyWeekFlowBackupV1
 ): WeekFlowBackup {
   return {
     format: BACKUP_FORMAT,
     version: BACKUP_VERSION,
     exportedAt: backup.exportedAt,
+    metadata: {
+      appVersion: 'legacy-v1',
+      dataModelVersion: BACKUP_DATA_MODEL_VERSION,
+    },
     data: {
       tasks: backup.data.tasks.map((task) => ({
         ...task,
@@ -373,147 +798,37 @@ function normalizeLegacyBackup(
   };
 }
 
-export function parseWeekFlowBackup(
-  value: unknown
+function normalizeLegacyBackupV2(
+  backup: LegacyWeekFlowBackupV2
 ): WeekFlowBackup {
-  if (
-    !isRecord(value) ||
-    value.format !== BACKUP_FORMAT ||
-    typeof value.exportedAt !== 'string' ||
-    !isRecord(value.data) ||
-    !Array.isArray(value.data.tasks) ||
-    !Array.isArray(value.data.goals) ||
-    !Array.isArray(value.data.brainDumps)
-  ) {
-    throw new Error(
-      'This is not a supported WeekFlow backup file.'
-    );
-  }
-
-  if (value.version === 1) {
-    if (
-      !value.data.tasks.every(isBaseTask) ||
-      !value.data.goals.every(isGoal) ||
-      !value.data.brainDumps.every(isBrainDump)
-    ) {
-      throw new Error(
-        'The older backup contains an invalid record.'
-      );
-    }
-
-    const normalizedBackup =
-      normalizeLegacyBackup(
-        value as unknown as LegacyWeekFlowBackup
-      );
-
-    validateRelationships(normalizedBackup);
-
-    return normalizedBackup;
-  }
-
-  if (
-    value.version !== BACKUP_VERSION ||
-    !Array.isArray(value.data.recurringRules) ||
-    !Array.isArray(
-      value.data.recurringExceptions
-    )
-  ) {
-    throw new Error(
-      'This WeekFlow backup version is not supported.'
-    );
-  }
-
-  const tasks = value.data.tasks;
-  const goals = value.data.goals;
-  const brainDumps = value.data.brainDumps;
-  const recurringRules =
-    value.data.recurringRules;
-  const recurringExceptions =
-    value.data.recurringExceptions;
-
-  if (!tasks.every(isTask)) {
-    throw new Error(
-      'The backup contains an invalid task.'
-    );
-  }
-
-  if (!goals.every(isGoal)) {
-    throw new Error(
-      'The backup contains an invalid goal.'
-    );
-  }
-
-  if (!brainDumps.every(isBrainDump)) {
-    throw new Error(
-      'The backup contains an invalid brain dump.'
-    );
-  }
-
-  if (!recurringRules.every(isRecurringRule)) {
-    throw new Error(
-      'The backup contains an invalid recurring rule.'
-    );
-  }
-
-  if (
-    !recurringExceptions.every(
-      isRecurringException
-    )
-  ) {
-    throw new Error(
-      'The backup contains an invalid recurring exception.'
-    );
-  }
-
-  if (
-    !hasUniqueIds(tasks) ||
-    !hasUniqueIds(goals) ||
-    !hasUniqueIds(brainDumps) ||
-    !hasUniqueIds(recurringRules)
-  ) {
-    throw new Error(
-      'The backup contains duplicate record IDs.'
-    );
-  }
-
-  if (
-    !hasUniqueRecurringOccurrences(tasks)
-  ) {
-    throw new Error(
-      'The backup contains duplicate recurring task occurrences.'
-    );
-  }
-
-  if (
-    !hasUniqueExceptions(recurringExceptions)
-  ) {
-    throw new Error(
-      'The backup contains duplicate recurring exceptions.'
-    );
-  }
-
-  const backup =
-    value as unknown as WeekFlowBackup;
-
-  validateRelationships(backup);
-
-  return backup;
+  return {
+    ...backup,
+    version: BACKUP_VERSION,
+    metadata: {
+      appVersion: 'legacy-v2',
+      dataModelVersion: BACKUP_DATA_MODEL_VERSION,
+    },
+  };
 }
 
-export function parseWeekFlowBackupJson(
-  json: string
-): WeekFlowBackup {
-  let parsedValue: unknown;
+function validateNormalizedBackup(
+  backup: WeekFlowBackup
+) {
+  assertUniqueIds(backup.data.tasks, 'task');
+  assertUniqueIds(backup.data.goals, 'goal');
+  assertUniqueIds(backup.data.brainDumps, 'Brain Dump');
+  assertUniqueIds(
+    backup.data.recurringRules,
+    'recurring schedule'
+  );
 
-  try {
-    parsedValue = JSON.parse(json);
-  } catch {
-    throw new Error(
-      'The selected file does not contain valid JSON.'
-    );
-  }
-
-  return parseWeekFlowBackup(parsedValue);
+  validateUniqueRecurringOccurrences(
+    backup.data.tasks
+  );
+  validateUniqueExceptions(
+    backup.data.recurringExceptions
+  );
+  validateRelationships(backup);
 }
 
 export function getBackupCounts(
@@ -522,9 +837,161 @@ export function getBackupCounts(
   return {
     tasks: backup.data.tasks.length,
     goals: backup.data.goals.length,
-    brainDumps:
-      backup.data.brainDumps.length,
+    brainDumps: backup.data.brainDumps.length,
     recurringRules:
       backup.data.recurringRules.length,
+    recurringExceptions:
+      backup.data.recurringExceptions.length,
   };
+}
+
+function buildPreview(
+  backup: WeekFlowBackup,
+  sourceVersion: BackupPreview['sourceVersion']
+): BackupPreview {
+  return {
+    sourceVersion,
+    currentVersion: BACKUP_VERSION,
+    exportedAt: backup.exportedAt,
+    appVersion: backup.metadata.appVersion,
+    dataModelVersion:
+      backup.metadata.dataModelVersion,
+    counts: getBackupCounts(backup),
+  };
+}
+
+/**
+ * Validates a backup and normalizes older supported versions into the current
+ * in-memory format. The original source version is kept in the preview so the
+ * restore screen can tell the user when an older backup will be upgraded.
+ */
+export function inspectWeekFlowBackup(
+  value: unknown
+): ParsedWeekFlowBackup {
+  if (!isRecord(value)) {
+    fail(
+      'INVALID_FILE',
+      'This file does not contain a WeekFlow backup object.'
+    );
+  }
+
+  if (value.format !== BACKUP_FORMAT) {
+    fail(
+      'INVALID_FORMAT',
+      'This is not a WeekFlow backup file.'
+    );
+  }
+
+  if (!isIsoTimestamp(value.exportedAt)) {
+    fail(
+      'INVALID_EXPORTED_AT',
+      'The backup has an invalid export timestamp.'
+    );
+  }
+
+  if (!isRecord(value.data)) {
+    fail(
+      'MISSING_SECTION',
+      'The backup is missing its data section.'
+    );
+  }
+
+  const sourceVersion = value.version;
+  let backup: WeekFlowBackup;
+
+  if (sourceVersion === 1) {
+    if (
+      !Array.isArray(value.data.tasks) ||
+      !Array.isArray(value.data.goals) ||
+      !Array.isArray(value.data.brainDumps)
+    ) {
+      fail(
+        'MISSING_SECTION',
+        'The version 1 backup is missing a required list.'
+      );
+    }
+
+    value.data.tasks.forEach((task, index) =>
+      validateBaseTask(task, `Task ${index + 1}`)
+    );
+    value.data.goals.forEach((goal, index) =>
+      validateGoal(goal, `Goal ${index + 1}`)
+    );
+    value.data.brainDumps.forEach((brainDump, index) =>
+      validateBrainDump(
+        brainDump,
+        `Brain Dump ${index + 1}`
+      )
+    );
+
+    backup = normalizeLegacyBackupV1(
+      value as unknown as LegacyWeekFlowBackupV1
+    );
+  } else if (sourceVersion === 2) {
+    const data = validateData(value.data);
+
+    backup = normalizeLegacyBackupV2({
+      format: BACKUP_FORMAT,
+      version: 2,
+      exportedAt: value.exportedAt,
+      data,
+    });
+  } else if (sourceVersion === BACKUP_VERSION) {
+    validateMetadata(value.metadata);
+
+    backup = {
+      format: BACKUP_FORMAT,
+      version: BACKUP_VERSION,
+      exportedAt: value.exportedAt,
+      metadata: value.metadata,
+      data: validateData(value.data),
+    };
+  } else {
+    fail(
+      'UNSUPPORTED_VERSION',
+      `Backup version ${String(
+        sourceVersion
+      )} is not supported. This copy of WeekFlow supports backup versions 1 through ${BACKUP_VERSION}.`
+    );
+  }
+
+  validateNormalizedBackup(backup);
+
+  return {
+    backup,
+    preview: buildPreview(
+      backup,
+      sourceVersion as BackupPreview['sourceVersion']
+    ),
+  };
+}
+
+export function parseWeekFlowBackup(
+  value: unknown
+): WeekFlowBackup {
+  return inspectWeekFlowBackup(value).backup;
+}
+
+export function inspectWeekFlowBackupJson(
+  json: string
+): ParsedWeekFlowBackup {
+  let parsedValue: unknown;
+
+  try {
+    /* A UTF-8 byte-order mark is harmless but causes JSON.parse to fail. */
+    parsedValue = JSON.parse(json.replace(/^\uFEFF/, ''));
+  } catch {
+    fail(
+      'INVALID_JSON',
+      'The selected file does not contain valid JSON.'
+    );
+  }
+
+  return inspectWeekFlowBackup(parsedValue);
+}
+
+export function parseWeekFlowBackupJson(
+  json: string
+): WeekFlowBackup {
+  return inspectWeekFlowBackupJson(json).backup;
 }

@@ -2,12 +2,15 @@ import * as DocumentPicker from 'expo-document-picker';
 import { Platform } from 'react-native';
 
 import {
+  BACKUP_DATA_MODEL_VERSION,
   BACKUP_FORMAT,
   BACKUP_VERSION,
+  BackupValidationError,
   getBackupCounts,
+  inspectWeekFlowBackupJson,
   parseWeekFlowBackup,
-  parseWeekFlowBackupJson,
   type BackupCounts,
+  type BackupPreview,
   type ExportedWeekFlowBackup,
   type PickedWeekFlowBackup,
   type WeekFlowBackup,
@@ -23,10 +26,29 @@ import { getTasks } from './taskStorage';
 
 export type {
   BackupCounts,
+  BackupPreview,
   ExportedWeekFlowBackup,
   PickedWeekFlowBackup,
   WeekFlowBackup,
 } from './backupValidation';
+
+const MAX_BACKUP_FILE_BYTES = 25 * 1024 * 1024;
+const WEEKFLOW_APP_VERSION = '1.0.0';
+
+export type BackupOperation =
+  | 'export'
+  | 'choose'
+  | 'restore';
+
+class BackupStorageError extends Error {
+  constructor(
+    public readonly code: string,
+    message: string
+  ) {
+    super(message);
+    this.name = 'BackupStorageError';
+  }
+}
 
 function createBackupFileName(
   exportedAt: string
@@ -57,6 +79,10 @@ async function buildWeekFlowBackup(): Promise<WeekFlowBackup> {
     format: BACKUP_FORMAT,
     version: BACKUP_VERSION,
     exportedAt: new Date().toISOString(),
+    metadata: {
+      appVersion: WEEKFLOW_APP_VERSION,
+      dataModelVersion: BACKUP_DATA_MODEL_VERSION,
+    },
     data: {
       tasks,
       goals,
@@ -64,6 +90,20 @@ async function buildWeekFlowBackup(): Promise<WeekFlowBackup> {
       recurringRules,
       recurringExceptions,
     },
+  };
+}
+
+function buildCurrentPreview(
+  backup: WeekFlowBackup
+): BackupPreview {
+  return {
+    sourceVersion: BACKUP_VERSION,
+    currentVersion: BACKUP_VERSION,
+    exportedAt: backup.exportedAt,
+    appVersion: backup.metadata.appVersion,
+    dataModelVersion:
+      backup.metadata.dataModelVersion,
+    counts: getBackupCounts(backup),
   };
 }
 
@@ -114,8 +154,9 @@ async function shareBackupOnNative(
     await Sharing.isAvailableAsync();
 
   if (!sharingAvailable) {
-    throw new Error(
-      'File sharing is not available on this device.'
+    throw new BackupStorageError(
+      'SHARING_UNAVAILABLE',
+      'File sharing is not available on this device. Try exporting from the web version of WeekFlow.'
     );
   }
 
@@ -159,13 +200,23 @@ export async function exportWeekFlowBackup(): Promise<ExportedWeekFlowBackup> {
 
   return {
     fileName,
-    counts: getBackupCounts(backup),
+    preview: buildCurrentPreview(backup),
   };
 }
 
 async function readPickedBackupText(
   asset: DocumentPicker.DocumentPickerAsset
 ) {
+  if (
+    typeof asset.size === 'number' &&
+    asset.size > MAX_BACKUP_FILE_BYTES
+  ) {
+    throw new BackupStorageError(
+      'FILE_TOO_LARGE',
+      'The selected backup is larger than 25 MB. Choose a normal WeekFlow JSON backup file.'
+    );
+  }
+
   if (
     Platform.OS === 'web' &&
     asset.file
@@ -199,32 +250,103 @@ export async function pickWeekFlowBackup(): Promise<PickedWeekFlowBackup | null>
   }
 
   const asset = result.assets[0];
-
   const fileText =
     await readPickedBackupText(asset);
 
-  const backup =
-    parseWeekFlowBackupJson(fileText);
+  /*
+   * The size check is repeated after reading because some platforms do not
+   * include asset.size. Limiting text size prevents an accidental huge file
+   * from being parsed into memory as though it were a WeekFlow backup.
+   */
+  if (fileText.length > MAX_BACKUP_FILE_BYTES) {
+    throw new BackupStorageError(
+      'FILE_TOO_LARGE',
+      'The selected backup is larger than 25 MB. Choose a normal WeekFlow JSON backup file.'
+    );
+  }
+
+  const inspected =
+    inspectWeekFlowBackupJson(fileText);
 
   return {
     fileName: asset.name,
-    backup,
-    counts:
-      getBackupCounts(backup),
+    backup: inspected.backup,
+    preview: inspected.preview,
   };
+}
+
+type CountRow = {
+  count: number;
+};
+
+async function readDatabaseCounts(
+  db: Awaited<ReturnType<typeof getDb>>
+): Promise<BackupCounts> {
+  const [
+    tasks,
+    goals,
+    brainDumps,
+    recurringRules,
+    recurringExceptions,
+  ] = await Promise.all([
+    db.getFirstAsync<CountRow>(
+      'SELECT COUNT(*) AS count FROM tasks;'
+    ),
+    db.getFirstAsync<CountRow>(
+      'SELECT COUNT(*) AS count FROM goals;'
+    ),
+    db.getFirstAsync<CountRow>(
+      'SELECT COUNT(*) AS count FROM brain_dumps;'
+    ),
+    db.getFirstAsync<CountRow>(
+      'SELECT COUNT(*) AS count FROM recurring_rules;'
+    ),
+    db.getFirstAsync<CountRow>(
+      'SELECT COUNT(*) AS count FROM recurring_occurrence_exceptions;'
+    ),
+  ]);
+
+  return {
+    tasks: tasks?.count ?? -1,
+    goals: goals?.count ?? -1,
+    brainDumps: brainDumps?.count ?? -1,
+    recurringRules:
+      recurringRules?.count ?? -1,
+    recurringExceptions:
+      recurringExceptions?.count ?? -1,
+  };
+}
+
+function countsMatch(
+  expected: BackupCounts,
+  actual: BackupCounts
+) {
+  return (
+    expected.tasks === actual.tasks &&
+    expected.goals === actual.goals &&
+    expected.brainDumps === actual.brainDumps &&
+    expected.recurringRules === actual.recurringRules &&
+    expected.recurringExceptions ===
+      actual.recurringExceptions
+  );
 }
 
 /**
  * Replaces the current database using one transaction.
  *
- * If an insert fails, SQLite rolls back the transaction instead
- * of leaving the database partially imported.
+ * Validation happens before the transaction starts. Inside the transaction,
+ * WeekFlow deletes the old rows, inserts the backup rows, and verifies every
+ * table count. Any failure throws before commit, so SQLite restores the exact
+ * data that was present before the restore attempt.
  */
 export async function replaceWeekFlowData(
   backup: WeekFlowBackup
 ): Promise<BackupCounts> {
   const validatedBackup =
     parseWeekFlowBackup(backup);
+
+  const expectedCounts =
+    getBackupCounts(validatedBackup);
 
   await migrateDb();
 
@@ -395,10 +517,88 @@ export async function replaceWeekFlowData(
           ]
         );
       }
+
+      const restoredCounts =
+        await readDatabaseCounts(db);
+
+      if (!countsMatch(expectedCounts, restoredCounts)) {
+        throw new BackupStorageError(
+          'RESTORE_VERIFICATION_FAILED',
+          'WeekFlow could not verify every restored record. Your existing data was left unchanged.'
+        );
+      }
     }
   );
 
-  return getBackupCounts(
-    validatedBackup
-  );
+  return expectedCounts;
+}
+
+/**
+ * Converts low-level picker, filesystem, and SQLite errors into messages that
+ * explain what the user can do next. Validation errors are already written for
+ * the selected record, so their specific message is preserved.
+ */
+export function getBackupErrorMessage(
+  error: unknown,
+  operation: BackupOperation
+) {
+  if (
+    error instanceof BackupValidationError ||
+    error instanceof BackupStorageError
+  ) {
+    return error.message;
+  }
+
+  const rawMessage =
+    error instanceof Error
+      ? error.message
+      : String(error);
+  const normalized = rawMessage.toLowerCase();
+
+  if (
+    normalized.includes('database is locked') ||
+    normalized.includes('database busy')
+  ) {
+    return (
+      'WeekFlow’s database is busy. Close any other WeekFlow tabs, wait a moment, and try again.'
+    );
+  }
+
+  if (
+    normalized.includes('disk full') ||
+    normalized.includes('no space') ||
+    normalized.includes('quota')
+  ) {
+    return (
+      'There is not enough free storage to finish this backup operation.'
+    );
+  }
+
+  if (
+    normalized.includes('permission') ||
+    normalized.includes('denied')
+  ) {
+    return (
+      'WeekFlow does not have permission to access that file. Choose another location or file and try again.'
+    );
+  }
+
+  if (
+    normalized.includes('constraint') ||
+    normalized.includes('trigger')
+  ) {
+    return (
+      'The backup contains records that conflict with WeekFlow’s data rules. Your existing data was left unchanged.'
+    );
+  }
+
+  if (operation === 'export') {
+    return 'WeekFlow could not create the backup file. Your data was not changed.';
+  }
+
+  if (operation === 'choose') {
+    return 'WeekFlow could not read that backup file. Choose a WeekFlow JSON backup and try again.';
+  }
+
+  return 'WeekFlow could not restore that backup. Your existing data was left unchanged.';
 }

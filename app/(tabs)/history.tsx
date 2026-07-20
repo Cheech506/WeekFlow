@@ -12,6 +12,7 @@ import { useGoals } from '@/context/GoalContext';
 import { useTasks } from '@/context/TaskContext';
 import {
   exportWeekFlowBackup,
+  getBackupErrorMessage,
   pickWeekFlowBackup,
   replaceWeekFlowData,
   type PickedWeekFlowBackup,
@@ -30,6 +31,11 @@ type ContentFilter =
   | 'brainDumps';
 type PriorityFilter = 'all' | 0 | 1 | 2;
 type GoalFilter = 'all' | 'none' | number;
+
+type BackupMessage = {
+  tone: 'success' | 'error';
+  text: string;
+};
 
 type HistoryGroupKey =
   | 'today'
@@ -70,6 +76,22 @@ function formatCompletedDate(value: string | null) {
 
   if (Number.isNaN(date.getTime())) {
     return 'Completed date unknown';
+  }
+
+  return date.toLocaleString([], {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+function formatBackupDate(value: string) {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return 'Unknown export date';
   }
 
   return date.toLocaleString([], {
@@ -216,7 +238,8 @@ export default function HistoryScreen() {
     useState<GoalFilter>('all');
   const [isExporting, setIsExporting] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
-  const [backupMessage, setBackupMessage] = useState('');
+  const [backupMessage, setBackupMessage] =
+    useState<BackupMessage | null>(null);
   const [pendingImport, setPendingImport] =
     useState<PickedWeekFlowBackup | null>(null);
 
@@ -476,31 +499,34 @@ export default function HistoryScreen() {
 
   async function handleExportBackup() {
     setIsExporting(true);
-    setBackupMessage('');
+    setBackupMessage(null);
 
     try {
       const result = await exportWeekFlowBackup();
+      const counts = result.preview.counts;
 
-      setBackupMessage(
-        `Exported ${result.counts.tasks} tasks, ` +
-          `${result.counts.goals} goals, and ` +
-          `${result.counts.brainDumps} brain dumps.`
-      );
+      setBackupMessage({
+        tone: 'success',
+        text:
+          `Exported ${counts.tasks} tasks, ` +
+          `${counts.goals} goals, ` +
+          `${counts.brainDumps} brain dumps, and ` +
+          `${counts.recurringRules} recurring schedules.`,
+      });
     } catch (error) {
       console.error('Failed to export WeekFlow backup:', error);
 
-      setBackupMessage(
-        error instanceof Error
-          ? error.message
-          : 'The backup could not be exported.'
-      );
+      setBackupMessage({
+        tone: 'error',
+        text: getBackupErrorMessage(error, 'export'),
+      });
     } finally {
       setIsExporting(false);
     }
   }
 
   async function handleChooseBackup() {
-    setBackupMessage('');
+    setBackupMessage(null);
 
     try {
       const pickedBackup = await pickWeekFlowBackup();
@@ -511,11 +537,11 @@ export default function HistoryScreen() {
     } catch (error) {
       console.error('Failed to read WeekFlow backup:', error);
 
-      setBackupMessage(
-        error instanceof Error
-          ? error.message
-          : 'The selected backup could not be read.'
-      );
+      setPendingImport(null);
+      setBackupMessage({
+        tone: 'error',
+        text: getBackupErrorMessage(error, 'choose'),
+      });
     }
   }
 
@@ -523,7 +549,7 @@ export default function HistoryScreen() {
     if (!pendingImport) return;
 
     setIsImporting(true);
-    setBackupMessage('');
+    setBackupMessage(null);
 
     try {
       const counts = await replaceWeekFlowData(
@@ -541,22 +567,24 @@ export default function HistoryScreen() {
         refreshBrainDumps(),
       ]);
 
-      setBackupMessage(
-        `Imported ${counts.tasks} tasks, ` +
-          `${counts.goals} goals, and ` +
-          `${counts.brainDumps} brain dumps.`
-      );
+      setBackupMessage({
+        tone: 'success',
+        text:
+          `Imported ${counts.tasks} tasks, ` +
+          `${counts.goals} goals, ` +
+          `${counts.brainDumps} brain dumps, and ` +
+          `${counts.recurringRules} recurring schedules.`,
+      });
 
       setPendingImport(null);
       clearFilters();
     } catch (error) {
       console.error('Failed to import WeekFlow backup:', error);
 
-      setBackupMessage(
-        error instanceof Error
-          ? error.message
-          : 'The backup could not be imported.'
-      );
+      setBackupMessage({
+        tone: 'error',
+        text: getBackupErrorMessage(error, 'restore'),
+      });
     } finally {
       setIsImporting(false);
     }
@@ -1248,15 +1276,39 @@ export default function HistoryScreen() {
                 {pendingImport.fileName}
               </Text>
 
-              <Text style={styles.importCounts}>
-                {pendingImport.counts.tasks} tasks •{' '}
-                {pendingImport.counts.goals} goals •{' '}
-                {pendingImport.counts.brainDumps} brain dumps
+              <Text style={styles.importMetadata}>
+                Exported {formatBackupDate(
+                  pendingImport.preview.exportedAt
+                )} • WeekFlow {pendingImport.preview.appVersion}
               </Text>
 
+              <Text style={styles.importCounts}>
+                {pendingImport.preview.counts.tasks} tasks •{' '}
+                {pendingImport.preview.counts.goals} goals •{' '}
+                {pendingImport.preview.counts.brainDumps} brain dumps
+              </Text>
+
+              <Text style={styles.importCounts}>
+                {pendingImport.preview.counts.recurringRules}{' '}
+                recurring schedules •{' '}
+                {pendingImport.preview.counts.recurringExceptions}{' '}
+                skipped occurrences
+              </Text>
+
+              {pendingImport.preview.sourceVersion <
+              pendingImport.preview.currentVersion ? (
+                <Text style={styles.importUpgradeText}>
+                  Older backup format v
+                  {pendingImport.preview.sourceVersion} will be safely
+                  upgraded to v
+                  {pendingImport.preview.currentVersion} during restore.
+                </Text>
+              ) : null}
+
               <Text style={styles.importWarningText}>
-                Confirming will replace all WeekFlow data currently
-                stored on this device.
+                This file passed validation. Confirming will replace all
+                WeekFlow data currently stored on this device. If the
+                restore fails, the current data will remain unchanged.
               </Text>
 
               <View style={styles.importActions}>
@@ -1289,8 +1341,15 @@ export default function HistoryScreen() {
           ) : null}
 
           {backupMessage ? (
-            <Text style={styles.backupMessage}>
-              {backupMessage}
+            <Text
+              style={[
+                styles.backupMessage,
+                backupMessage.tone === 'error'
+                  ? styles.backupMessageError
+                  : styles.backupMessageSuccess,
+              ]}
+            >
+              {backupMessage.text}
             </Text>
           ) : null}
         </View>
@@ -1644,10 +1703,22 @@ const styles = StyleSheet.create({
     color: '#111827',
     marginBottom: 4,
   },
+  importMetadata: {
+    fontSize: 13,
+    color: '#4b5563',
+    marginBottom: 6,
+  },
   importCounts: {
     fontSize: 13,
     color: '#4b5563',
-    marginBottom: 8,
+    marginBottom: 6,
+  },
+  importUpgradeText: {
+    fontSize: 13,
+    color: '#1d4ed8',
+    lineHeight: 18,
+    marginTop: 2,
+    marginBottom: 10,
   },
   importWarningText: {
     fontSize: 13,
@@ -1690,8 +1761,13 @@ const styles = StyleSheet.create({
     marginTop: 12,
     fontSize: 13,
     fontWeight: '700',
-    color: '#166534',
     lineHeight: 18,
+  },
+  backupMessageSuccess: {
+    color: '#166534',
+  },
+  backupMessageError: {
+    color: '#b91c1c',
   },
   emptyCard: {
     padding: 18,

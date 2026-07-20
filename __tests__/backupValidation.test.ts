@@ -6,6 +6,8 @@ import {
 } from '@jest/globals';
 
 import {
+  BACKUP_VERSION,
+  inspectWeekFlowBackup,
   parseWeekFlowBackup,
   parseWeekFlowBackupJson,
   type WeekFlowBackup,
@@ -30,8 +32,12 @@ function makeValidBackup(): WeekFlowBackup {
 
   return {
     format: 'weekflow-backup',
-    version: 2,
+    version: BACKUP_VERSION,
     exportedAt: localIso(2026, 6, 23),
+    metadata: {
+      appVersion: '1.0.0',
+      dataModelVersion: 1,
+    },
     data: {
       tasks: [
         makeTask({
@@ -66,13 +72,23 @@ describe('backup validation', () => {
     resetFactoryIds();
   });
 
-  test('accepts a valid version 2 backup', () => {
-    const backup = makeValidBackup();
-    const result = parseWeekFlowBackup(backup);
+  test('accepts a valid current backup and builds a complete preview', () => {
+    const result = inspectWeekFlowBackup(makeValidBackup());
 
-    expect(result.version).toBe(2);
-    expect(result.data.recurringRules).toHaveLength(1);
-    expect(result.data.tasks).toHaveLength(2);
+    expect(result.backup.version).toBe(BACKUP_VERSION);
+    expect(result.preview).toMatchObject({
+      sourceVersion: BACKUP_VERSION,
+      currentVersion: BACKUP_VERSION,
+      appVersion: '1.0.0',
+      dataModelVersion: 1,
+      counts: {
+        tasks: 2,
+        goals: 1,
+        brainDumps: 1,
+        recurringRules: 1,
+        recurringExceptions: 1,
+      },
+    });
   });
 
   test('upgrades a valid version 1 backup', () => {
@@ -101,19 +117,78 @@ describe('backup validation', () => {
     };
 
     const result =
-      parseWeekFlowBackup(versionOneBackup);
+      inspectWeekFlowBackup(versionOneBackup);
 
-    expect(result.version).toBe(2);
-    expect(result.data.recurringRules).toEqual([]);
+    expect(result.preview.sourceVersion).toBe(1);
+    expect(result.backup.version).toBe(BACKUP_VERSION);
+    expect(result.backup.data.recurringRules).toEqual([]);
     expect(
-      result.data.tasks[0].recurringRuleId
+      result.backup.data.tasks[0].recurringRuleId
     ).toBeNull();
+  });
+
+  test('upgrades a valid version 2 backup', () => {
+    const current = makeValidBackup();
+    const versionTwoBackup = {
+      format: current.format,
+      version: 2,
+      exportedAt: current.exportedAt,
+      data: current.data,
+    };
+
+    const result =
+      inspectWeekFlowBackup(versionTwoBackup);
+
+    expect(result.preview.sourceVersion).toBe(2);
+    expect(result.backup.version).toBe(BACKUP_VERSION);
+    expect(result.backup.metadata.appVersion).toBe('legacy-v2');
+  });
+
+  test('accepts JSON with a UTF-8 byte-order mark', () => {
+    const backup = makeValidBackup();
+    const result = parseWeekFlowBackupJson(
+      `\uFEFF${JSON.stringify(backup)}`
+    );
+
+    expect(result.data.tasks).toHaveLength(2);
   });
 
   test('rejects malformed JSON text', () => {
     expect(() =>
       parseWeekFlowBackupJson('{not valid json')
     ).toThrow('does not contain valid JSON');
+  });
+
+  test('reports unsupported versions clearly', () => {
+    const backup = {
+      ...makeValidBackup(),
+      version: 99,
+    };
+
+    expect(() =>
+      parseWeekFlowBackup(backup)
+    ).toThrow('Backup version 99 is not supported');
+  });
+
+  test('reports the exact invalid task field', () => {
+    const backup = makeValidBackup();
+    backup.data.tasks[0].priority = 8;
+
+    expect(() =>
+      parseWeekFlowBackup(backup)
+    ).toThrow(
+      'Task 1 has an invalid priority. Expected 0, 1, or 2.'
+    );
+  });
+
+  test('rejects inconsistent completion status', () => {
+    const backup = makeValidBackup();
+    backup.data.tasks[0].completed = true;
+    backup.data.tasks[0].completedAt = null;
+
+    expect(() =>
+      parseWeekFlowBackup(backup)
+    ).toThrow('completion status');
   });
 
   test('rejects duplicate record IDs', () => {
@@ -125,16 +200,18 @@ describe('backup validation', () => {
 
     expect(() =>
       parseWeekFlowBackup(backup)
-    ).toThrow('duplicate record IDs');
+    ).toThrow('duplicate task IDs');
   });
 
-  test('rejects a task linked to a missing goal', () => {
+  test('names a task linked to a missing goal', () => {
     const backup = makeValidBackup();
     backup.data.tasks[0].goalId = 999;
 
     expect(() =>
       parseWeekFlowBackup(backup)
-    ).toThrow('task linked to a missing goal');
+    ).toThrow(
+      `Task "${backup.data.tasks[0].title}" is linked to a goal`
+    );
   });
 
   test('rejects a task linked to a missing recurring rule', () => {
@@ -143,9 +220,7 @@ describe('backup validation', () => {
 
     expect(() =>
       parseWeekFlowBackup(backup)
-    ).toThrow(
-      'task linked to a missing recurring rule'
-    );
+    ).toThrow('linked to a recurring schedule');
   });
 
   test('rejects duplicate recurring occurrences', () => {
@@ -169,6 +244,15 @@ describe('backup validation', () => {
     );
   });
 
+  test('rejects duplicate recurring weekdays', () => {
+    const backup = makeValidBackup();
+    backup.data.recurringRules[0].weekdays = [1, 1, 3];
+
+    expect(() =>
+      parseWeekFlowBackup(backup)
+    ).toThrow('contains duplicate weekdays');
+  });
+
   test('rejects invalid recurring-rule dates', () => {
     const backup = makeValidBackup();
     backup.data.recurringRules[0].endDate =
@@ -176,6 +260,6 @@ describe('backup validation', () => {
 
     expect(() =>
       parseWeekFlowBackup(backup)
-    ).toThrow('invalid recurring rule');
+    ).toThrow('ends before its start date');
   });
 });

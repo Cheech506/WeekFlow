@@ -6,15 +6,22 @@ import {
   test,
 } from '@jest/globals';
 
-import type { WeekFlowBackup } from '../../lib/backupValidation';
+import {
+  BACKUP_VERSION,
+  type WeekFlowBackup,
+} from '../../lib/backupValidation';
 
 function makeBackup(
   taskTitle: string = 'Restored task'
 ): WeekFlowBackup {
   return {
     format: 'weekflow-backup',
-    version: 2,
+    version: BACKUP_VERSION,
     exportedAt: '2026-07-01T12:00:00.000Z',
+    metadata: {
+      appVersion: '1.0.0',
+      dataModelVersion: 1,
+    },
     data: {
       goals: [
         {
@@ -84,6 +91,7 @@ describe('backup restore integration', () => {
       goals: 1,
       brainDumps: 1,
       recurringRules: 0,
+      recurringExceptions: 0,
     });
 
     expect((await taskStorage.getTasks())[0].title).toBe(
@@ -95,6 +103,27 @@ describe('backup restore integration', () => {
     expect(
       (await brainStorage.getBrainDumps())[0].body
     ).toBe('Restored note');
+  });
+
+  test('rejects invalid data before deleting the current database contents', async () => {
+    const { replaceWeekFlowData } = await import(
+      '../../lib/backupStorage'
+    );
+    const taskStorage = await import('../../lib/taskStorage');
+
+    await taskStorage.insertTask('Original task', 'Inbox');
+
+    const invalidBackup = makeBackup();
+    invalidBackup.data.tasks[0].priority = 9;
+
+    await expect(
+      replaceWeekFlowData(invalidBackup)
+    ).rejects.toThrow('invalid priority');
+
+    const tasks = await taskStorage.getTasks();
+
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].title).toBe('Original task');
   });
 
   test('rolls back the entire replacement when an insert fails', async () => {
