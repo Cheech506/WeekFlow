@@ -92,6 +92,51 @@ export async function insertGoal(
   };
 }
 
+export async function updateGoalDetails(
+  id: number,
+  title: string,
+  startDateKey: string,
+  endDateKey: string
+): Promise<{ title: string; startDate: string; endDate: string }> {
+  await migrateDb();
+
+  const trimmedTitle = title.trim();
+
+  if (!trimmedTitle) {
+    throw new Error('Enter a goal title first.');
+  }
+
+  const db = await getDb();
+  const dateRange = validateGoalDateRange(
+    startDateKey,
+    endDateKey
+  );
+
+  /*
+   * The title and date range are saved together so the goal card cannot end up
+   * partially updated if one part of the edit fails validation.
+   */
+  await db.runAsync(
+    `
+    UPDATE goals
+    SET title = ?, start_date = ?, end_date = ?
+    WHERE id = ?;
+    `,
+    [
+      trimmedTitle,
+      dateRange.startDateIso,
+      dateRange.endDateIso,
+      id,
+    ]
+  );
+
+  return {
+    title: trimmedTitle,
+    startDate: dateRange.startDateIso,
+    endDate: dateRange.endDateIso,
+  };
+}
+
 export async function updateGoalDates(
   id: number,
   startDateKey: string,

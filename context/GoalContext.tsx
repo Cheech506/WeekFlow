@@ -13,7 +13,7 @@ import {
   getGoals,
   insertGoal,
   updateGoalCompletion,
-  updateGoalDates,
+  updateGoalDetails,
   type StoredGoal,
 } from '@/lib/goalStorage';
 
@@ -28,8 +28,9 @@ type GoalContextValue = {
     startDateKey?: string,
     endDateKey?: string
   ) => Promise<void>;
-  editGoalDates: (
+  editGoal: (
     id: number,
+    title: string,
     startDateKey: string,
     endDateKey: string
   ) => Promise<void>;
@@ -84,15 +85,17 @@ export function GoalProvider({ children }: { children: React.ReactNode }) {
     []
   );
 
-  const editGoalDates = useCallback(
+  const editGoal = useCallback(
     async (
       id: number,
+      title: string,
       startDateKey: string,
       endDateKey: string
     ) => {
       try {
-        const dates = await updateGoalDates(
+        const updatedGoal = await updateGoalDetails(
           id,
+          title,
           startDateKey,
           endDateKey
         );
@@ -102,14 +105,15 @@ export function GoalProvider({ children }: { children: React.ReactNode }) {
             goal.id === id
               ? {
                   ...goal,
-                  startDate: dates.startDate,
-                  endDate: dates.endDate,
+                  title: updatedGoal.title,
+                  startDate: updatedGoal.startDate,
+                  endDate: updatedGoal.endDate,
                 }
               : goal
           )
         );
       } catch (error) {
-        console.error('Failed to update goal dates:', error);
+        console.error('Failed to update goal:', error);
         throw error;
       }
     },
@@ -170,7 +174,7 @@ export function GoalProvider({ children }: { children: React.ReactNode }) {
       isLoading,
       refreshGoals,
       addGoal,
-      editGoalDates,
+      editGoal,
       toggleGoal,
       deleteGoal,
     }),
@@ -179,7 +183,7 @@ export function GoalProvider({ children }: { children: React.ReactNode }) {
       isLoading,
       refreshGoals,
       addGoal,
-      editGoalDates,
+      editGoal,
       toggleGoal,
       deleteGoal,
     ]

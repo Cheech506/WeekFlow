@@ -118,6 +118,7 @@ export default function TwelveWeekGoalsScreen() {
   const [editingGoalId, setEditingGoalId] = useState<
     number | null
   >(null);
+  const [editGoalTitle, setEditGoalTitle] = useState('');
   const [editStartDate, setEditStartDate] = useState('');
   const [editEndDate, setEditEndDate] = useState('');
   const [editMessage, setEditMessage] = useState('');
@@ -134,7 +135,7 @@ export default function TwelveWeekGoalsScreen() {
     goals,
     isLoading,
     addGoal,
-    editGoalDates,
+    editGoal,
     toggleGoal,
     deleteGoal,
   } = useGoals();
@@ -215,48 +216,56 @@ export default function TwelveWeekGoalsScreen() {
     }
   }
 
-  function startEditingGoalDates(goalId: number) {
+  function startEditingGoal(goalId: number) {
     const goal = goals.find((item) => item.id === goalId);
     if (!goal) return;
 
     setEditingGoalId(goalId);
+    setEditGoalTitle(goal.title);
     setEditStartDate(getGoalDateKey(goal.startDate));
     setEditEndDate(getGoalDateKey(goal.endDate));
     setEditMessage('');
   }
 
-  function cancelEditingGoalDates() {
+  function cancelEditingGoal() {
     setEditingGoalId(null);
+    setEditGoalTitle('');
     setEditStartDate('');
     setEditEndDate('');
     setEditMessage('');
   }
 
-  async function handleSaveGoalDates(goalId: number) {
+  async function handleSaveGoal(goalId: number) {
+    if (!editGoalTitle.trim()) {
+      setEditMessage('Enter a goal title first.');
+      return;
+    }
+
     if (editGoalDateFeedback.error) {
       setEditMessage(editGoalDateFeedback.error);
       return;
     }
 
     try {
-      await editGoalDates(
+      await editGoal(
         goalId,
+        editGoalTitle,
         editStartDate,
         editEndDate
       );
-      cancelEditingGoalDates();
+      cancelEditingGoal();
     } catch (error) {
       setEditMessage(
         error instanceof Error
           ? error.message
-          : 'The goal dates could not be updated.'
+          : 'The goal could not be updated.'
       );
     }
   }
 
   async function handleCompleteGoal(goalId: number) {
     if (editingGoalId === goalId) {
-      cancelEditingGoalDates();
+      cancelEditingGoal();
     }
 
     await toggleGoal(goalId);
@@ -523,11 +532,11 @@ export default function TwelveWeekGoalsScreen() {
                     <Pressable
                       style={styles.editButton}
                       onPress={() =>
-                        startEditingGoalDates(goal.id)
+                        startEditingGoal(goal.id)
                       }
                     >
                       <Text style={styles.editButtonText}>
-                        Edit Dates
+                        Edit Goal
                       </Text>
                     </Pressable>
 
@@ -556,8 +565,24 @@ export default function TwelveWeekGoalsScreen() {
                 {editingGoalId === goal.id ? (
                   <View style={styles.editDatesCard}>
                     <Text style={styles.editDatesTitle}>
-                      Edit Goal Dates
+                      Edit Goal
                     </Text>
+
+                    <View style={styles.dateInputGroup}>
+                      <Text style={styles.dateInputLabel}>
+                        Goal title
+                      </Text>
+                      <TextInput
+                        style={styles.editGoalTitleInput}
+                        value={editGoalTitle}
+                        onChangeText={(value) => {
+                          setEditGoalTitle(value);
+                          setEditMessage('');
+                        }}
+                        placeholder="Goal title"
+                        returnKeyType="next"
+                      />
+                    </View>
 
                     <View style={styles.dateInputRow}>
                       <View style={styles.dateInputGroup}>
@@ -612,7 +637,7 @@ export default function TwelveWeekGoalsScreen() {
                     <View style={styles.editDatesActions}>
                       <Pressable
                         style={styles.cancelButton}
-                        onPress={cancelEditingGoalDates}
+                        onPress={cancelEditingGoal}
                       >
                         <Text style={styles.cancelButtonText}>
                           Cancel
@@ -622,11 +647,11 @@ export default function TwelveWeekGoalsScreen() {
                       <Pressable
                         style={styles.saveDatesButton}
                         onPress={() =>
-                          handleSaveGoalDates(goal.id)
+                          handleSaveGoal(goal.id)
                         }
                       >
                         <Text style={styles.saveDatesButtonText}>
-                          Save Dates
+                          Save Goal
                         </Text>
                       </Pressable>
                     </View>
@@ -1038,6 +1063,15 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '800',
     color: '#111827',
+  },
+  editGoalTitleInput: {
+    borderWidth: 1,
+    borderColor: '#c4b5fd',
+    borderRadius: 10,
+    paddingVertical: 11,
+    paddingHorizontal: 12,
+    fontSize: 15,
+    backgroundColor: 'white',
   },
   editDatesActions: {
     flexDirection: 'row',

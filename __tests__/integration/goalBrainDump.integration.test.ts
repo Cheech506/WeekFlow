@@ -22,16 +22,18 @@ describe('goal and brain dump storage integration', () => {
 
     expect(goal.title).toBe('Integration goal');
 
-    const editedDates = await goalStorage.updateGoalDates(
+    const editedGoal = await goalStorage.updateGoalDetails(
       goal.id,
+      '  Updated integration goal  ',
       '2026-07-08',
       '2026-10-07'
     );
 
     let goals = await goalStorage.getGoals();
 
-    expect(goals[0].startDate).toBe(editedDates.startDate);
-    expect(goals[0].endDate).toBe(editedDates.endDate);
+    expect(goals[0].title).toBe('Updated integration goal');
+    expect(goals[0].startDate).toBe(editedGoal.startDate);
+    expect(goals[0].endDate).toBe(editedGoal.endDate);
 
     const completedAt =
       await goalStorage.updateGoalCompletion(
@@ -54,6 +56,33 @@ describe('goal and brain dump storage integration', () => {
     goals = await goalStorage.getGoals();
 
     expect(goals).toEqual([]);
+  });
+
+  test('rejects an empty edited goal title without changing saved details', async () => {
+    const goalStorage = await import('../../lib/goalStorage');
+
+    const goal = await goalStorage.insertGoal(
+      'Original title',
+      '2026-07-01',
+      '2026-09-23'
+    );
+
+    await expect(
+      goalStorage.updateGoalDetails(
+        goal.id,
+        '   ',
+        '2026-07-08',
+        '2026-10-07'
+      )
+    ).rejects.toThrow('Enter a goal title first.');
+
+    const goals = await goalStorage.getGoals();
+
+    expect(goals[0]).toMatchObject({
+      title: 'Original title',
+      startDate: goal.startDate,
+      endDate: goal.endDate,
+    });
   });
 
   test('deleting a goal preserves linked tasks and recurring rules', async () => {
