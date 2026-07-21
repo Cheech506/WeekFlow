@@ -35,6 +35,17 @@ function makeBackup(
         },
       ],
       recurringRules: [],
+      taskTemplates: [
+        {
+          id: 30,
+          title: 'Restored template',
+          notes: 'Template note',
+          priority: 2,
+          goalId: 1,
+          createdAt: '2026-07-01T12:00:00.000Z',
+          updatedAt: '2026-07-01T12:00:00.000Z',
+        },
+      ],
       tasks: [
         {
           id: 10,
@@ -79,6 +90,9 @@ describe('backup restore integration', () => {
     const brainStorage = await import(
       '../../lib/brainDumpStorage'
     );
+    const templateStorage = await import(
+      '../../lib/taskTemplateStorage'
+    );
 
     await taskStorage.insertTask('Old task', 'Inbox');
     await goalStorage.insertGoal('Old goal');
@@ -90,6 +104,7 @@ describe('backup restore integration', () => {
       tasks: 1,
       goals: 1,
       brainDumps: 1,
+      taskTemplates: 1,
       recurringRules: 0,
       recurringExceptions: 0,
     });
@@ -103,6 +118,9 @@ describe('backup restore integration', () => {
     expect(
       (await brainStorage.getBrainDumps())[0].body
     ).toBe('Restored note');
+    expect(
+      (await templateStorage.getTaskTemplates())[0].title
+    ).toBe('Restored template');
   });
 
   test('rejects invalid data before deleting the current database contents', async () => {

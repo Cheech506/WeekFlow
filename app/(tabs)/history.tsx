@@ -510,7 +510,8 @@ export default function HistoryScreen() {
         text:
           `Exported ${counts.tasks} tasks, ` +
           `${counts.goals} goals, ` +
-          `${counts.brainDumps} brain dumps, and ` +
+          `${counts.brainDumps} brain dumps, ` +
+          `${counts.taskTemplates} task templates, and ` +
           `${counts.recurringRules} recurring schedules.`,
       });
     } catch (error) {
@@ -572,7 +573,8 @@ export default function HistoryScreen() {
         text:
           `Imported ${counts.tasks} tasks, ` +
           `${counts.goals} goals, ` +
-          `${counts.brainDumps} brain dumps, and ` +
+          `${counts.brainDumps} brain dumps, ` +
+          `${counts.taskTemplates} task templates, and ` +
           `${counts.recurringRules} recurring schedules.`,
       });
 
@@ -1285,7 +1287,8 @@ export default function HistoryScreen() {
               <Text style={styles.importCounts}>
                 {pendingImport.preview.counts.tasks} tasks •{' '}
                 {pendingImport.preview.counts.goals} goals •{' '}
-                {pendingImport.preview.counts.brainDumps} brain dumps
+                {pendingImport.preview.counts.brainDumps} brain dumps •{' '}
+                {pendingImport.preview.counts.taskTemplates} task templates
               </Text>
 
               <Text style={styles.importCounts}>

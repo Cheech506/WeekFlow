@@ -23,6 +23,7 @@ import {
   getRecurringRules,
 } from './recurringStorage';
 import { getTasks } from './taskStorage';
+import { getTaskTemplates } from './taskTemplateStorage';
 
 export type {
   BackupCounts,
@@ -65,12 +66,14 @@ async function buildWeekFlowBackup(): Promise<WeekFlowBackup> {
     tasks,
     goals,
     brainDumps,
+    taskTemplates,
     recurringRules,
     recurringExceptions,
   ] = await Promise.all([
     getTasks(),
     getGoals(),
     getBrainDumps(),
+    getTaskTemplates(),
     getRecurringRules(),
     getRecurringOccurrenceExceptions(),
   ]);
@@ -87,6 +90,7 @@ async function buildWeekFlowBackup(): Promise<WeekFlowBackup> {
       tasks,
       goals,
       brainDumps,
+      taskTemplates,
       recurringRules,
       recurringExceptions,
     },
@@ -286,6 +290,7 @@ async function readDatabaseCounts(
     tasks,
     goals,
     brainDumps,
+    taskTemplates,
     recurringRules,
     recurringExceptions,
   ] = await Promise.all([
@@ -299,6 +304,9 @@ async function readDatabaseCounts(
       'SELECT COUNT(*) AS count FROM brain_dumps;'
     ),
     db.getFirstAsync<CountRow>(
+      'SELECT COUNT(*) AS count FROM task_templates;'
+    ),
+    db.getFirstAsync<CountRow>(
       'SELECT COUNT(*) AS count FROM recurring_rules;'
     ),
     db.getFirstAsync<CountRow>(
@@ -310,6 +318,7 @@ async function readDatabaseCounts(
     tasks: tasks?.count ?? -1,
     goals: goals?.count ?? -1,
     brainDumps: brainDumps?.count ?? -1,
+    taskTemplates: taskTemplates?.count ?? -1,
     recurringRules:
       recurringRules?.count ?? -1,
     recurringExceptions:
@@ -325,6 +334,7 @@ function countsMatch(
     expected.tasks === actual.tasks &&
     expected.goals === actual.goals &&
     expected.brainDumps === actual.brainDumps &&
+    expected.taskTemplates === actual.taskTemplates &&
     expected.recurringRules === actual.recurringRules &&
     expected.recurringExceptions ===
       actual.recurringExceptions
@@ -358,6 +368,7 @@ export async function replaceWeekFlowData(
         DELETE FROM tasks;
         DELETE FROM recurring_occurrence_exceptions;
         DELETE FROM recurring_rules;
+        DELETE FROM task_templates;
         DELETE FROM goals;
         DELETE FROM brain_dumps;
       `);
@@ -387,6 +398,35 @@ export async function replaceWeekFlowData(
             goal.completedAt,
             goal.startDate,
             goal.endDate,
+          ]
+        );
+      }
+
+      for (
+        const template of
+        validatedBackup.data.taskTemplates
+      ) {
+        await db.runAsync(
+          `
+          INSERT INTO task_templates (
+            id,
+            title,
+            notes,
+            priority,
+            goal_id,
+            created_at,
+            updated_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?);
+          `,
+          [
+            template.id,
+            template.title,
+            template.notes,
+            template.priority,
+            template.goalId,
+            template.createdAt,
+            template.updatedAt,
           ]
         );
       }

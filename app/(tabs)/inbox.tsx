@@ -196,6 +196,19 @@ export default function InboxScreen() {
   const [selectedGoalId, setSelectedGoalId] =
     useState<number | null>(null);
   const [brainDumpText, setBrainDumpText] = useState('');
+  const [templateMessage, setTemplateMessage] = useState('');
+  const [editingTemplateId, setEditingTemplateId] =
+    useState<number | null>(null);
+  const [editTemplateTitle, setEditTemplateTitle] =
+    useState('');
+  const [editTemplateNotes, setEditTemplateNotes] =
+    useState('');
+  const [editTemplatePriority, setEditTemplatePriority] =
+    useState(0);
+  const [editTemplateGoalId, setEditTemplateGoalId] =
+    useState<number | null>(null);
+  const [isTaskTemplatesExpanded, setIsTaskTemplatesExpanded] =
+    useState(false);
 
   const [repeatChoice, setRepeatChoice] =
     useState<RepeatChoice>('none');
@@ -267,7 +280,12 @@ export default function InboxScreen() {
   const {
     tasks,
     recurringRules,
+    taskTemplates,
     addTask,
+    addTaskTemplate,
+    editTaskTemplate,
+    deleteTaskTemplate,
+    addTaskFromTemplate,
     createRecurringTask,
     convertTaskToRecurring,
     updateRecurringTask,
@@ -307,6 +325,145 @@ export default function InboxScreen() {
     setCustomRepeatEndDate('');
     setUseCustomRepeatStartDate(false);
     setRepeatError('');
+  }
+
+  async function handleSaveCurrentAsTemplate() {
+    if (!taskText.trim()) {
+      setTemplateMessage(
+        'Enter a task title before saving a template.'
+      );
+      return;
+    }
+
+    try {
+      await addTaskTemplate(
+        taskText,
+        notesText,
+        priority,
+        selectedGoalId
+      );
+      setTemplateMessage(
+        `Saved “${taskText.trim()}” as a task template.`
+      );
+      setIsTaskTemplatesExpanded(true);
+    } catch (error) {
+      setTemplateMessage(
+        error instanceof Error
+          ? error.message
+          : 'The task template could not be saved.'
+      );
+    }
+  }
+
+  function handleLoadTemplate(
+    template: (typeof taskTemplates)[number]
+  ) {
+    setTaskText(template.title);
+    setNotesText(template.notes ?? '');
+    setPriority(template.priority);
+    setSelectedGoalId(template.goalId);
+
+    // Templates intentionally describe one-time task details. Recurring
+    // schedules continue to be managed by WeekFlow's recurring-task tools.
+    setRepeatChoice('none');
+    setRepeatStartDate(getLocalDateKey(new Date()));
+    setSelectedWeekdays([]);
+    setRepeatEndPreset('none');
+    setCustomRepeatEndDate('');
+    setUseCustomRepeatStartDate(false);
+    setRepeatError('');
+    setTemplateMessage(
+      `Loaded “${template.title}” into Quick Task.`
+    );
+  }
+
+  async function handleAddTaskFromTemplate(
+    templateId: number,
+    templateTitle: string
+  ) {
+    try {
+      await addTaskFromTemplate(templateId);
+      setTemplateMessage(
+        `Added “${templateTitle}” to Inbox.`
+      );
+    } catch (error) {
+      setTemplateMessage(
+        error instanceof Error
+          ? error.message
+          : 'The template task could not be added.'
+      );
+    }
+  }
+
+  function startEditingTemplate(
+    template: (typeof taskTemplates)[number]
+  ) {
+    setEditingTemplateId(template.id);
+    setEditTemplateTitle(template.title);
+    setEditTemplateNotes(template.notes ?? '');
+    setEditTemplatePriority(template.priority);
+    setEditTemplateGoalId(template.goalId);
+    setTemplateMessage('');
+  }
+
+  function cancelEditingTemplate() {
+    setEditingTemplateId(null);
+    setEditTemplateTitle('');
+    setEditTemplateNotes('');
+    setEditTemplatePriority(0);
+    setEditTemplateGoalId(null);
+  }
+
+  async function handleSaveEditedTemplate() {
+    if (editingTemplateId === null) return;
+
+    if (!editTemplateTitle.trim()) {
+      setTemplateMessage('A task template needs a title.');
+      return;
+    }
+
+    try {
+      await editTaskTemplate(
+        editingTemplateId,
+        editTemplateTitle,
+        editTemplateNotes,
+        editTemplatePriority,
+        editTemplateGoalId
+      );
+      setTemplateMessage(
+        `Updated “${editTemplateTitle.trim()}”.`
+      );
+      cancelEditingTemplate();
+    } catch (error) {
+      setTemplateMessage(
+        error instanceof Error
+          ? error.message
+          : 'The task template could not be updated.'
+      );
+    }
+  }
+
+  async function handleDeleteTemplate(
+    templateId: number,
+    templateTitle: string
+  ) {
+    try {
+      await deleteTaskTemplate(templateId);
+
+      if (editingTemplateId === templateId) {
+        cancelEditingTemplate();
+      }
+
+      setTemplateMessage(
+        `Deleted the “${templateTitle}” template.`
+      );
+    } catch (error) {
+      setTemplateMessage(
+        error instanceof Error
+          ? error.message
+          : 'The task template could not be deleted.'
+      );
+    }
   }
 
   function toggleSelectedWeekday(weekday: number) {
@@ -725,7 +882,9 @@ export default function InboxScreen() {
           {activeBrainDumps.length} brain dump note
           {activeBrainDumps.length === 1 ? '' : 's'} •{' '}
           {recurringRules.length} recurring schedule
-          {recurringRules.length === 1 ? '' : 's'}
+          {recurringRules.length === 1 ? '' : 's'} •{' '}
+          {taskTemplates.length} task template
+          {taskTemplates.length === 1 ? '' : 's'}
         </Text>
       </View>
 
@@ -1109,7 +1268,302 @@ export default function InboxScreen() {
                 : 'Create Recurring Task'}
             </Text>
           </Pressable>
+
+          <Pressable
+            style={styles.templateSaveButton}
+            onPress={handleSaveCurrentAsTemplate}
+          >
+            <Text style={styles.templateSaveButtonText}>
+              Save Details as Template
+            </Text>
+          </Pressable>
+
+          <Text style={styles.templateHelpText}>
+            Templates save the title, notes, priority, and linked goal.
+            Repeat settings stay in Manage Recurring Tasks.
+          </Text>
         </View>
+      </View>
+
+      <View
+        style={[
+          styles.section,
+          isDesktop && styles.fullWidthPanel,
+        ]}
+      >
+        <Pressable
+          style={[styles.managerHeader, styles.templateManagerHeader]}
+          onPress={() =>
+            setIsTaskTemplatesExpanded((current) => !current)
+          }
+          accessibilityRole="button"
+          accessibilityState={{
+            expanded: isTaskTemplatesExpanded,
+          }}
+        >
+          <View style={styles.transparent}>
+            <Text style={styles.sectionTitle}>Task Templates</Text>
+            <Text style={styles.sectionSubtitleNoMargin}>
+              {taskTemplates.length} saved template
+              {taskTemplates.length === 1 ? '' : 's'}
+            </Text>
+          </View>
+
+          <Text style={[styles.chevron, styles.templateChevron]}>
+            {isTaskTemplatesExpanded ? '▼' : '▶'}
+          </Text>
+        </Pressable>
+
+        {isTaskTemplatesExpanded ? (
+          <View style={styles.list}>
+            <Text style={styles.sectionSubtitleNoMargin}>
+              Reuse common one-time task details without rebuilding the
+              title, notes, priority, and goal link every time.
+            </Text>
+
+        {templateMessage ? (
+          <Text style={styles.templateMessage}>
+            {templateMessage}
+          </Text>
+        ) : null}
+
+        {taskTemplates.length === 0 ? (
+          <View style={styles.emptyCard}>
+            <Text style={styles.emptyTitle}>
+              No task templates yet
+            </Text>
+            <Text style={styles.emptyText}>
+              Fill out Quick Task, then choose Save Details as Template.
+            </Text>
+          </View>
+        ) : (
+          <View style={styles.cardGrid}>
+            {taskTemplates.map((template) => {
+              const linkedGoal = goals.find(
+                (goal) => goal.id === template.goalId
+              );
+              const isEditing =
+                editingTemplateId === template.id;
+
+              return (
+                <View
+                  key={template.id}
+                  style={[
+                    styles.taskCard,
+                    isWideDesktop && styles.halfWidthCard,
+                  ]}
+                >
+                  {isEditing ? (
+                    <View style={styles.form}>
+                      <Text style={styles.editTitle}>
+                        Edit Template
+                      </Text>
+
+                      <TextInput
+                        style={styles.input}
+                        value={editTemplateTitle}
+                        onChangeText={setEditTemplateTitle}
+                        placeholder="Template title"
+                      />
+
+                      <TextInput
+                        style={[styles.input, styles.notesInput]}
+                        value={editTemplateNotes}
+                        onChangeText={setEditTemplateNotes}
+                        placeholder="Notes... optional"
+                        multiline
+                      />
+
+                      <View style={styles.rowWrap}>
+                        {[0, 1, 2].map((level) => (
+                          <Pressable
+                            key={level}
+                            style={[
+                              styles.pill,
+                              editTemplatePriority === level &&
+                                styles.prioritySelected,
+                            ]}
+                            onPress={() =>
+                              setEditTemplatePriority(level)
+                            }
+                          >
+                            <Text
+                              style={[
+                                styles.pillText,
+                                editTemplatePriority === level &&
+                                  styles.selectedText,
+                              ]}
+                            >
+                              {getPriorityLabel(level)}
+                            </Text>
+                          </Pressable>
+                        ))}
+                      </View>
+
+                      <Text style={styles.pickerLabel}>
+                        Link to goal:
+                      </Text>
+                      <ScrollView
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        contentContainerStyle={styles.horizontalRow}
+                      >
+                        <Pressable
+                          style={[
+                            styles.pill,
+                            editTemplateGoalId === null &&
+                              styles.goalSelected,
+                          ]}
+                          onPress={() =>
+                            setEditTemplateGoalId(null)
+                          }
+                        >
+                          <Text
+                            style={[
+                              styles.pillText,
+                              editTemplateGoalId === null &&
+                                styles.selectedText,
+                            ]}
+                          >
+                            None
+                          </Text>
+                        </Pressable>
+
+                        {goals.map((goal) => (
+                          <Pressable
+                            key={goal.id}
+                            style={[
+                              styles.pill,
+                              editTemplateGoalId === goal.id &&
+                                styles.goalSelected,
+                            ]}
+                            onPress={() =>
+                              setEditTemplateGoalId(goal.id)
+                            }
+                          >
+                            <Text
+                              style={[
+                                styles.pillText,
+                                editTemplateGoalId === goal.id &&
+                                  styles.selectedText,
+                              ]}
+                              numberOfLines={1}
+                            >
+                              {goal.title}
+                            </Text>
+                          </Pressable>
+                        ))}
+                      </ScrollView>
+
+                      <View style={styles.rowWrap}>
+                        <Pressable
+                          style={[
+                            styles.smallButton,
+                            styles.doneButton,
+                          ]}
+                          onPress={handleSaveEditedTemplate}
+                        >
+                          <Text style={styles.buttonText}>Save</Text>
+                        </Pressable>
+
+                        <Pressable
+                          style={[
+                            styles.smallButton,
+                            styles.cancelButton,
+                          ]}
+                          onPress={cancelEditingTemplate}
+                        >
+                          <Text style={styles.buttonText}>Cancel</Text>
+                        </Pressable>
+                      </View>
+                    </View>
+                  ) : (
+                    <>
+                      <View style={styles.transparent}>
+                        <Text style={styles.taskTitle}>
+                          {template.title}
+                        </Text>
+                        <Text style={styles.taskMeta}>
+                          Priority: {getPriorityLabel(template.priority)}
+                        </Text>
+                        <Text style={styles.taskMeta}>
+                          Goal: {linkedGoal?.title ?? 'None'}
+                        </Text>
+                        {template.notes ? (
+                          <Text style={styles.taskNotes}>
+                            {template.notes}
+                          </Text>
+                        ) : null}
+                      </View>
+
+                      <View style={styles.rowWrap}>
+                        <Pressable
+                          style={[
+                            styles.smallButton,
+                            styles.templateUseButton,
+                          ]}
+                          onPress={() =>
+                            handleLoadTemplate(template)
+                          }
+                        >
+                          <Text style={styles.buttonText}>
+                            Load
+                          </Text>
+                        </Pressable>
+
+                        <Pressable
+                          style={[
+                            styles.smallButton,
+                            styles.doneButton,
+                          ]}
+                          onPress={() =>
+                            handleAddTaskFromTemplate(
+                              template.id,
+                              template.title
+                            )
+                          }
+                        >
+                          <Text style={styles.buttonText}>
+                            Add to Inbox
+                          </Text>
+                        </Pressable>
+
+                        <Pressable
+                          style={[
+                            styles.smallButton,
+                            styles.editButton,
+                          ]}
+                          onPress={() =>
+                            startEditingTemplate(template)
+                          }
+                        >
+                          <Text style={styles.buttonText}>Edit</Text>
+                        </Pressable>
+
+                        <Pressable
+                          style={[
+                            styles.smallButton,
+                            styles.deleteButton,
+                          ]}
+                          onPress={() =>
+                            handleDeleteTemplate(
+                              template.id,
+                              template.title
+                            )
+                          }
+                        >
+                          <Text style={styles.buttonText}>Delete</Text>
+                        </Pressable>
+                      </View>
+                    </>
+                  )}
+                </View>
+              );
+            })}
+          </View>
+        )}
+          </View>
+        ) : null}
       </View>
 
       <View
@@ -2930,6 +3384,32 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     fontSize: 16,
   },
+  templateSaveButton: {
+    borderWidth: 1,
+    borderColor: '#7c3aed',
+    padding: 13,
+    borderRadius: 12,
+    alignItems: 'center',
+    backgroundColor: '#f5f3ff',
+  },
+  templateSaveButtonText: {
+    color: '#6d28d9',
+    fontWeight: '800',
+    fontSize: 15,
+  },
+  templateHelpText: {
+    fontSize: 12,
+    lineHeight: 18,
+    color: '#6b7280',
+  },
+  templateMessage: {
+    marginBottom: 12,
+    padding: 12,
+    borderRadius: 10,
+    backgroundColor: '#ede9fe',
+    color: '#5b21b6',
+    fontWeight: '700',
+  },
   managerHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2941,11 +3421,18 @@ const styles = StyleSheet.create({
     borderColor: '#99f6e4',
     backgroundColor: '#f0fdfa',
   },
+  templateManagerHeader: {
+    borderColor: '#ddd6fe',
+    backgroundColor: '#f5f3ff',
+  },
   transparent: { backgroundColor: 'transparent' },
   chevron: {
     fontSize: 18,
     fontWeight: '900',
     color: '#0f766e',
+  },
+  templateChevron: {
+    color: '#6d28d9',
   },
   list: { gap: 12, marginTop: 14 },
   ruleCard: {
@@ -3066,6 +3553,7 @@ const styles = StyleSheet.create({
   },
   buttonText: { color: 'white', fontWeight: '700' },
   editButton: { backgroundColor: '#2563eb' },
+  templateUseButton: { backgroundColor: '#7c3aed' },
   doneButton: { backgroundColor: '#16a34a' },
   pauseButton: { backgroundColor: '#f59e0b' },
   resumeButton: { backgroundColor: '#16a34a' },

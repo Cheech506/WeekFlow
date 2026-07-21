@@ -10,15 +10,17 @@ import type {
   RecurringRule,
 } from './recurringStorage';
 import type { Task } from './taskStorage';
+import type { TaskTemplate } from './taskTemplateStorage';
 
 export const BACKUP_FORMAT = 'weekflow-backup';
-export const BACKUP_VERSION = 3;
+export const BACKUP_VERSION = 4;
 export const BACKUP_DATA_MODEL_VERSION = 1;
 
 export type BackupCounts = {
   tasks: number;
   goals: number;
   brainDumps: number;
+  taskTemplates: number;
   recurringRules: number;
   recurringExceptions: number;
 };
@@ -44,11 +46,24 @@ type LegacyWeekFlowBackupV1 = {
   };
 };
 
+type LegacyBackupDataWithoutTemplates = Omit<
+  WeekFlowBackup['data'],
+  'taskTemplates'
+>;
+
 type LegacyWeekFlowBackupV2 = {
   format: typeof BACKUP_FORMAT;
   version: 2;
   exportedAt: string;
-  data: WeekFlowBackup['data'];
+  data: LegacyBackupDataWithoutTemplates;
+};
+
+type LegacyWeekFlowBackupV3 = {
+  format: typeof BACKUP_FORMAT;
+  version: 3;
+  exportedAt: string;
+  metadata: BackupMetadata;
+  data: LegacyBackupDataWithoutTemplates;
 };
 
 export type WeekFlowBackup = {
@@ -60,13 +75,14 @@ export type WeekFlowBackup = {
     tasks: Task[];
     goals: StoredGoal[];
     brainDumps: StoredBrainDump[];
+    taskTemplates: TaskTemplate[];
     recurringRules: RecurringRule[];
     recurringExceptions: RecurringOccurrenceException[];
   };
 };
 
 export type BackupPreview = {
-  sourceVersion: 1 | 2 | typeof BACKUP_VERSION;
+  sourceVersion: 1 | 2 | 3 | typeof BACKUP_VERSION;
   currentVersion: typeof BACKUP_VERSION;
   exportedAt: string;
   appVersion: string;
@@ -391,6 +407,63 @@ function validateBrainDump(
   }
 }
 
+function validateTaskTemplate(
+  value: unknown,
+  label: string
+): asserts value is TaskTemplate {
+  if (!isRecord(value)) {
+    fail('INVALID_TASK_TEMPLATE', `${label} is not an object.`);
+  }
+
+  if (!isPositiveInteger(value.id)) {
+    fail('INVALID_TASK_TEMPLATE', `${label} has an invalid ID.`);
+  }
+
+  if (
+    typeof value.title !== 'string' ||
+    value.title.trim().length === 0
+  ) {
+    fail('INVALID_TASK_TEMPLATE', `${label} has an empty title.`);
+  }
+
+  if (!isNullableString(value.notes)) {
+    fail('INVALID_TASK_TEMPLATE', `${label} has invalid notes.`);
+  }
+
+  if (
+    typeof value.priority !== 'number' ||
+    !Number.isInteger(value.priority) ||
+    value.priority < 0 ||
+    value.priority > 2
+  ) {
+    fail(
+      'INVALID_TASK_TEMPLATE',
+      `${label} has an invalid priority. Expected 0, 1, or 2.`
+    );
+  }
+
+  if (!isNullableInteger(value.goalId)) {
+    fail(
+      'INVALID_TASK_TEMPLATE',
+      `${label} has an invalid goal link.`
+    );
+  }
+
+  if (!isIsoTimestamp(value.createdAt)) {
+    fail(
+      'INVALID_TASK_TEMPLATE',
+      `${label} has an invalid created timestamp.`
+    );
+  }
+
+  if (!isIsoTimestamp(value.updatedAt)) {
+    fail(
+      'INVALID_TASK_TEMPLATE',
+      `${label} has an invalid updated timestamp.`
+    );
+  }
+}
+
 function validateRecurringRule(
   value: unknown,
   label: string
@@ -663,6 +736,20 @@ function validateRelationships(
     );
   }
 
+  const templateWithMissingGoal =
+    backup.data.taskTemplates.find(
+      (template) =>
+        template.goalId !== null &&
+        !goalIds.has(template.goalId)
+    );
+
+  if (templateWithMissingGoal) {
+    fail(
+      'MISSING_GOAL',
+      `Task template "${templateWithMissingGoal.title}" is linked to a goal that is not included in the backup.`
+    );
+  }
+
   const ruleWithMissingGoal =
     backup.data.recurringRules.find(
       (rule) =>
@@ -708,7 +795,8 @@ function validateRelationships(
 }
 
 function validateData(
-  value: Record<string, unknown>
+  value: Record<string, unknown>,
+  requireTaskTemplates: boolean = true
 ): WeekFlowBackup['data'] {
   const requiredArrays = [
     'tasks',
@@ -727,9 +815,22 @@ function validateData(
     }
   }
 
+  if (
+    requireTaskTemplates &&
+    !Array.isArray(value.taskTemplates)
+  ) {
+    fail(
+      'MISSING_SECTION',
+      'The backup is missing the taskTemplates list.'
+    );
+  }
+
   const tasks = value.tasks as unknown[];
   const goals = value.goals as unknown[];
   const brainDumps = value.brainDumps as unknown[];
+  const taskTemplates = Array.isArray(value.taskTemplates)
+    ? (value.taskTemplates as unknown[])
+    : [];
   const recurringRules = value.recurringRules as unknown[];
   const recurringExceptions =
     value.recurringExceptions as unknown[];
@@ -746,6 +847,13 @@ function validateData(
     validateBrainDump(
       brainDump,
       `Brain Dump ${index + 1}`
+    )
+  );
+
+  taskTemplates.forEach((template, index) =>
+    validateTaskTemplate(
+      template,
+      `Task template ${index + 1}`
     )
   );
 
@@ -767,6 +875,7 @@ function validateData(
     tasks: tasks as Task[],
     goals: goals as StoredGoal[],
     brainDumps: brainDumps as StoredBrainDump[],
+    taskTemplates: taskTemplates as TaskTemplate[],
     recurringRules: recurringRules as RecurringRule[],
     recurringExceptions:
       recurringExceptions as RecurringOccurrenceException[],
@@ -792,6 +901,7 @@ function normalizeLegacyBackupV1(
       })),
       goals: backup.data.goals,
       brainDumps: backup.data.brainDumps,
+      taskTemplates: [],
       recurringRules: [],
       recurringExceptions: [],
     },
@@ -808,6 +918,23 @@ function normalizeLegacyBackupV2(
       appVersion: 'legacy-v2',
       dataModelVersion: BACKUP_DATA_MODEL_VERSION,
     },
+    data: {
+      ...backup.data,
+      taskTemplates: [],
+    },
+  };
+}
+
+function normalizeLegacyBackupV3(
+  backup: LegacyWeekFlowBackupV3
+): WeekFlowBackup {
+  return {
+    ...backup,
+    version: BACKUP_VERSION,
+    data: {
+      ...backup.data,
+      taskTemplates: [],
+    },
   };
 }
 
@@ -817,6 +944,10 @@ function validateNormalizedBackup(
   assertUniqueIds(backup.data.tasks, 'task');
   assertUniqueIds(backup.data.goals, 'goal');
   assertUniqueIds(backup.data.brainDumps, 'Brain Dump');
+  assertUniqueIds(
+    backup.data.taskTemplates,
+    'task template'
+  );
   assertUniqueIds(
     backup.data.recurringRules,
     'recurring schedule'
@@ -838,6 +969,7 @@ export function getBackupCounts(
     tasks: backup.data.tasks.length,
     goals: backup.data.goals.length,
     brainDumps: backup.data.brainDumps.length,
+    taskTemplates: backup.data.taskTemplates.length,
     recurringRules:
       backup.data.recurringRules.length,
     recurringExceptions:
@@ -928,12 +1060,23 @@ export function inspectWeekFlowBackup(
       value as unknown as LegacyWeekFlowBackupV1
     );
   } else if (sourceVersion === 2) {
-    const data = validateData(value.data);
+    const data = validateData(value.data, false);
 
     backup = normalizeLegacyBackupV2({
       format: BACKUP_FORMAT,
       version: 2,
       exportedAt: value.exportedAt,
+      data,
+    });
+  } else if (sourceVersion === 3) {
+    validateMetadata(value.metadata);
+    const data = validateData(value.data, false);
+
+    backup = normalizeLegacyBackupV3({
+      format: BACKUP_FORMAT,
+      version: 3,
+      exportedAt: value.exportedAt,
+      metadata: value.metadata,
       data,
     });
   } else if (sourceVersion === BACKUP_VERSION) {

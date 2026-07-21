@@ -51,6 +51,17 @@ async function repairOrphanedRelationships(
   `);
 
   await db.runAsync(`
+    UPDATE task_templates
+    SET goal_id = NULL
+    WHERE goal_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1
+        FROM goals
+        WHERE goals.id = task_templates.goal_id
+      );
+  `);
+
+  await db.runAsync(`
     UPDATE tasks
     SET recurring_rule_id = NULL,
         recurrence_occurrence_date = NULL
@@ -118,6 +129,28 @@ async function createRelationshipTriggers(
       )
     BEGIN
       SELECT RAISE(ABORT, 'Task goal does not exist.');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS
+      trg_templates_goal_exists_insert
+    BEFORE INSERT ON task_templates
+    WHEN NEW.goal_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM goals WHERE id = NEW.goal_id
+      )
+    BEGIN
+      SELECT RAISE(ABORT, 'Task template goal does not exist.');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS
+      trg_templates_goal_exists_update
+    BEFORE UPDATE OF goal_id ON task_templates
+    WHEN NEW.goal_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM goals WHERE id = NEW.goal_id
+      )
+    BEGIN
+      SELECT RAISE(ABORT, 'Task template goal does not exist.');
     END;
 
     CREATE TRIGGER IF NOT EXISTS
@@ -235,6 +268,10 @@ async function createRelationshipTriggers(
       WHERE goal_id = OLD.id;
 
       UPDATE recurring_rules
+      SET goal_id = NULL
+      WHERE goal_id = OLD.id;
+
+      UPDATE task_templates
       SET goal_id = NULL
       WHERE goal_id = OLD.id;
     END;
@@ -419,6 +456,16 @@ async function runMigrations() {
       archived_at TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS task_templates (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      notes TEXT,
+      priority INTEGER NOT NULL DEFAULT 0,
+      goal_id INTEGER,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS recurring_rules (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       title TEXT NOT NULL,
@@ -499,6 +546,10 @@ async function runMigrations() {
     CREATE INDEX IF NOT EXISTS
       idx_tasks_due_date
     ON tasks (due_date);
+
+    CREATE INDEX IF NOT EXISTS
+      idx_task_templates_updated_at
+    ON task_templates (updated_at DESC);
 
     CREATE INDEX IF NOT EXISTS
       idx_recurring_rules_active

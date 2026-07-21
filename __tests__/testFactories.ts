@@ -2,6 +2,7 @@ import type { StoredBrainDump } from '../lib/brainDumpStorage';
 import type { StoredGoal } from '../lib/goalStorage';
 import type { RecurringRule } from '../lib/recurringStorage';
 import type { Task } from '../lib/taskStorage';
+import type { TaskTemplate } from '../lib/taskTemplateStorage';
 
 let nextId = 1;
 
@@ -59,6 +60,24 @@ export function makeBrainDump(
     archived: false,
     createdAt: new Date(2026, 5, 1, 12).toISOString(),
     archivedAt: null,
+    ...overrides,
+  };
+}
+
+
+export function makeTaskTemplate(
+  overrides: Partial<TaskTemplate> = {}
+): TaskTemplate {
+  const id = overrides.id ?? nextId++;
+
+  return {
+    id,
+    title: `Task template ${id}`,
+    notes: null,
+    priority: 0,
+    goalId: null,
+    createdAt: new Date(2026, 5, 1, 12).toISOString(),
+    updatedAt: new Date(2026, 5, 1, 12).toISOString(),
     ...overrides,
   };
 }

@@ -18,6 +18,7 @@ import {
   makeGoal,
   makeRecurringRule,
   makeTask,
+  makeTaskTemplate,
   resetFactoryIds,
 } from './testFactories';
 
@@ -55,6 +56,13 @@ function makeValidBackup(): WeekFlowBackup {
       ],
       goals: [goal],
       brainDumps: [makeBrainDump({ id: 20 })],
+      taskTemplates: [
+        makeTaskTemplate({
+          id: 30,
+          goalId: 1,
+          priority: 2,
+        }),
+      ],
       recurringRules: [rule],
       recurringExceptions: [
         {
@@ -85,6 +93,7 @@ describe('backup validation', () => {
         tasks: 2,
         goals: 1,
         brainDumps: 1,
+        taskTemplates: 1,
         recurringRules: 1,
         recurringExceptions: 1,
       },
@@ -122,6 +131,7 @@ describe('backup validation', () => {
     expect(result.preview.sourceVersion).toBe(1);
     expect(result.backup.version).toBe(BACKUP_VERSION);
     expect(result.backup.data.recurringRules).toEqual([]);
+    expect(result.backup.data.taskTemplates).toEqual([]);
     expect(
       result.backup.data.tasks[0].recurringRuleId
     ).toBeNull();
@@ -133,7 +143,13 @@ describe('backup validation', () => {
       format: current.format,
       version: 2,
       exportedAt: current.exportedAt,
-      data: current.data,
+      data: {
+        tasks: current.data.tasks,
+        goals: current.data.goals,
+        brainDumps: current.data.brainDumps,
+        recurringRules: current.data.recurringRules,
+        recurringExceptions: current.data.recurringExceptions,
+      },
     };
 
     const result =
@@ -142,6 +158,29 @@ describe('backup validation', () => {
     expect(result.preview.sourceVersion).toBe(2);
     expect(result.backup.version).toBe(BACKUP_VERSION);
     expect(result.backup.metadata.appVersion).toBe('legacy-v2');
+  });
+
+  test('upgrades a valid version 3 backup without templates', () => {
+    const current = makeValidBackup();
+    const versionThreeBackup = {
+      format: current.format,
+      version: 3,
+      exportedAt: current.exportedAt,
+      metadata: current.metadata,
+      data: {
+        tasks: current.data.tasks,
+        goals: current.data.goals,
+        brainDumps: current.data.brainDumps,
+        recurringRules: current.data.recurringRules,
+        recurringExceptions: current.data.recurringExceptions,
+      },
+    };
+
+    const result = inspectWeekFlowBackup(versionThreeBackup);
+
+    expect(result.preview.sourceVersion).toBe(3);
+    expect(result.backup.version).toBe(BACKUP_VERSION);
+    expect(result.backup.data.taskTemplates).toEqual([]);
   });
 
   test('accepts JSON with a UTF-8 byte-order mark', () => {
@@ -211,6 +250,17 @@ describe('backup validation', () => {
       parseWeekFlowBackup(backup)
     ).toThrow(
       `Task "${backup.data.tasks[0].title}" is linked to a goal`
+    );
+  });
+
+  test('names a task template linked to a missing goal', () => {
+    const backup = makeValidBackup();
+    backup.data.taskTemplates[0].goalId = 999;
+
+    expect(() =>
+      parseWeekFlowBackup(backup)
+    ).toThrow(
+      `Task template "${backup.data.taskTemplates[0].title}" is linked to a goal`
     );
   });
 

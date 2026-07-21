@@ -8,6 +8,13 @@ import {
 
 import { getLocalDateKey } from '@/lib/dateUtils';
 import {
+  deleteTaskTemplateById,
+  getTaskTemplates,
+  insertTaskTemplate,
+  updateTaskTemplateById,
+  type TaskTemplate,
+} from '@/lib/taskTemplateStorage';
+import {
   convertTaskToRecurringRule,
   deleteRecurringRuleById,
   ensureRecurringOccurrences,
@@ -43,13 +50,30 @@ export type {
   UpdateRecurringRuleFromOccurrenceInput,
   UpdateRecurringRuleInput,
   Task,
+  TaskTemplate,
 };
 
 type TaskContextValue = {
   tasks: Task[];
   recurringRules: RecurringRule[];
+  taskTemplates: TaskTemplate[];
   isLoading: boolean;
   refreshTasks: () => Promise<void>;
+  addTaskTemplate: (
+    title: string,
+    notes?: string,
+    priority?: number,
+    goalId?: number | null
+  ) => Promise<void>;
+  editTaskTemplate: (
+    id: number,
+    title: string,
+    notes?: string,
+    priority?: number,
+    goalId?: number | null
+  ) => Promise<void>;
+  deleteTaskTemplate: (id: number) => Promise<void>;
+  addTaskFromTemplate: (id: number) => Promise<void>;
   addTask: (
     title: string,
     day: string,
@@ -106,6 +130,9 @@ export function TaskProvider({ children }: { children: ReactNode }) {
   const [recurringRules, setRecurringRules] = useState<
     RecurringRule[]
   >([]);
+  const [taskTemplates, setTaskTemplates] = useState<
+    TaskTemplate[]
+  >([]);
   const [isLoading, setIsLoading] = useState(true);
 
   async function loadTasks() {
@@ -114,13 +141,16 @@ export function TaskProvider({ children }: { children: ReactNode }) {
     try {
       await ensureRecurringOccurrences();
 
-      const [loadedTasks, loadedRules] = await Promise.all([
-        getTasks(),
-        getRecurringRules(),
-      ]);
+      const [loadedTasks, loadedRules, loadedTemplates] =
+        await Promise.all([
+          getTasks(),
+          getRecurringRules(),
+          getTaskTemplates(),
+        ]);
 
       setTasks(loadedTasks);
       setRecurringRules(loadedRules);
+      setTaskTemplates(loadedTemplates);
     } catch (error) {
       console.error('Failed to load tasks:', error);
     } finally {
@@ -131,6 +161,62 @@ export function TaskProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     loadTasks();
   }, []);
+
+  async function addTaskTemplate(
+    title: string,
+    notes: string = '',
+    priority: number = 0,
+    goalId: number | null = null
+  ) {
+    await insertTaskTemplate(
+      title,
+      notes,
+      priority,
+      goalId
+    );
+    await loadTasks();
+  }
+
+  async function editTaskTemplate(
+    id: number,
+    title: string,
+    notes: string = '',
+    priority: number = 0,
+    goalId: number | null = null
+  ) {
+    await updateTaskTemplateById(
+      id,
+      title,
+      notes,
+      priority,
+      goalId
+    );
+    await loadTasks();
+  }
+
+  async function deleteTaskTemplate(id: number) {
+    await deleteTaskTemplateById(id);
+    await loadTasks();
+  }
+
+  async function addTaskFromTemplate(id: number) {
+    const template = taskTemplates.find(
+      (item) => item.id === id
+    );
+
+    if (!template) {
+      throw new Error('The task template could not be found.');
+    }
+
+    await insertTask(
+      template.title,
+      'Inbox',
+      template.notes ?? '',
+      template.priority,
+      template.goalId
+    );
+    await loadTasks();
+  }
 
   async function addTask(
     title: string,
@@ -286,8 +372,13 @@ export function TaskProvider({ children }: { children: ReactNode }) {
       value={{
         tasks,
         recurringRules,
+        taskTemplates,
         isLoading,
         refreshTasks: loadTasks,
+        addTaskTemplate,
+        editTaskTemplate,
+        deleteTaskTemplate,
+        addTaskFromTemplate,
         addTask,
         createRecurringTask,
         convertTaskToRecurring,
