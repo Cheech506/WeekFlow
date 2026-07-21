@@ -6,10 +6,15 @@ import {
   useWindowDimensions,
 } from 'react-native';
 
+import { ActiveTaskFilters } from '@/components/ActiveTaskFilters';
 import { Text, View } from '@/components/Themed';
 import { useBrainDumps } from '@/context/BrainDumpContext';
 import { useGoals } from '@/context/GoalContext';
 import { useTasks } from '@/context/TaskContext';
+import {
+  createDefaultActiveTaskFilters,
+  filterActiveTasks,
+} from '@/lib/activeTaskFilters';
 import {
   formatDateKey,
   getLocalDateKey,
@@ -36,6 +41,9 @@ export default function WeeklyScreen() {
   const { width } = useWindowDimensions();
   const [weekOffset, setWeekOffset] = useState(0);
   const [isReviewExpanded, setIsReviewExpanded] = useState(true);
+  const [taskFilters, setTaskFilters] = useState(
+    createDefaultActiveTaskFilters()
+  );
 
   const columnCount = getColumnCount(width);
   const isDesktopWeek = columnCount === 7;
@@ -122,6 +130,22 @@ export default function WeeklyScreen() {
     weeklyReview.status === 'future'
       ? weeklyReview.scheduledGoalCount
       : weeklyReview.goalsProgressedCount;
+
+  const weekTasks = useMemo(
+    () =>
+      tasks.filter(
+        (task) =>
+          !task.completed &&
+          task.dueDate !== null &&
+          task.dueDate >= firstDate &&
+          task.dueDate <= lastDate
+      ),
+    [tasks, firstDate, lastDate]
+  );
+  const filteredWeekTasks = useMemo(
+    () => filterActiveTasks(weekTasks, taskFilters),
+    [weekTasks, taskFilters]
+  );
 
   return (
     <ScrollView
@@ -307,9 +331,23 @@ export default function WeeklyScreen() {
         ) : null}
       </View>
 
+      <ActiveTaskFilters
+        goals={goals}
+        filters={taskFilters}
+        onChange={setTaskFilters}
+        totalCount={weekTasks.length}
+        resultCount={filteredWeekTasks.length}
+        scheduleChoices={['all', 'overdue', 'today', 'upcoming']}
+      />
+
       <View style={[styles.weekGrid, { gap: gridGap }]}>
         {weekDays.map((calendarDay) => {
-          const dayTasks = getActiveTasksByDate(calendarDay.dateKey);
+          const unfilteredDayTasks = getActiveTasksByDate(
+            calendarDay.dateKey
+          );
+          const dayTasks = filteredWeekTasks.filter(
+            (task) => task.dueDate === calendarDay.dateKey
+          );
 
           return (
             <View
@@ -365,7 +403,9 @@ export default function WeeklyScreen() {
               {dayTasks.length === 0 ? (
                 <View style={styles.emptyDayCard}>
                   <Text style={styles.emptyDayText}>
-                    Nothing scheduled.
+                    {unfilteredDayTasks.length > 0
+                      ? 'No matches for current filters.'
+                      : 'Nothing scheduled.'}
                   </Text>
                 </View>
               ) : (

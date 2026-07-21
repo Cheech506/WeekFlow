@@ -1,3 +1,4 @@
+import { useMemo, useState } from 'react';
 import {
   Pressable,
   ScrollView,
@@ -5,10 +6,15 @@ import {
   useWindowDimensions,
 } from 'react-native';
 
+import { ActiveTaskFilters } from '@/components/ActiveTaskFilters';
 import { Text, View } from '@/components/Themed';
 import { useBrainDumps } from '@/context/BrainDumpContext';
 import { useGoals } from '@/context/GoalContext';
 import { useTasks } from '@/context/TaskContext';
+import {
+  createDefaultActiveTaskFilters,
+  filterActiveTasks,
+} from '@/lib/activeTaskFilters';
 import {
   formatDateKey,
   getLocalDateKey,
@@ -35,6 +41,9 @@ function formatCreatedDate(value: string) {
 
 export default function DailyScreen() {
   const { width } = useWindowDimensions();
+  const [taskFilters, setTaskFilters] = useState(
+    createDefaultActiveTaskFilters()
+  );
 
   const isDesktop = width >= 1100;
   const isWideDesktop = width >= 1400;
@@ -71,6 +80,17 @@ export default function DailyScreen() {
   });
   const activeTasks = getActiveTasksByDate(todayDateKey);
   const overdueTasks = getOverdueTasks();
+  const filteredActiveTasks = useMemo(
+    () => filterActiveTasks(activeTasks, taskFilters),
+    [activeTasks, taskFilters]
+  );
+  const filteredOverdueTasks = useMemo(
+    () => filterActiveTasks(overdueTasks, taskFilters),
+    [overdueTasks, taskFilters]
+  );
+  const totalActiveTaskCount = activeTasks.length + overdueTasks.length;
+  const filteredActiveTaskCount =
+    filteredActiveTasks.length + filteredOverdueTasks.length;
 
   // This is here to check for Overdue tasks
   // const overdueTasks = getOverdueTasks(testNow);
@@ -129,7 +149,17 @@ export default function DailyScreen() {
         </Text>
       </View>
 
-      {overdueTasks.length > 0 ? (
+      <ActiveTaskFilters
+        goals={goals}
+        filters={taskFilters}
+        onChange={setTaskFilters}
+        totalCount={totalActiveTaskCount}
+        resultCount={filteredActiveTaskCount}
+        scheduleChoices={['all', 'overdue', 'today']}
+        defaultExpanded={false}
+      />
+
+      {filteredOverdueTasks.length > 0 ? (
         <View
           style={[
             styles.overdueSection,
@@ -151,7 +181,7 @@ export default function DailyScreen() {
               isDesktop && styles.cardGrid,
             ]}
           >
-            {overdueTasks.map((task) => {
+            {filteredOverdueTasks.map((task) => {
               const linkedGoal = goals.find(
                 (goal) => goal.id === task.goalId
               );
@@ -464,8 +494,18 @@ export default function DailyScreen() {
                 something needs to be done.
               </Text>
             </View>
+          ) : filteredActiveTasks.length === 0 ? (
+            <View style={styles.emptyCard}>
+              <Text style={styles.emptyTitle}>
+                No today tasks match these filters
+              </Text>
+
+              <Text style={styles.emptyText}>
+                Clear or adjust Search & Filters to show more tasks.
+              </Text>
+            </View>
           ) : (
-            activeTasks.map((task) => {
+            filteredActiveTasks.map((task) => {
               const linkedGoal = goals.find(
                 (goal) => goal.id === task.goalId
               );

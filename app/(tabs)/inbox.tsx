@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   Pressable,
   ScrollView,
@@ -7,6 +7,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 
+import { ActiveTaskFilters } from '@/components/ActiveTaskFilters';
 import { Text, View } from '@/components/Themed';
 import { useBrainDumps } from '@/context/BrainDumpContext';
 import { useGoals } from '@/context/GoalContext';
@@ -16,6 +17,10 @@ import {
   type Task,
   useTasks,
 } from '@/context/TaskContext';
+import {
+  createDefaultActiveTaskFilters,
+  filterActiveTasks,
+} from '@/lib/activeTaskFilters';
 import {
   addDays,
   DAY_NAMES,
@@ -209,6 +214,9 @@ export default function InboxScreen() {
     useState<number | null>(null);
   const [isTaskTemplatesExpanded, setIsTaskTemplatesExpanded] =
     useState(false);
+  const [taskFilters, setTaskFilters] = useState(
+    createDefaultActiveTaskFilters()
+  );
 
   const [repeatChoice, setRepeatChoice] =
     useState<RepeatChoice>('none');
@@ -309,6 +317,10 @@ export default function InboxScreen() {
 
   const { goals } = useGoals();
   const inboxTasks = getInboxTasks();
+  const filteredInboxTasks = useMemo(
+    () => filterActiveTasks(inboxTasks, taskFilters),
+    [inboxTasks, taskFilters]
+  );
   const activeBrainDumps = getActiveBrainDumps();
   const scheduleOptions = getUpcomingDays(14);
   const todayKey = getLocalDateKey(new Date());
@@ -2251,6 +2263,16 @@ export default function InboxScreen() {
           Weekly.
         </Text>
 
+        <ActiveTaskFilters
+          goals={goals}
+          filters={taskFilters}
+          onChange={setTaskFilters}
+          totalCount={inboxTasks.length}
+          resultCount={filteredInboxTasks.length}
+          scheduleChoices={['all', 'unscheduled']}
+          showDueDate={false}
+        />
+
         <View
           style={[
             styles.list,
@@ -2266,8 +2288,17 @@ export default function InboxScreen() {
                 Add a task when you need to capture something.
               </Text>
             </View>
+          ) : filteredInboxTasks.length === 0 ? (
+            <View style={styles.emptyCard}>
+              <Text style={styles.emptyTitle}>
+                No tasks match these filters
+              </Text>
+              <Text style={styles.emptyText}>
+                Clear or adjust Search & Filters to show more Inbox tasks.
+              </Text>
+            </View>
           ) : (
-            inboxTasks.map((task) => {
+            filteredInboxTasks.map((task) => {
               const linkedGoal = goals.find(
                 (goal) => goal.id === task.goalId
               );
