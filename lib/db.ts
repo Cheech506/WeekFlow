@@ -456,6 +456,15 @@ async function runMigrations() {
       archived_at TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS planning_cycles (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      start_date TEXT NOT NULL,
+      end_date TEXT NOT NULL,
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL,
+      completed_at TEXT
+    );
+
     CREATE TABLE IF NOT EXISTS task_templates (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       title TEXT NOT NULL,
@@ -554,6 +563,11 @@ async function runMigrations() {
     CREATE INDEX IF NOT EXISTS
       idx_recurring_rules_active
     ON recurring_rules (active);
+
+    CREATE UNIQUE INDEX IF NOT EXISTS
+      idx_planning_cycles_single_active
+    ON planning_cycles (active)
+    WHERE active = 1;
   `);
 
   await createRelationshipTriggers(db);

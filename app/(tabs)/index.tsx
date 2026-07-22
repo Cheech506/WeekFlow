@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Pressable,
   ScrollView,
@@ -8,6 +8,7 @@ import {
 } from 'react-native';
 
 import { Text, View } from '@/components/Themed';
+import { useCycle } from '@/context/CycleContext';
 import { useGoals } from '@/context/GoalContext';
 import { useTasks } from '@/context/TaskContext';
 import {
@@ -15,6 +16,17 @@ import {
   getGoalDateKey,
   validateGoalDateRange,
 } from '@/lib/goalUtils';
+import {
+  formatDateKey,
+  getLocalDateKey,
+} from '@/lib/dateUtils';
+import {
+  createPlanningCycleRange,
+  getNextPlanningCycleStartDate,
+  getPlanningCycleProgress,
+  getTimestampDateKey,
+  isDateKeyWithinCycle,
+} from '@/lib/cycleUtils';
 
 function formatGoalDate(value: string) {
   const date = new Date(value);
@@ -123,6 +135,12 @@ export default function TwelveWeekGoalsScreen() {
   const [editEndDate, setEditEndDate] = useState('');
   const [editMessage, setEditMessage] = useState('');
 
+  const [cycleStartDate, setCycleStartDate] = useState(
+    getLocalDateKey(new Date())
+  );
+  const [cycleMessage, setCycleMessage] = useState('');
+  const [isEditingCycle, setIsEditingCycle] = useState(false);
+
   /*
    * Each goal keeps its own local expanded/collapsed state.
    * This is intentionally UI-only state, so opening the linked-task
@@ -130,6 +148,14 @@ export default function TwelveWeekGoalsScreen() {
    */
   const [expandedLinkedTaskGoals, setExpandedLinkedTaskGoals] =
     useState<Record<number, boolean>>({});
+
+  const {
+    cycles,
+    currentCycle,
+    isLoading: isCycleLoading,
+    startCycle,
+    editCurrentCycle,
+  } = useCycle();
 
   const {
     goals,
@@ -142,6 +168,50 @@ export default function TwelveWeekGoalsScreen() {
 
   const { tasks } = useTasks();
 
+  const cycleProgress = currentCycle
+    ? getPlanningCycleProgress(
+        currentCycle.startDate,
+        currentCycle.endDate
+      )
+    : null;
+
+  let cycleRangePreview: {
+    startDate: string;
+    endDate: string;
+  } | null = null;
+  let cycleDateError = '';
+
+  try {
+    cycleRangePreview = createPlanningCycleRange(
+      cycleStartDate
+    );
+  } catch (error) {
+    cycleDateError =
+      error instanceof Error
+        ? error.message
+        : 'The cycle start date is invalid.';
+  }
+
+  useEffect(() => {
+    if (!currentCycle || !cycleProgress) return;
+
+    const suggestedStart =
+      cycleProgress.state === 'complete'
+        ? getNextPlanningCycleStartDate(
+            currentCycle.endDate
+          )
+        : currentCycle.startDate;
+
+    setCycleStartDate(suggestedStart);
+    setCycleMessage('');
+    setIsEditingCycle(false);
+  }, [
+    currentCycle?.id,
+    currentCycle?.startDate,
+    currentCycle?.endDate,
+    cycleProgress?.state,
+  ]);
+
   const activeGoals = goals.filter((goal) => !goal.completed);
   const addGoalDateFeedback = getGoalDateFeedback(
     goalStartDate,
@@ -152,29 +222,157 @@ export default function TwelveWeekGoalsScreen() {
     editEndDate
   );
 
-  const completedGoalCount = goals.filter(
-    (goal) => goal.completed
+  const cycleGoals = currentCycle
+    ? goals.filter((goal) => {
+        const goalStartDate = getGoalDateKey(goal.startDate);
+        const goalEndDate = getGoalDateKey(goal.endDate);
+
+        return (
+          goalStartDate <= currentCycle.endDate &&
+          goalEndDate >= currentCycle.startDate
+        );
+      })
+    : [];
+
+  const completedGoalsThisCycle = currentCycle
+    ? goals.filter((goal) =>
+        isDateKeyWithinCycle(
+          getTimestampDateKey(goal.completedAt),
+          currentCycle.startDate,
+          currentCycle.endDate
+        )
+      ).length
+    : 0;
+
+  const completedTasksThisCycle = currentCycle
+    ? tasks.filter((task) =>
+        isDateKeyWithinCycle(
+          getTimestampDateKey(task.completedAt),
+          currentCycle.startDate,
+          currentCycle.endDate
+        )
+      ).length
+    : 0;
+
+  const activeCycleGoalCount = cycleGoals.filter(
+    (goal) => !goal.completed
   ).length;
 
-  /*
-   * These totals summarize every task that is connected to a goal.
-   * Tasks without a goal are not included in goal progress.
-   */
-  const allLinkedTasks = tasks.filter(
-    (task) => task.goalId !== null
+  const cycleGoalIds = new Set(
+    cycleGoals.map((goal) => goal.id)
   );
 
-  const completedLinkedTaskCount = allLinkedTasks.filter(
+  /*
+   * Goal progress inside the cycle only includes tasks linked to goals
+   * that overlap the current planning cycle. This keeps the goal-progress
+   * percentage separate from the broader count of every task completed
+   * during the cycle.
+   */
+  const cycleLinkedTasks = currentCycle
+    ? tasks.filter(
+        (task) =>
+          task.goalId !== null &&
+          cycleGoalIds.has(task.goalId)
+      )
+    : [];
+
+  const completedCycleLinkedTaskCount = cycleLinkedTasks.filter(
     (task) => task.completed
   ).length;
 
-  const activeLinkedTaskCount =
-    allLinkedTasks.length - completedLinkedTaskCount;
+  const activeCycleLinkedTaskCount =
+    cycleLinkedTasks.length - completedCycleLinkedTaskCount;
 
-  const overallTaskProgress = calculateProgressPercentage(
-    completedLinkedTaskCount,
-    allLinkedTasks.length
+  const cycleLinkedTaskProgress = calculateProgressPercentage(
+    completedCycleLinkedTaskCount,
+    cycleLinkedTasks.length
   );
+
+  const unfinishedCycleTaskCount = currentCycle
+    ? tasks.filter((task) => {
+        if (task.completed) return false;
+
+        const isLinkedToCycleGoal =
+          task.goalId !== null &&
+          cycleGoalIds.has(task.goalId);
+        const isDueInsideCycle = isDateKeyWithinCycle(
+          task.dueDate,
+          currentCycle.startDate,
+          currentCycle.endDate
+        );
+
+        return isLinkedToCycleGoal || isDueInsideCycle;
+      }).length
+    : 0;
+
+  const cycleStatusLabel = !cycleProgress
+    ? ''
+    : cycleProgress.state === 'upcoming'
+      ? `Starts in ${cycleProgress.daysUntilStart} days`
+      : cycleProgress.state === 'complete'
+        ? 'Cycle Complete'
+        : `Week ${cycleProgress.weekNumber} of 12`;
+
+  async function handleStartPlanningCycle() {
+    if (cycleDateError || !cycleRangePreview) {
+      setCycleMessage(
+        cycleDateError ||
+          'Enter a valid cycle start date.'
+      );
+      return;
+    }
+
+    try {
+      await startCycle(cycleStartDate);
+      setCycleMessage('');
+      setIsEditingCycle(false);
+    } catch (error) {
+      setCycleMessage(
+        error instanceof Error
+          ? error.message
+          : 'The planning cycle could not be started.'
+      );
+    }
+  }
+
+  function beginEditingCycle() {
+    if (!currentCycle) return;
+
+    setCycleStartDate(currentCycle.startDate);
+    setCycleMessage('');
+    setIsEditingCycle(true);
+  }
+
+  function cancelEditingCycle() {
+    if (currentCycle) {
+      setCycleStartDate(currentCycle.startDate);
+    }
+
+    setCycleMessage('');
+    setIsEditingCycle(false);
+  }
+
+  async function handleSaveCycle() {
+    if (cycleDateError || !cycleRangePreview) {
+      setCycleMessage(
+        cycleDateError ||
+          'Enter a valid cycle start date.'
+      );
+      return;
+    }
+
+    try {
+      await editCurrentCycle(cycleStartDate);
+      setCycleMessage('');
+      setIsEditingCycle(false);
+    } catch (error) {
+      setCycleMessage(
+        error instanceof Error
+          ? error.message
+          : 'The planning cycle could not be updated.'
+      );
+    }
+  }
 
   function toggleLinkedTasks(goalId: number) {
     setExpandedLinkedTaskGoals((current) => ({
@@ -295,89 +493,385 @@ export default function TwelveWeekGoalsScreen() {
 
       <View
         style={[
-          styles.overviewCard,
-          isDesktop && styles.overviewDesktop,
+          styles.cycleCard,
+          isDesktop && styles.fullWidthPanel,
         ]}
       >
-        <Text style={styles.overviewTitle}>
-          12 Week Overview
-        </Text>
-
-        <Text style={styles.overviewSubtitle}>
-          Your goal status and linked-task progress.
-        </Text>
-
-        <View style={styles.overviewStatsGrid}>
-          <View style={styles.overviewStatBox}>
-            <Text style={styles.overviewStatNumber}>
-              {completedGoalCount}
-            </Text>
-
-            <Text style={styles.overviewStatLabel}>
-              Goals Completed
-            </Text>
-          </View>
-
-          <View style={styles.overviewStatBox}>
-            <Text style={styles.overviewStatNumber}>
-              {completedLinkedTaskCount}
-            </Text>
-
-            <Text style={styles.overviewStatLabel}>
-              Linked Tasks Done
-            </Text>
-          </View>
-
-          <View style={styles.overviewStatBox}>
-            <Text style={styles.overviewStatNumber}>
-              {activeLinkedTaskCount}
-            </Text>
-
-            <Text style={styles.overviewStatLabel}>
-              Tasks Remaining
-            </Text>
-          </View>
-
-          <View style={styles.overviewStatBox}>
-            <Text style={styles.overviewStatNumber}>
-              {overallTaskProgress}%
-            </Text>
-
-            <Text style={styles.overviewStatLabel}>
-              Task Progress
-            </Text>
-          </View>
-        </View>
-
-        <View style={styles.overallProgressSection}>
-          <View style={styles.progressHeaderRow}>
-            <Text style={styles.progressLabel}>
-              Overall linked-task progress
-            </Text>
-
-            <Text style={styles.progressPercentage}>
-              {overallTaskProgress}%
-            </Text>
-          </View>
-
-          <View style={styles.progressTrack}>
-            <View
-              style={[
-                styles.overallProgressFill,
-                {
-                  width: getProgressWidth(
-                    overallTaskProgress
-                  ),
-                },
-              ]}
-            />
-          </View>
-
-          <Text style={styles.progressExplanation}>
-            {completedLinkedTaskCount} of {allLinkedTasks.length}{' '}
-            linked tasks completed
+        {isCycleLoading ? (
+          <Text style={styles.cycleLoadingText}>
+            Loading your 12-week cycle...
           </Text>
-        </View>
+        ) : !currentCycle || !cycleProgress ? (
+          <>
+            <Text style={styles.cycleTitle}>
+              Start Your 12-Week Cycle
+            </Text>
+
+            <Text style={styles.cycleSubtitle}>
+              Choose the first day. WeekFlow will create one focused
+              84-day cycle and track where you are in it.
+            </Text>
+
+            <View style={styles.cycleForm}>
+              <View style={styles.cycleDateField}>
+                <Text style={styles.dateInputLabel}>
+                  Cycle start date
+                </Text>
+                <TextInput
+                  style={styles.dateInput}
+                  value={cycleStartDate}
+                  onChangeText={(value) => {
+                    setCycleStartDate(value);
+                    setCycleMessage('');
+                  }}
+                  placeholder="YYYY-MM-DD"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+              </View>
+
+              <View style={styles.cycleDatePreview}>
+                <Text style={styles.cycleDatePreviewLabel}>
+                  Calculated end date
+                </Text>
+                <Text style={styles.cycleDatePreviewValue}>
+                  {cycleRangePreview
+                    ? formatDateKey(cycleRangePreview.endDate)
+                    : 'Enter a valid start date'}
+                </Text>
+              </View>
+            </View>
+
+            {cycleMessage || cycleDateError ? (
+              <Text style={styles.dateErrorText}>
+                {cycleMessage || cycleDateError}
+              </Text>
+            ) : (
+              <Text style={styles.cycleHelpText}>
+                The cycle end date is fixed automatically at twelve
+                full weeks.
+              </Text>
+            )}
+
+            <Pressable
+              style={styles.startCycleButton}
+              onPress={handleStartPlanningCycle}
+            >
+              <Text style={styles.startCycleButtonText}>
+                Start 12-Week Cycle
+              </Text>
+            </Pressable>
+          </>
+        ) : (
+          <>
+            <View style={styles.cycleHeaderRow}>
+              <View style={styles.cycleHeaderText}>
+                <Text style={styles.cycleTitle}>
+                  Current 12-Week Cycle
+                </Text>
+
+                <Text style={styles.cycleSubtitle}>
+                  Cycle {cycles.length} •{' '}
+                  {formatDateKey(currentCycle.startDate)} →{' '}
+                  {formatDateKey(currentCycle.endDate)}
+                </Text>
+              </View>
+
+              <View
+                style={[
+                  styles.cycleStatusBadge,
+                  cycleProgress.state === 'complete' &&
+                    styles.cycleStatusComplete,
+                  cycleProgress.state === 'upcoming' &&
+                    styles.cycleStatusUpcoming,
+                ]}
+              >
+                <Text style={styles.cycleStatusText}>
+                  {cycleStatusLabel}
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.cycleProgressHeader}>
+              <Text style={styles.cycleProgressLabel}>
+                Calendar progress
+              </Text>
+              <Text style={styles.cycleProgressValue}>
+                {cycleProgress.progressPercentage}%
+              </Text>
+            </View>
+
+            <View style={styles.cycleProgressTrack}>
+              <View
+                style={[
+                  styles.cycleProgressFill,
+                  {
+                    width: getProgressWidth(
+                      cycleProgress.progressPercentage
+                    ),
+                  },
+                ]}
+              />
+            </View>
+
+            <View style={styles.cycleStatsGrid}>
+              <View style={styles.cycleStatBox}>
+                <Text style={styles.cycleStatNumber}>
+                  {cycleProgress.state === 'upcoming'
+                    ? cycleProgress.daysUntilStart
+                    : cycleProgress.daysRemaining}
+                </Text>
+                <Text style={styles.cycleStatLabel}>
+                  {cycleProgress.state === 'upcoming'
+                    ? 'Days Until Start'
+                    : 'Days Remaining'}
+                </Text>
+              </View>
+
+              <View style={styles.cycleStatBox}>
+                <Text style={styles.cycleStatNumber}>
+                  {activeCycleGoalCount}
+                </Text>
+                <Text style={styles.cycleStatLabel}>
+                  Active Goals
+                </Text>
+              </View>
+
+              <View style={styles.cycleStatBox}>
+                <Text style={styles.cycleStatNumber}>
+                  {completedGoalsThisCycle}
+                </Text>
+                <Text style={styles.cycleStatLabel}>
+                  Goals Finished
+                </Text>
+              </View>
+
+              <View style={styles.cycleStatBox}>
+                <Text style={styles.cycleStatNumber}>
+                  {completedTasksThisCycle}
+                </Text>
+                <Text style={styles.cycleStatLabel}>
+                  Tasks Finished
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.cycleGoalProgressCard}>
+              <View style={styles.cycleGoalProgressHeader}>
+                <Text style={styles.cycleGoalProgressTitle}>
+                  Goal progress in this cycle
+                </Text>
+                <Text style={styles.cycleGoalProgressSubtitle}>
+                  Tasks linked to goals that overlap this planning cycle.
+                </Text>
+              </View>
+
+              <View style={styles.cycleGoalStatsGrid}>
+                <View style={styles.cycleGoalStatBox}>
+                  <Text style={styles.cycleGoalStatNumber}>
+                    {completedGoalsThisCycle}
+                  </Text>
+                  <Text style={styles.cycleGoalStatLabel}>
+                    Goals Completed
+                  </Text>
+                </View>
+
+                <View style={styles.cycleGoalStatBox}>
+                  <Text style={styles.cycleGoalStatNumber}>
+                    {completedCycleLinkedTaskCount}
+                  </Text>
+                  <Text style={styles.cycleGoalStatLabel}>
+                    Linked Tasks Done
+                  </Text>
+                </View>
+
+                <View style={styles.cycleGoalStatBox}>
+                  <Text style={styles.cycleGoalStatNumber}>
+                    {activeCycleLinkedTaskCount}
+                  </Text>
+                  <Text style={styles.cycleGoalStatLabel}>
+                    Tasks Remaining
+                  </Text>
+                </View>
+
+                <View style={styles.cycleGoalStatBox}>
+                  <Text style={styles.cycleGoalStatNumber}>
+                    {cycleLinkedTaskProgress}%
+                  </Text>
+                  <Text style={styles.cycleGoalStatLabel}>
+                    Task Progress
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.cycleLinkedProgressHeader}>
+                <Text style={styles.cycleLinkedProgressLabel}>
+                  Overall linked-task progress
+                </Text>
+                <Text style={styles.progressPercentage}>
+                  {cycleLinkedTaskProgress}%
+                </Text>
+              </View>
+
+              <View style={styles.progressTrack}>
+                <View
+                  style={[
+                    styles.overallProgressFill,
+                    {
+                      width: getProgressWidth(
+                        cycleLinkedTaskProgress
+                      ),
+                    },
+                  ]}
+                />
+              </View>
+
+              <Text style={styles.cycleLinkedProgressSummary}>
+                {completedCycleLinkedTaskCount} of {cycleLinkedTasks.length}{' '}
+                linked tasks completed
+              </Text>
+            </View>
+
+            <Text style={styles.cycleSummaryText}>
+              {cycleGoals.length} goals overlap this cycle and{' '}
+              {unfinishedCycleTaskCount} tracked tasks remain unfinished.
+              Total task completions count everything finished during the
+              cycle; goal progress only counts tasks linked to cycle goals.
+            </Text>
+
+            {cycleProgress.state === 'complete' ? (
+              <View style={styles.cycleCompletionCard}>
+                <Text style={styles.cycleCompletionTitle}>
+                  Cycle complete 🎉
+                </Text>
+                <Text style={styles.cycleCompletionText}>
+                  You finished {completedGoalsThisCycle} goals and{' '}
+                  {completedTasksThisCycle} tasks during this cycle.
+                  Your {activeCycleGoalCount} active goals and{' '}
+                  {unfinishedCycleTaskCount} unfinished tasks stay in
+                  WeekFlow automatically, so you can carry them forward or
+                  clean them up before starting again.
+                </Text>
+
+                <View style={styles.cycleForm}>
+                  <View style={styles.cycleDateField}>
+                    <Text style={styles.dateInputLabel}>
+                      Next cycle start date
+                    </Text>
+                    <TextInput
+                      style={styles.dateInput}
+                      value={cycleStartDate}
+                      onChangeText={(value) => {
+                        setCycleStartDate(value);
+                        setCycleMessage('');
+                      }}
+                      placeholder="YYYY-MM-DD"
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                    />
+                  </View>
+
+                  <View style={styles.cycleDatePreview}>
+                    <Text style={styles.cycleDatePreviewLabel}>
+                      Next cycle ends
+                    </Text>
+                    <Text style={styles.cycleDatePreviewValue}>
+                      {cycleRangePreview
+                        ? formatDateKey(cycleRangePreview.endDate)
+                        : 'Enter a valid start date'}
+                    </Text>
+                  </View>
+                </View>
+
+                {cycleMessage || cycleDateError ? (
+                  <Text style={styles.dateErrorText}>
+                    {cycleMessage || cycleDateError}
+                  </Text>
+                ) : null}
+
+                <Pressable
+                  style={styles.startCycleButton}
+                  onPress={handleStartPlanningCycle}
+                >
+                  <Text style={styles.startCycleButtonText}>
+                    Start Next 12-Week Cycle
+                  </Text>
+                </Pressable>
+              </View>
+            ) : isEditingCycle ? (
+              <View style={styles.cycleEditCard}>
+                <Text style={styles.cycleEditTitle}>
+                  Edit Current Cycle
+                </Text>
+
+                <View style={styles.cycleForm}>
+                  <View style={styles.cycleDateField}>
+                    <Text style={styles.dateInputLabel}>
+                      Cycle start date
+                    </Text>
+                    <TextInput
+                      style={styles.dateInput}
+                      value={cycleStartDate}
+                      onChangeText={(value) => {
+                        setCycleStartDate(value);
+                        setCycleMessage('');
+                      }}
+                      placeholder="YYYY-MM-DD"
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                    />
+                  </View>
+
+                  <View style={styles.cycleDatePreview}>
+                    <Text style={styles.cycleDatePreviewLabel}>
+                      New end date
+                    </Text>
+                    <Text style={styles.cycleDatePreviewValue}>
+                      {cycleRangePreview
+                        ? formatDateKey(cycleRangePreview.endDate)
+                        : 'Enter a valid start date'}
+                    </Text>
+                  </View>
+                </View>
+
+                {cycleMessage || cycleDateError ? (
+                  <Text style={styles.dateErrorText}>
+                    {cycleMessage || cycleDateError}
+                  </Text>
+                ) : null}
+
+                <View style={styles.cycleEditActions}>
+                  <Pressable
+                    style={styles.cancelButton}
+                    onPress={cancelEditingCycle}
+                  >
+                    <Text style={styles.cancelButtonText}>
+                      Cancel
+                    </Text>
+                  </Pressable>
+
+                  <Pressable
+                    style={styles.saveCycleButton}
+                    onPress={handleSaveCycle}
+                  >
+                    <Text style={styles.saveCycleButtonText}>
+                      Save Cycle
+                    </Text>
+                  </Pressable>
+                </View>
+              </View>
+            ) : (
+              <Pressable
+                style={styles.editCycleButton}
+                onPress={beginEditingCycle}
+              >
+                <Text style={styles.editCycleButtonText}>
+                  Edit Cycle Dates
+                </Text>
+              </Pressable>
+            )}
+          </>
+        )}
       </View>
 
       <View
@@ -822,14 +1316,300 @@ const styles = StyleSheet.create({
     columnGap: 16,
   },
   fullWidthPanel: { width: '100%' },
+  cycleCard: {
+    padding: 18,
+    borderRadius: 16,
+    marginBottom: 18,
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+    backgroundColor: '#eff6ff',
+    gap: 12,
+  },
+  cycleLoadingText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#1e3a8a',
+  },
+  cycleHeaderRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    backgroundColor: 'transparent',
+  },
+  cycleHeaderText: {
+    flex: 1,
+    minWidth: 220,
+    backgroundColor: 'transparent',
+  },
+  cycleTitle: {
+    fontSize: 21,
+    fontWeight: '900',
+    color: '#111827',
+  },
+  cycleSubtitle: {
+    marginTop: 4,
+    fontSize: 13,
+    lineHeight: 19,
+    color: '#4b5563',
+  },
+  cycleStatusBadge: {
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    backgroundColor: '#dbeafe',
+  },
+  cycleStatusComplete: {
+    backgroundColor: '#dcfce7',
+  },
+  cycleStatusUpcoming: {
+    backgroundColor: '#fef3c7',
+  },
+  cycleStatusText: {
+    fontSize: 12,
+    fontWeight: '900',
+    color: '#1e3a8a',
+  },
+  cycleProgressHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'transparent',
+  },
+  cycleProgressLabel: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#374151',
+  },
+  cycleProgressValue: {
+    fontSize: 15,
+    fontWeight: '900',
+    color: '#2563eb',
+  },
+  cycleProgressTrack: {
+    height: 13,
+    borderRadius: 999,
+    backgroundColor: '#dbeafe',
+    overflow: 'hidden',
+  },
+  cycleProgressFill: {
+    height: '100%',
+    borderRadius: 999,
+    backgroundColor: '#2563eb',
+  },
+  cycleStatsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    backgroundColor: 'transparent',
+  },
+  cycleStatBox: {
+    flexGrow: 1,
+    flexBasis: '22%',
+    minWidth: 130,
+    padding: 13,
+    borderRadius: 12,
+    backgroundColor: 'white',
+  },
+  cycleStatNumber: {
+    fontSize: 23,
+    fontWeight: '900',
+    color: '#111827',
+  },
+  cycleStatLabel: {
+    marginTop: 3,
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#6b7280',
+  },
+  cycleSummaryText: {
+    fontSize: 12,
+    lineHeight: 18,
+    color: '#4b5563',
+  },
+  cycleGoalProgressCard: {
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#c7d2fe',
+    backgroundColor: '#f8f7ff',
+  },
+  cycleGoalProgressHeader: {
+    flex: 1,
+    minWidth: 190,
+    backgroundColor: 'transparent',
+  },
+  cycleGoalProgressTitle: {
+    fontSize: 15,
+    fontWeight: '900',
+    color: '#111827',
+  },
+  cycleGoalProgressSubtitle: {
+    marginTop: 3,
+    fontSize: 11,
+    lineHeight: 16,
+    color: '#6b7280',
+  },
+  cycleGoalStatsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 12,
+    backgroundColor: 'transparent',
+  },
+  cycleGoalStatBox: {
+    flexGrow: 1,
+    flexBasis: '45%',
+    minWidth: 135,
+    padding: 11,
+    borderRadius: 10,
+    backgroundColor: 'white',
+  },
+  cycleGoalStatNumber: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: '#111827',
+  },
+  cycleGoalStatLabel: {
+    marginTop: 3,
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#6b7280',
+  },
+  cycleLinkedProgressHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    marginTop: 14,
+    backgroundColor: 'transparent',
+  },
+  cycleLinkedProgressLabel: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: '900',
+    color: '#374151',
+  },
+  cycleLinkedProgressSummary: {
+    marginTop: 7,
+    fontSize: 11,
+    color: '#6b7280',
+  },
+  cycleForm: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'flex-end',
+    gap: 10,
+    backgroundColor: 'transparent',
+  },
+  cycleDateField: {
+    flex: 1,
+    minWidth: 190,
+    backgroundColor: 'transparent',
+  },
+  cycleDatePreview: {
+    flex: 1,
+    minWidth: 190,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+    backgroundColor: 'white',
+  },
+  cycleDatePreviewLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#6b7280',
+  },
+  cycleDatePreviewValue: {
+    marginTop: 3,
+    fontSize: 14,
+    fontWeight: '900',
+    color: '#1e3a8a',
+  },
+  cycleHelpText: {
+    fontSize: 12,
+    lineHeight: 17,
+    color: '#4b5563',
+  },
+  startCycleButton: {
+    alignSelf: 'flex-start',
+    paddingVertical: 11,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    backgroundColor: '#2563eb',
+  },
+  startCycleButtonText: {
+    color: 'white',
+    fontWeight: '900',
+  },
+  editCycleButton: {
+    alignSelf: 'flex-start',
+    paddingVertical: 9,
+    paddingHorizontal: 13,
+    borderRadius: 10,
+    backgroundColor: '#dbeafe',
+  },
+  editCycleButtonText: {
+    color: '#1e40af',
+    fontWeight: '900',
+  },
+  cycleEditCard: {
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#93c5fd',
+    backgroundColor: '#f8fbff',
+    gap: 10,
+  },
+  cycleEditTitle: {
+    fontSize: 15,
+    fontWeight: '900',
+    color: '#111827',
+  },
+  cycleEditActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 8,
+    backgroundColor: 'transparent',
+  },
+  saveCycleButton: {
+    paddingVertical: 9,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    backgroundColor: '#2563eb',
+  },
+  saveCycleButtonText: {
+    color: 'white',
+    fontWeight: '900',
+  },
+  cycleCompletionCard: {
+    padding: 15,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#86efac',
+    backgroundColor: '#f0fdf4',
+    gap: 10,
+  },
+  cycleCompletionTitle: {
+    fontSize: 17,
+    fontWeight: '900',
+    color: '#166534',
+  },
+  cycleCompletionText: {
+    fontSize: 13,
+    lineHeight: 19,
+    color: '#374151',
+  },
   overviewDesktop: {
     width: '66%',
     alignSelf: 'stretch',
   },
   addCardDesktop: {
-    width: '32%',
+    width: '100%',
     alignSelf: 'stretch',
-    justifyContent: 'center',
   },
   header: {
     marginBottom: 20,

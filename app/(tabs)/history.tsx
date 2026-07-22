@@ -8,6 +8,7 @@ import {
 
 import { Text, View } from '@/components/Themed';
 import { useBrainDumps } from '@/context/BrainDumpContext';
+import { useCycle } from '@/context/CycleContext';
 import { useGoals } from '@/context/GoalContext';
 import { useTasks } from '@/context/TaskContext';
 import {
@@ -244,6 +245,7 @@ export default function HistoryScreen() {
     useState<PickedWeekFlowBackup | null>(null);
 
   const { tasks, refreshTasks } = useTasks();
+  const { refreshCycles } = useCycle();
   const { goals, refreshGoals, toggleGoal } = useGoals();
 
   const {
@@ -511,11 +513,12 @@ export default function HistoryScreen() {
           `Exported ${counts.tasks} tasks, ` +
           `${counts.goals} goals, ` +
           `${counts.brainDumps} brain dumps, ` +
-          `${counts.taskTemplates} task templates, and ` +
-          `${counts.recurringRules} recurring schedules.`,
+          `${counts.taskTemplates} task templates, ` +
+          `${counts.recurringRules} recurring schedules, and ` +
+          `${counts.planningCycles} planning cycles.`,
       });
     } catch (error) {
-      console.error('Failed to export WeekFlow backup:', error);
+      console.warn('Failed to export WeekFlow backup:', error);
 
       setBackupMessage({
         tone: 'error',
@@ -536,7 +539,7 @@ export default function HistoryScreen() {
         setPendingImport(pickedBackup);
       }
     } catch (error) {
-      console.error('Failed to read WeekFlow backup:', error);
+      console.warn('Failed to read WeekFlow backup:', error);
 
       setPendingImport(null);
       setBackupMessage({
@@ -559,13 +562,14 @@ export default function HistoryScreen() {
 
       /*
        * The database changes immediately, but each context keeps
-       * its own in-memory list. Reload all three after import so
-       * every tab updates without restarting Expo.
+       * its own in-memory list. Reload every provider after import so
+       * all tabs update without restarting Expo.
        */
       await Promise.all([
         refreshTasks(),
         refreshGoals(),
         refreshBrainDumps(),
+        refreshCycles(),
       ]);
 
       setBackupMessage({
@@ -574,14 +578,15 @@ export default function HistoryScreen() {
           `Imported ${counts.tasks} tasks, ` +
           `${counts.goals} goals, ` +
           `${counts.brainDumps} brain dumps, ` +
-          `${counts.taskTemplates} task templates, and ` +
-          `${counts.recurringRules} recurring schedules.`,
+          `${counts.taskTemplates} task templates, ` +
+          `${counts.recurringRules} recurring schedules, and ` +
+          `${counts.planningCycles} planning cycles.`,
       });
 
       setPendingImport(null);
       clearFilters();
     } catch (error) {
-      console.error('Failed to import WeekFlow backup:', error);
+      console.warn('Failed to import WeekFlow backup:', error);
 
       setBackupMessage({
         tone: 'error',
@@ -1295,7 +1300,9 @@ export default function HistoryScreen() {
                 {pendingImport.preview.counts.recurringRules}{' '}
                 recurring schedules •{' '}
                 {pendingImport.preview.counts.recurringExceptions}{' '}
-                skipped occurrences
+                skipped occurrences •{' '}
+                {pendingImport.preview.counts.planningCycles}{' '}
+                planning cycles
               </Text>
 
               {pendingImport.preview.sourceVersion <
@@ -1305,6 +1312,20 @@ export default function HistoryScreen() {
                   {pendingImport.preview.sourceVersion} will be safely
                   upgraded to v
                   {pendingImport.preview.currentVersion} during restore.
+                </Text>
+              ) : null}
+
+              {pendingImport.preview.repairs.orphanedGoalLinks > 0 ? (
+                <Text style={styles.importUpgradeText}>
+                  WeekFlow found{' '}
+                  {pendingImport.preview.repairs.orphanedGoalLinks} old
+                  goal link
+                  {pendingImport.preview.repairs.orphanedGoalLinks === 1
+                    ? ''
+                    : 's'}{' '}
+                  whose goals were deleted. The tasks, templates, and
+                  recurring schedules will be preserved and only those
+                  missing goal links will be cleared.
                 </Text>
               ) : null}
 

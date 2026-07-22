@@ -16,6 +16,7 @@ import {
   type WeekFlowBackup,
 } from './backupValidation';
 import { getBrainDumps } from './brainDumpStorage';
+import { getPlanningCycles } from './cycleStorage';
 import { getDb, migrateDb } from './db';
 import { getGoals } from './goalStorage';
 import {
@@ -69,6 +70,7 @@ async function buildWeekFlowBackup(): Promise<WeekFlowBackup> {
     taskTemplates,
     recurringRules,
     recurringExceptions,
+    planningCycles,
   ] = await Promise.all([
     getTasks(),
     getGoals(),
@@ -76,6 +78,7 @@ async function buildWeekFlowBackup(): Promise<WeekFlowBackup> {
     getTaskTemplates(),
     getRecurringRules(),
     getRecurringOccurrenceExceptions(),
+    getPlanningCycles(),
   ]);
 
   return {
@@ -93,6 +96,7 @@ async function buildWeekFlowBackup(): Promise<WeekFlowBackup> {
       taskTemplates,
       recurringRules,
       recurringExceptions,
+      planningCycles,
     },
   };
 }
@@ -108,6 +112,9 @@ function buildCurrentPreview(
     dataModelVersion:
       backup.metadata.dataModelVersion,
     counts: getBackupCounts(backup),
+    repairs: {
+      orphanedGoalLinks: 0,
+    },
   };
 }
 
@@ -293,6 +300,7 @@ async function readDatabaseCounts(
     taskTemplates,
     recurringRules,
     recurringExceptions,
+    planningCycles,
   ] = await Promise.all([
     db.getFirstAsync<CountRow>(
       'SELECT COUNT(*) AS count FROM tasks;'
@@ -312,6 +320,9 @@ async function readDatabaseCounts(
     db.getFirstAsync<CountRow>(
       'SELECT COUNT(*) AS count FROM recurring_occurrence_exceptions;'
     ),
+    db.getFirstAsync<CountRow>(
+      'SELECT COUNT(*) AS count FROM planning_cycles;'
+    ),
   ]);
 
   return {
@@ -323,6 +334,7 @@ async function readDatabaseCounts(
       recurringRules?.count ?? -1,
     recurringExceptions:
       recurringExceptions?.count ?? -1,
+    planningCycles: planningCycles?.count ?? -1,
   };
 }
 
@@ -337,7 +349,8 @@ function countsMatch(
     expected.taskTemplates === actual.taskTemplates &&
     expected.recurringRules === actual.recurringRules &&
     expected.recurringExceptions ===
-      actual.recurringExceptions
+      actual.recurringExceptions &&
+    expected.planningCycles === actual.planningCycles
   );
 }
 
@@ -371,7 +384,35 @@ export async function replaceWeekFlowData(
         DELETE FROM task_templates;
         DELETE FROM goals;
         DELETE FROM brain_dumps;
+        DELETE FROM planning_cycles;
       `);
+
+      for (
+        const cycle of
+        validatedBackup.data.planningCycles
+      ) {
+        await db.runAsync(
+          `
+          INSERT INTO planning_cycles (
+            id,
+            start_date,
+            end_date,
+            active,
+            created_at,
+            completed_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?);
+          `,
+          [
+            cycle.id,
+            cycle.startDate,
+            cycle.endDate,
+            cycle.active ? 1 : 0,
+            cycle.createdAt,
+            cycle.completedAt,
+          ]
+        );
+      }
 
       for (
         const goal of

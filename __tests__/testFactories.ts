@@ -1,4 +1,5 @@
 import type { StoredBrainDump } from '../lib/brainDumpStorage';
+import type { PlanningCycle } from '../lib/cycleStorage';
 import type { StoredGoal } from '../lib/goalStorage';
 import type { RecurringRule } from '../lib/recurringStorage';
 import type { Task } from '../lib/taskStorage';
@@ -64,6 +65,22 @@ export function makeBrainDump(
   };
 }
 
+
+export function makePlanningCycle(
+  overrides: Partial<PlanningCycle> = {}
+): PlanningCycle {
+  const id = overrides.id ?? nextId++;
+
+  return {
+    id,
+    startDate: '2026-07-01',
+    endDate: '2026-09-22',
+    active: true,
+    createdAt: new Date(2026, 6, 1, 12).toISOString(),
+    completedAt: null,
+    ...overrides,
+  };
+}
 
 export function makeTaskTemplate(
   overrides: Partial<TaskTemplate> = {}

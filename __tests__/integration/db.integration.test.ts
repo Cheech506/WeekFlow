@@ -32,6 +32,7 @@ describe('SQLite migrations', () => {
           'tasks',
           'goals',
           'brain_dumps',
+          'planning_cycles',
           'recurring_rules',
           'recurring_occurrence_exceptions'
         )
@@ -41,6 +42,7 @@ describe('SQLite migrations', () => {
     expect(tables.map((table) => table.name)).toEqual([
       'brain_dumps',
       'goals',
+      'planning_cycles',
       'recurring_occurrence_exceptions',
       'recurring_rules',
       'tasks',

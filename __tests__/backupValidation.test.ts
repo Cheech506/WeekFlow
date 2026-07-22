@@ -16,6 +16,7 @@ import {
   localIso,
   makeBrainDump,
   makeGoal,
+  makePlanningCycle,
   makeRecurringRule,
   makeTask,
   makeTaskTemplate,
@@ -71,6 +72,7 @@ function makeValidBackup(): WeekFlowBackup {
           createdAt: localIso(2026, 6, 23),
         },
       ],
+      planningCycles: [makePlanningCycle({ id: 40 })],
     },
   };
 }
@@ -96,6 +98,7 @@ describe('backup validation', () => {
         taskTemplates: 1,
         recurringRules: 1,
         recurringExceptions: 1,
+        planningCycles: 1,
       },
     });
   });
@@ -132,6 +135,7 @@ describe('backup validation', () => {
     expect(result.backup.version).toBe(BACKUP_VERSION);
     expect(result.backup.data.recurringRules).toEqual([]);
     expect(result.backup.data.taskTemplates).toEqual([]);
+    expect(result.backup.data.planningCycles).toEqual([]);
     expect(
       result.backup.data.tasks[0].recurringRuleId
     ).toBeNull();
@@ -158,6 +162,7 @@ describe('backup validation', () => {
     expect(result.preview.sourceVersion).toBe(2);
     expect(result.backup.version).toBe(BACKUP_VERSION);
     expect(result.backup.metadata.appVersion).toBe('legacy-v2');
+    expect(result.backup.data.planningCycles).toEqual([]);
   });
 
   test('upgrades a valid version 3 backup without templates', () => {
@@ -181,6 +186,31 @@ describe('backup validation', () => {
     expect(result.preview.sourceVersion).toBe(3);
     expect(result.backup.version).toBe(BACKUP_VERSION);
     expect(result.backup.data.taskTemplates).toEqual([]);
+    expect(result.backup.data.planningCycles).toEqual([]);
+  });
+
+  test('upgrades a valid version 4 backup without planning cycles', () => {
+    const current = makeValidBackup();
+    const versionFourBackup = {
+      format: current.format,
+      version: 4,
+      exportedAt: current.exportedAt,
+      metadata: current.metadata,
+      data: {
+        tasks: current.data.tasks,
+        goals: current.data.goals,
+        brainDumps: current.data.brainDumps,
+        taskTemplates: current.data.taskTemplates,
+        recurringRules: current.data.recurringRules,
+        recurringExceptions: current.data.recurringExceptions,
+      },
+    };
+
+    const result = inspectWeekFlowBackup(versionFourBackup);
+
+    expect(result.preview.sourceVersion).toBe(4);
+    expect(result.backup.version).toBe(BACKUP_VERSION);
+    expect(result.backup.data.planningCycles).toEqual([]);
   });
 
   test('accepts JSON with a UTF-8 byte-order mark', () => {
@@ -190,6 +220,26 @@ describe('backup validation', () => {
     );
 
     expect(result.data.tasks).toHaveLength(2);
+  });
+
+  test('rejects multiple active planning cycles', () => {
+    const backup = makeValidBackup();
+    backup.data.planningCycles.push(
+      makePlanningCycle({ id: 41 })
+    );
+
+    expect(() => parseWeekFlowBackup(backup)).toThrow(
+      'more than one active planning cycle'
+    );
+  });
+
+  test('rejects a planning cycle that is not exactly twelve weeks', () => {
+    const backup = makeValidBackup();
+    backup.data.planningCycles[0].endDate = '2026-09-23';
+
+    expect(() => parseWeekFlowBackup(backup)).toThrow(
+      'not exactly twelve weeks long'
+    );
   });
 
   test('rejects malformed JSON text', () => {
@@ -242,26 +292,27 @@ describe('backup validation', () => {
     ).toThrow('duplicate task IDs');
   });
 
-  test('names a task linked to a missing goal', () => {
+  test('repairs orphaned optional goal links while preserving records', () => {
     const backup = makeValidBackup();
     backup.data.tasks[0].goalId = 999;
+    backup.data.taskTemplates[0].goalId = 998;
+    backup.data.recurringRules[0].goalId = 997;
 
-    expect(() =>
-      parseWeekFlowBackup(backup)
-    ).toThrow(
-      `Task "${backup.data.tasks[0].title}" is linked to a goal`
-    );
-  });
+    const result = inspectWeekFlowBackup(backup);
 
-  test('names a task template linked to a missing goal', () => {
-    const backup = makeValidBackup();
-    backup.data.taskTemplates[0].goalId = 999;
-
-    expect(() =>
-      parseWeekFlowBackup(backup)
-    ).toThrow(
-      `Task template "${backup.data.taskTemplates[0].title}" is linked to a goal`
-    );
+    expect(result.backup.data.tasks[0].goalId).toBeNull();
+    expect(
+      result.backup.data.taskTemplates[0].goalId
+    ).toBeNull();
+    expect(
+      result.backup.data.recurringRules[0].goalId
+    ).toBeNull();
+    expect(result.preview.repairs).toEqual({
+      orphanedGoalLinks: 3,
+    });
+    expect(result.backup.data.tasks).toHaveLength(2);
+    expect(result.backup.data.taskTemplates).toHaveLength(1);
+    expect(result.backup.data.recurringRules).toHaveLength(1);
   });
 
   test('rejects a task linked to a missing recurring rule', () => {

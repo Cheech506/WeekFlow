@@ -16,6 +16,8 @@ module.exports = {
   testMatch: ['**/__tests__/**/*.test.ts'],
   collectCoverageFrom: [
     'lib/dateUtils.ts',
+    'lib/cycleUtils.ts',
+    'lib/cycleStorage.ts',
     'lib/progressStats.ts',
     'lib/weeklyReview.ts',
     'lib/recurrenceUtils.ts',

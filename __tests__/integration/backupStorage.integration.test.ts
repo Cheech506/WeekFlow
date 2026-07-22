@@ -72,6 +72,16 @@ function makeBackup(
           archivedAt: null,
         },
       ],
+      planningCycles: [
+        {
+          id: 40,
+          startDate: '2026-07-01',
+          endDate: '2026-09-22',
+          active: true,
+          createdAt: '2026-07-01T12:00:00.000Z',
+          completedAt: null,
+        },
+      ],
     },
   };
 }
@@ -93,6 +103,9 @@ describe('backup restore integration', () => {
     const templateStorage = await import(
       '../../lib/taskTemplateStorage'
     );
+    const cycleStorage = await import(
+      '../../lib/cycleStorage'
+    );
 
     await taskStorage.insertTask('Old task', 'Inbox');
     await goalStorage.insertGoal('Old goal');
@@ -107,6 +120,7 @@ describe('backup restore integration', () => {
       taskTemplates: 1,
       recurringRules: 0,
       recurringExceptions: 0,
+      planningCycles: 1,
     });
 
     expect((await taskStorage.getTasks())[0].title).toBe(
@@ -121,6 +135,13 @@ describe('backup restore integration', () => {
     expect(
       (await templateStorage.getTaskTemplates())[0].title
     ).toBe('Restored template');
+    expect(
+      (await cycleStorage.getPlanningCycles())[0]
+    ).toMatchObject({
+      startDate: '2026-07-01',
+      endDate: '2026-09-22',
+      active: true,
+    });
   });
 
   test('rejects invalid data before deleting the current database contents', async () => {
@@ -142,6 +163,29 @@ describe('backup restore integration', () => {
 
     expect(tasks).toHaveLength(1);
     expect(tasks[0].title).toBe('Original task');
+  });
+
+  test('preserves records and clears goal links from older orphaned backups', async () => {
+    const { replaceWeekFlowData } = await import(
+      '../../lib/backupStorage'
+    );
+    const taskStorage = await import('../../lib/taskStorage');
+    const templateStorage = await import(
+      '../../lib/taskTemplateStorage'
+    );
+
+    const orphanedBackup = makeBackup();
+    orphanedBackup.data.goals = [];
+
+    await replaceWeekFlowData(orphanedBackup);
+
+    const tasks = await taskStorage.getTasks();
+    const templates = await templateStorage.getTaskTemplates();
+
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].goalId).toBeNull();
+    expect(templates).toHaveLength(1);
+    expect(templates[0].goalId).toBeNull();
   });
 
   test('rolls back the entire replacement when an insert fails', async () => {

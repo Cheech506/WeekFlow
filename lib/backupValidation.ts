@@ -1,4 +1,6 @@
 import type { StoredBrainDump } from './brainDumpStorage';
+import type { PlanningCycle } from './cycleStorage';
+import { createPlanningCycleRange } from './cycleUtils';
 import {
   DAY_NAMES,
   parseLocalDateKey,
@@ -13,7 +15,7 @@ import type { Task } from './taskStorage';
 import type { TaskTemplate } from './taskTemplateStorage';
 
 export const BACKUP_FORMAT = 'weekflow-backup';
-export const BACKUP_VERSION = 4;
+export const BACKUP_VERSION = 5;
 export const BACKUP_DATA_MODEL_VERSION = 1;
 
 export type BackupCounts = {
@@ -23,6 +25,11 @@ export type BackupCounts = {
   taskTemplates: number;
   recurringRules: number;
   recurringExceptions: number;
+  planningCycles: number;
+};
+
+export type BackupRepairs = {
+  orphanedGoalLinks: number;
 };
 
 export type BackupMetadata = {
@@ -48,7 +55,12 @@ type LegacyWeekFlowBackupV1 = {
 
 type LegacyBackupDataWithoutTemplates = Omit<
   WeekFlowBackup['data'],
-  'taskTemplates'
+  'taskTemplates' | 'planningCycles'
+>;
+
+type LegacyBackupDataWithoutCycles = Omit<
+  WeekFlowBackup['data'],
+  'planningCycles'
 >;
 
 type LegacyWeekFlowBackupV2 = {
@@ -66,6 +78,14 @@ type LegacyWeekFlowBackupV3 = {
   data: LegacyBackupDataWithoutTemplates;
 };
 
+type LegacyWeekFlowBackupV4 = {
+  format: typeof BACKUP_FORMAT;
+  version: 4;
+  exportedAt: string;
+  metadata: BackupMetadata;
+  data: LegacyBackupDataWithoutCycles;
+};
+
 export type WeekFlowBackup = {
   format: typeof BACKUP_FORMAT;
   version: typeof BACKUP_VERSION;
@@ -78,16 +98,18 @@ export type WeekFlowBackup = {
     taskTemplates: TaskTemplate[];
     recurringRules: RecurringRule[];
     recurringExceptions: RecurringOccurrenceException[];
+    planningCycles: PlanningCycle[];
   };
 };
 
 export type BackupPreview = {
-  sourceVersion: 1 | 2 | 3 | typeof BACKUP_VERSION;
+  sourceVersion: 1 | 2 | 3 | 4 | typeof BACKUP_VERSION;
   currentVersion: typeof BACKUP_VERSION;
   exportedAt: string;
   appVersion: string;
   dataModelVersion: number;
   counts: BackupCounts;
+  repairs: BackupRepairs;
 };
 
 export type ParsedWeekFlowBackup = {
@@ -353,6 +375,65 @@ function validateGoal(
     fail(
       'INVALID_GOAL',
       `${label} ends before its start date.`
+    );
+  }
+}
+
+function validatePlanningCycle(
+  value: unknown,
+  label: string
+): asserts value is PlanningCycle {
+  if (!isRecord(value)) {
+    fail('INVALID_CYCLE', `${label} is not an object.`);
+  }
+
+  if (!isPositiveInteger(value.id)) {
+    fail('INVALID_CYCLE', `${label} has an invalid ID.`);
+  }
+
+  if (
+    !isValidDateKey(value.startDate) ||
+    !isValidDateKey(value.endDate)
+  ) {
+    fail('INVALID_CYCLE', `${label} has invalid cycle dates.`);
+  }
+
+  const expectedRange = createPlanningCycleRange(
+    value.startDate
+  );
+
+  if (value.endDate !== expectedRange.endDate) {
+    fail(
+      'INVALID_CYCLE',
+      `${label} is not exactly twelve weeks long.`
+    );
+  }
+
+  if (typeof value.active !== 'boolean') {
+    fail('INVALID_CYCLE', `${label} has an invalid active value.`);
+  }
+
+  if (!isIsoTimestamp(value.createdAt)) {
+    fail(
+      'INVALID_CYCLE',
+      `${label} has an invalid created timestamp.`
+    );
+  }
+
+  if (!isNullableIsoTimestamp(value.completedAt)) {
+    fail(
+      'INVALID_CYCLE',
+      `${label} has an invalid completed timestamp.`
+    );
+  }
+
+  if (
+    (value.active && value.completedAt !== null) ||
+    (!value.active && value.completedAt === null)
+  ) {
+    fail(
+      'INVALID_CYCLE',
+      `${label} has an active status that does not match its completed timestamp.`
     );
   }
 }
@@ -709,6 +790,60 @@ function validateUniqueExceptions(
   }
 }
 
+/**
+ * Older WeekFlow builds could leave tasks, templates, or recurring schedules
+ * pointing at a goal after that goal was deleted. A goal link is optional, so
+ * the safest migration is to preserve the record and clear only the missing
+ * relationship. This lets older phone backups import without deleting work.
+ */
+function repairOrphanedGoalLinks(
+  backup: WeekFlowBackup
+): { backup: WeekFlowBackup; repairs: BackupRepairs } {
+  const goalIds = new Set(
+    backup.data.goals.map((goal) => goal.id)
+  );
+
+  let orphanedGoalLinks = 0;
+
+  const repairGoalId = (goalId: number | null) => {
+    if (
+      goalId === null ||
+      goalIds.has(goalId)
+    ) {
+      return goalId;
+    }
+
+    orphanedGoalLinks += 1;
+    return null;
+  };
+
+  return {
+    backup: {
+      ...backup,
+      data: {
+        ...backup.data,
+        tasks: backup.data.tasks.map((task) => ({
+          ...task,
+          goalId: repairGoalId(task.goalId),
+        })),
+        taskTemplates:
+          backup.data.taskTemplates.map((template) => ({
+            ...template,
+            goalId: repairGoalId(template.goalId),
+          })),
+        recurringRules:
+          backup.data.recurringRules.map((rule) => ({
+            ...rule,
+            goalId: repairGoalId(rule.goalId),
+          })),
+      },
+    },
+    repairs: {
+      orphanedGoalLinks,
+    },
+  };
+}
+
 function validateRelationships(
   backup: WeekFlowBackup
 ) {
@@ -796,7 +931,8 @@ function validateRelationships(
 
 function validateData(
   value: Record<string, unknown>,
-  requireTaskTemplates: boolean = true
+  requireTaskTemplates: boolean = true,
+  requirePlanningCycles: boolean = true
 ): WeekFlowBackup['data'] {
   const requiredArrays = [
     'tasks',
@@ -825,6 +961,16 @@ function validateData(
     );
   }
 
+  if (
+    requirePlanningCycles &&
+    !Array.isArray(value.planningCycles)
+  ) {
+    fail(
+      'MISSING_SECTION',
+      'The backup is missing the planningCycles list.'
+    );
+  }
+
   const tasks = value.tasks as unknown[];
   const goals = value.goals as unknown[];
   const brainDumps = value.brainDumps as unknown[];
@@ -834,6 +980,9 @@ function validateData(
   const recurringRules = value.recurringRules as unknown[];
   const recurringExceptions =
     value.recurringExceptions as unknown[];
+  const planningCycles = Array.isArray(value.planningCycles)
+    ? (value.planningCycles as unknown[])
+    : [];
 
   tasks.forEach((task, index) =>
     validateTask(task, `Task ${index + 1}`)
@@ -871,6 +1020,13 @@ function validateData(
     )
   );
 
+  planningCycles.forEach((cycle, index) =>
+    validatePlanningCycle(
+      cycle,
+      `Planning cycle ${index + 1}`
+    )
+  );
+
   return {
     tasks: tasks as Task[],
     goals: goals as StoredGoal[],
@@ -879,6 +1035,7 @@ function validateData(
     recurringRules: recurringRules as RecurringRule[],
     recurringExceptions:
       recurringExceptions as RecurringOccurrenceException[],
+    planningCycles: planningCycles as PlanningCycle[],
   };
 }
 
@@ -904,6 +1061,7 @@ function normalizeLegacyBackupV1(
       taskTemplates: [],
       recurringRules: [],
       recurringExceptions: [],
+      planningCycles: [],
     },
   };
 }
@@ -921,6 +1079,7 @@ function normalizeLegacyBackupV2(
     data: {
       ...backup.data,
       taskTemplates: [],
+      planningCycles: [],
     },
   };
 }
@@ -934,6 +1093,20 @@ function normalizeLegacyBackupV3(
     data: {
       ...backup.data,
       taskTemplates: [],
+      planningCycles: [],
+    },
+  };
+}
+
+function normalizeLegacyBackupV4(
+  backup: LegacyWeekFlowBackupV4
+): WeekFlowBackup {
+  return {
+    ...backup,
+    version: BACKUP_VERSION,
+    data: {
+      ...backup.data,
+      planningCycles: [],
     },
   };
 }
@@ -952,6 +1125,21 @@ function validateNormalizedBackup(
     backup.data.recurringRules,
     'recurring schedule'
   );
+  assertUniqueIds(
+    backup.data.planningCycles,
+    'planning cycle'
+  );
+
+  if (
+    backup.data.planningCycles.filter(
+      (cycle) => cycle.active
+    ).length > 1
+  ) {
+    fail(
+      'MULTIPLE_ACTIVE_CYCLES',
+      'The backup contains more than one active planning cycle.'
+    );
+  }
 
   validateUniqueRecurringOccurrences(
     backup.data.tasks
@@ -974,12 +1162,14 @@ export function getBackupCounts(
       backup.data.recurringRules.length,
     recurringExceptions:
       backup.data.recurringExceptions.length,
+    planningCycles: backup.data.planningCycles.length,
   };
 }
 
 function buildPreview(
   backup: WeekFlowBackup,
-  sourceVersion: BackupPreview['sourceVersion']
+  sourceVersion: BackupPreview['sourceVersion'],
+  repairs: BackupRepairs
 ): BackupPreview {
   return {
     sourceVersion,
@@ -989,6 +1179,7 @@ function buildPreview(
     dataModelVersion:
       backup.metadata.dataModelVersion,
     counts: getBackupCounts(backup),
+    repairs,
   };
 }
 
@@ -1060,7 +1251,7 @@ export function inspectWeekFlowBackup(
       value as unknown as LegacyWeekFlowBackupV1
     );
   } else if (sourceVersion === 2) {
-    const data = validateData(value.data, false);
+    const data = validateData(value.data, false, false);
 
     backup = normalizeLegacyBackupV2({
       format: BACKUP_FORMAT,
@@ -1070,11 +1261,22 @@ export function inspectWeekFlowBackup(
     });
   } else if (sourceVersion === 3) {
     validateMetadata(value.metadata);
-    const data = validateData(value.data, false);
+    const data = validateData(value.data, false, false);
 
     backup = normalizeLegacyBackupV3({
       format: BACKUP_FORMAT,
       version: 3,
+      exportedAt: value.exportedAt,
+      metadata: value.metadata,
+      data,
+    });
+  } else if (sourceVersion === 4) {
+    validateMetadata(value.metadata);
+    const data = validateData(value.data, true, false);
+
+    backup = normalizeLegacyBackupV4({
+      format: BACKUP_FORMAT,
+      version: 4,
       exportedAt: value.exportedAt,
       metadata: value.metadata,
       data,
@@ -1098,13 +1300,17 @@ export function inspectWeekFlowBackup(
     );
   }
 
+  const repairedBackup = repairOrphanedGoalLinks(backup);
+  backup = repairedBackup.backup;
+
   validateNormalizedBackup(backup);
 
   return {
     backup,
     preview: buildPreview(
       backup,
-      sourceVersion as BackupPreview['sourceVersion']
+      sourceVersion as BackupPreview['sourceVersion'],
+      repairedBackup.repairs
     ),
   };
 }
