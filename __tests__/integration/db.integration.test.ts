@@ -34,12 +34,14 @@ describe('SQLite migrations', () => {
           'brain_dumps',
           'planning_cycles',
           'recurring_rules',
-          'recurring_occurrence_exceptions'
+          'recurring_occurrence_exceptions',
+          'app_metadata'
         )
       ORDER BY name;
     `);
 
     expect(tables.map((table) => table.name)).toEqual([
+      'app_metadata',
       'brain_dumps',
       'goals',
       'planning_cycles',

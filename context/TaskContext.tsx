@@ -1,8 +1,10 @@
 import {
   createContext,
   ReactNode,
+  useCallback,
   useContext,
   useEffect,
+  useRef,
   useState,
 } from 'react';
 
@@ -135,32 +137,47 @@ export function TaskProvider({ children }: { children: ReactNode }) {
   >([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  async function loadTasks() {
-    setIsLoading(true);
+  /*
+   * Expo SQLite on web uses a worker. Serializing refresh requests prevents
+   * overlapping provider refreshes from competing for that worker, especially
+   * immediately after a backup replaces the database contents.
+   */
+  const loadQueueRef = useRef<Promise<void>>(Promise.resolve());
 
-    try {
-      await ensureRecurringOccurrences();
+  const loadTasks = useCallback((): Promise<void> => {
+    const queuedLoad = loadQueueRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        setIsLoading(true);
 
-      const [loadedTasks, loadedRules, loadedTemplates] =
-        await Promise.all([
-          getTasks(),
-          getRecurringRules(),
-          getTaskTemplates(),
-        ]);
+        try {
+          await ensureRecurringOccurrences();
 
-      setTasks(loadedTasks);
-      setRecurringRules(loadedRules);
-      setTaskTemplates(loadedTemplates);
-    } catch (error) {
-      console.error('Failed to load tasks:', error);
-    } finally {
-      setIsLoading(false);
-    }
-  }
+          const [loadedTasks, loadedRules, loadedTemplates] =
+            await Promise.all([
+              getTasks(),
+              getRecurringRules(),
+              getTaskTemplates(),
+            ]);
+
+          setTasks(loadedTasks);
+          setRecurringRules(loadedRules);
+          setTaskTemplates(loadedTemplates);
+        } finally {
+          setIsLoading(false);
+        }
+      });
+
+    loadQueueRef.current = queuedLoad;
+    return queuedLoad;
+  }, []);
 
   useEffect(() => {
-    loadTasks();
-  }, []);
+    void loadTasks().catch((error) => {
+      // Keep startup failures visible without triggering Expo's red error overlay.
+      console.warn('Failed to load tasks:', error);
+    });
+  }, [loadTasks]);
 
   async function addTaskTemplate(
     title: string,

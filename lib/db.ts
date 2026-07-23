@@ -495,6 +495,12 @@ async function runMigrations() {
       created_at TEXT NOT NULL,
       PRIMARY KEY (recurring_rule_id, occurrence_date)
     );
+
+    CREATE TABLE IF NOT EXISTS app_metadata (
+      key TEXT PRIMARY KEY NOT NULL,
+      value TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
   `);
 
   await ensureColumn(db, 'tasks', 'notes', 'TEXT');

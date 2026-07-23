@@ -8,16 +8,8 @@ import {
 
 import { Text, View } from '@/components/Themed';
 import { useBrainDumps } from '@/context/BrainDumpContext';
-import { useCycle } from '@/context/CycleContext';
 import { useGoals } from '@/context/GoalContext';
 import { useTasks } from '@/context/TaskContext';
-import {
-  exportWeekFlowBackup,
-  getBackupErrorMessage,
-  pickWeekFlowBackup,
-  replaceWeekFlowData,
-  type PickedWeekFlowBackup,
-} from '@/lib/backupStorage';
 import {
   formatDateKey,
   getLocalDateKey,
@@ -32,11 +24,6 @@ type ContentFilter =
   | 'brainDumps';
 type PriorityFilter = 'all' | 0 | 1 | 2;
 type GoalFilter = 'all' | 'none' | number;
-
-type BackupMessage = {
-  tone: 'success' | 'error';
-  text: string;
-};
 
 type HistoryGroupKey =
   | 'today'
@@ -77,22 +64,6 @@ function formatCompletedDate(value: string | null) {
 
   if (Number.isNaN(date.getTime())) {
     return 'Completed date unknown';
-  }
-
-  return date.toLocaleString([], {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  });
-}
-
-function formatBackupDate(value: string) {
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return 'Unknown export date';
   }
 
   return date.toLocaleString([], {
@@ -237,15 +208,8 @@ export default function HistoryScreen() {
     useState<PriorityFilter>('all');
   const [goalFilter, setGoalFilter] =
     useState<GoalFilter>('all');
-  const [isExporting, setIsExporting] = useState(false);
-  const [isImporting, setIsImporting] = useState(false);
-  const [backupMessage, setBackupMessage] =
-    useState<BackupMessage | null>(null);
-  const [pendingImport, setPendingImport] =
-    useState<PickedWeekFlowBackup | null>(null);
 
   const { tasks, refreshTasks } = useTasks();
-  const { refreshCycles } = useCycle();
   const { goals, refreshGoals, toggleGoal } = useGoals();
 
   const {
@@ -499,103 +463,6 @@ export default function HistoryScreen() {
     setGoalFilter('all');
   }
 
-  async function handleExportBackup() {
-    setIsExporting(true);
-    setBackupMessage(null);
-
-    try {
-      const result = await exportWeekFlowBackup();
-      const counts = result.preview.counts;
-
-      setBackupMessage({
-        tone: 'success',
-        text:
-          `Exported ${counts.tasks} tasks, ` +
-          `${counts.goals} goals, ` +
-          `${counts.brainDumps} brain dumps, ` +
-          `${counts.taskTemplates} task templates, ` +
-          `${counts.recurringRules} recurring schedules, and ` +
-          `${counts.planningCycles} planning cycles.`,
-      });
-    } catch (error) {
-      console.warn('Failed to export WeekFlow backup:', error);
-
-      setBackupMessage({
-        tone: 'error',
-        text: getBackupErrorMessage(error, 'export'),
-      });
-    } finally {
-      setIsExporting(false);
-    }
-  }
-
-  async function handleChooseBackup() {
-    setBackupMessage(null);
-
-    try {
-      const pickedBackup = await pickWeekFlowBackup();
-
-      if (pickedBackup) {
-        setPendingImport(pickedBackup);
-      }
-    } catch (error) {
-      console.warn('Failed to read WeekFlow backup:', error);
-
-      setPendingImport(null);
-      setBackupMessage({
-        tone: 'error',
-        text: getBackupErrorMessage(error, 'choose'),
-      });
-    }
-  }
-
-  async function handleConfirmImport() {
-    if (!pendingImport) return;
-
-    setIsImporting(true);
-    setBackupMessage(null);
-
-    try {
-      const counts = await replaceWeekFlowData(
-        pendingImport.backup
-      );
-
-      /*
-       * The database changes immediately, but each context keeps
-       * its own in-memory list. Reload every provider after import so
-       * all tabs update without restarting Expo.
-       */
-      await Promise.all([
-        refreshTasks(),
-        refreshGoals(),
-        refreshBrainDumps(),
-        refreshCycles(),
-      ]);
-
-      setBackupMessage({
-        tone: 'success',
-        text:
-          `Imported ${counts.tasks} tasks, ` +
-          `${counts.goals} goals, ` +
-          `${counts.brainDumps} brain dumps, ` +
-          `${counts.taskTemplates} task templates, ` +
-          `${counts.recurringRules} recurring schedules, and ` +
-          `${counts.planningCycles} planning cycles.`,
-      });
-
-      setPendingImport(null);
-      clearFilters();
-    } catch (error) {
-      console.warn('Failed to import WeekFlow backup:', error);
-
-      setBackupMessage({
-        tone: 'error',
-        text: getBackupErrorMessage(error, 'restore'),
-      });
-    } finally {
-      setIsImporting(false);
-    }
-  }
 
   return (
     <ScrollView
@@ -1224,160 +1091,6 @@ export default function HistoryScreen() {
         </View>
       ) : null}
 
-      <View style={styles.backupSection}>
-        <Text style={styles.sectionTitle}>Backup and Transfer</Text>
-
-        <Text style={styles.sectionSubtitle}>
-          Export all WeekFlow tasks, goals, and brain dumps to one
-          JSON file, or replace this device&apos;s data with a saved
-          WeekFlow backup.
-        </Text>
-
-        <View style={styles.backupCard}>
-          <Text style={styles.backupTitle}>Export Backup</Text>
-
-          <Text style={styles.backupText}>
-            Web downloads the backup file. The iPhone version opens
-            the system share sheet so the file can be saved or sent.
-          </Text>
-
-          <Pressable
-            style={[
-              styles.backupPrimaryButton,
-              isExporting && styles.backupButtonDisabled,
-            ]}
-            onPress={handleExportBackup}
-            disabled={isExporting || isImporting}
-          >
-            <Text style={styles.backupPrimaryButtonText}>
-              {isExporting ? 'Exporting...' : 'Export WeekFlow Data'}
-            </Text>
-          </Pressable>
-        </View>
-
-        <View style={styles.backupCard}>
-          <Text style={styles.backupTitle}>Import Backup</Text>
-
-          <Text style={styles.backupWarning}>
-            Import uses Replace Existing Data. The current tasks,
-            goals, and brain dumps on this device will be erased
-            only after you select a valid backup and confirm.
-          </Text>
-
-          <Pressable
-            style={[
-              styles.backupSecondaryButton,
-              isImporting && styles.backupButtonDisabled,
-            ]}
-            onPress={handleChooseBackup}
-            disabled={isExporting || isImporting}
-          >
-            <Text style={styles.backupSecondaryButtonText}>
-              Choose WeekFlow Backup
-            </Text>
-          </Pressable>
-
-          {pendingImport ? (
-            <View style={styles.importConfirmation}>
-              <Text style={styles.importFileName}>
-                {pendingImport.fileName}
-              </Text>
-
-              <Text style={styles.importMetadata}>
-                Exported {formatBackupDate(
-                  pendingImport.preview.exportedAt
-                )} • WeekFlow {pendingImport.preview.appVersion}
-              </Text>
-
-              <Text style={styles.importCounts}>
-                {pendingImport.preview.counts.tasks} tasks •{' '}
-                {pendingImport.preview.counts.goals} goals •{' '}
-                {pendingImport.preview.counts.brainDumps} brain dumps •{' '}
-                {pendingImport.preview.counts.taskTemplates} task templates
-              </Text>
-
-              <Text style={styles.importCounts}>
-                {pendingImport.preview.counts.recurringRules}{' '}
-                recurring schedules •{' '}
-                {pendingImport.preview.counts.recurringExceptions}{' '}
-                skipped occurrences •{' '}
-                {pendingImport.preview.counts.planningCycles}{' '}
-                planning cycles
-              </Text>
-
-              {pendingImport.preview.sourceVersion <
-              pendingImport.preview.currentVersion ? (
-                <Text style={styles.importUpgradeText}>
-                  Older backup format v
-                  {pendingImport.preview.sourceVersion} will be safely
-                  upgraded to v
-                  {pendingImport.preview.currentVersion} during restore.
-                </Text>
-              ) : null}
-
-              {pendingImport.preview.repairs.orphanedGoalLinks > 0 ? (
-                <Text style={styles.importUpgradeText}>
-                  WeekFlow found{' '}
-                  {pendingImport.preview.repairs.orphanedGoalLinks} old
-                  goal link
-                  {pendingImport.preview.repairs.orphanedGoalLinks === 1
-                    ? ''
-                    : 's'}{' '}
-                  whose goals were deleted. The tasks, templates, and
-                  recurring schedules will be preserved and only those
-                  missing goal links will be cleared.
-                </Text>
-              ) : null}
-
-              <Text style={styles.importWarningText}>
-                This file passed validation. Confirming will replace all
-                WeekFlow data currently stored on this device. If the
-                restore fails, the current data will remain unchanged.
-              </Text>
-
-              <View style={styles.importActions}>
-                <Pressable
-                  style={styles.cancelImportButton}
-                  onPress={() => setPendingImport(null)}
-                  disabled={isImporting}
-                >
-                  <Text style={styles.cancelImportButtonText}>
-                    Cancel
-                  </Text>
-                </Pressable>
-
-                <Pressable
-                  style={[
-                    styles.confirmImportButton,
-                    isImporting && styles.backupButtonDisabled,
-                  ]}
-                  onPress={handleConfirmImport}
-                  disabled={isImporting}
-                >
-                  <Text style={styles.confirmImportButtonText}>
-                    {isImporting
-                      ? 'Importing...'
-                      : 'Replace and Import'}
-                  </Text>
-                </Pressable>
-              </View>
-            </View>
-          ) : null}
-
-          {backupMessage ? (
-            <Text
-              style={[
-                styles.backupMessage,
-                backupMessage.tone === 'error'
-                  ? styles.backupMessageError
-                  : styles.backupMessageSuccess,
-              ]}
-            >
-              {backupMessage.text}
-            </Text>
-          ) : null}
-        </View>
-      </View>
 
     </ScrollView>
   );
@@ -1656,143 +1369,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 
-  backupSection: {
-    marginBottom: 28,
-    backgroundColor: 'transparent',
-  },
-  backupCard: {
-    padding: 16,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    backgroundColor: 'white',
-    marginBottom: 12,
-  },
-  backupTitle: {
-    fontSize: 18,
-    fontWeight: '800',
-    color: '#111827',
-    marginBottom: 6,
-  },
-  backupText: {
-    fontSize: 14,
-    color: '#4b5563',
-    lineHeight: 20,
-    marginBottom: 14,
-  },
-  backupWarning: {
-    fontSize: 14,
-    color: '#92400e',
-    lineHeight: 20,
-    marginBottom: 14,
-  },
-  backupPrimaryButton: {
-    backgroundColor: '#2563eb',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 11,
-    alignItems: 'center',
-  },
-  backupPrimaryButtonText: {
-    color: 'white',
-    fontWeight: '800',
-  },
-  backupSecondaryButton: {
-    borderWidth: 1,
-    borderColor: '#2563eb',
-    backgroundColor: '#eff6ff',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 11,
-    alignItems: 'center',
-  },
-  backupSecondaryButtonText: {
-    color: '#1d4ed8',
-    fontWeight: '800',
-  },
-  backupButtonDisabled: {
-    opacity: 0.55,
-  },
-  importConfirmation: {
-    marginTop: 14,
-    padding: 14,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#f59e0b',
-    backgroundColor: '#fffbeb',
-  },
-  importFileName: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#111827',
-    marginBottom: 4,
-  },
-  importMetadata: {
-    fontSize: 13,
-    color: '#4b5563',
-    marginBottom: 6,
-  },
-  importCounts: {
-    fontSize: 13,
-    color: '#4b5563',
-    marginBottom: 6,
-  },
-  importUpgradeText: {
-    fontSize: 13,
-    color: '#1d4ed8',
-    lineHeight: 18,
-    marginTop: 2,
-    marginBottom: 10,
-  },
-  importWarningText: {
-    fontSize: 13,
-    color: '#92400e',
-    lineHeight: 18,
-    marginBottom: 12,
-  },
-  importActions: {
-    flexDirection: 'row',
-    gap: 10,
-    backgroundColor: 'transparent',
-  },
-  cancelImportButton: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: '#9ca3af',
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: 10,
-    alignItems: 'center',
-    backgroundColor: 'white',
-  },
-  cancelImportButtonText: {
-    color: '#374151',
-    fontWeight: '800',
-  },
-  confirmImportButton: {
-    flex: 1,
-    backgroundColor: '#dc2626',
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: 10,
-    alignItems: 'center',
-  },
-  confirmImportButtonText: {
-    color: 'white',
-    fontWeight: '800',
-  },
-  backupMessage: {
-    marginTop: 12,
-    fontSize: 13,
-    fontWeight: '700',
-    lineHeight: 18,
-  },
-  backupMessageSuccess: {
-    color: '#166534',
-  },
-  backupMessageError: {
-    color: '#b91c1c',
-  },
   emptyCard: {
     padding: 18,
     borderRadius: 14,

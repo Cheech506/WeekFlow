@@ -28,5 +28,6 @@ module.exports = {
     'lib/brainDumpStorage.ts',
     'lib/recurringStorage.ts',
     'lib/backupStorage.ts',
+    'lib/appMetadataStorage.ts',
   ],
 };
