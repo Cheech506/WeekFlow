@@ -26,13 +26,15 @@ type GoalContextValue = {
   addGoal: (
     title: string,
     startDateKey?: string,
-    endDateKey?: string
+    endDateKey?: string,
+    reward?: string | null
   ) => Promise<void>;
   editGoal: (
     id: number,
     title: string,
     startDateKey: string,
-    endDateKey: string
+    endDateKey: string,
+    reward?: string | null
   ) => Promise<void>;
   toggleGoal: (id: number) => Promise<void>;
   deleteGoal: (id: number) => Promise<void>;
@@ -66,7 +68,8 @@ export function GoalProvider({ children }: { children: React.ReactNode }) {
     async (
       title: string,
       startDateKey?: string,
-      endDateKey?: string
+      endDateKey?: string,
+      reward?: string | null
     ) => {
       if (!title.trim()) return;
 
@@ -74,7 +77,8 @@ export function GoalProvider({ children }: { children: React.ReactNode }) {
         const newGoal = await insertGoal(
           title,
           startDateKey,
-          endDateKey
+          endDateKey,
+          reward
         );
         setGoals((currentGoals) => [newGoal, ...currentGoals]);
       } catch (error) {
@@ -90,14 +94,16 @@ export function GoalProvider({ children }: { children: React.ReactNode }) {
       id: number,
       title: string,
       startDateKey: string,
-      endDateKey: string
+      endDateKey: string,
+      reward?: string | null
     ) => {
       try {
         const updatedGoal = await updateGoalDetails(
           id,
           title,
           startDateKey,
-          endDateKey
+          endDateKey,
+          reward
         );
 
         setGoals((currentGoals) =>
@@ -108,6 +114,7 @@ export function GoalProvider({ children }: { children: React.ReactNode }) {
                   title: updatedGoal.title,
                   startDate: updatedGoal.startDate,
                   endDate: updatedGoal.endDate,
+                  reward: updatedGoal.reward,
                 }
               : goal
           )

@@ -46,6 +46,7 @@ export function makeGoal(
     completedAt: null,
     startDate: new Date(2026, 5, 1, 12).toISOString(),
     endDate: new Date(2026, 7, 24, 12).toISOString(),
+    reward: null,
     ...overrides,
   };
 }

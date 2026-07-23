@@ -49,6 +49,14 @@ describe('SQLite migrations', () => {
       'recurring_rules',
       'tasks',
     ]);
+
+    const goalColumns = await db.getAllAsync<{ name: string }>(
+      'PRAGMA table_info(goals);'
+    );
+
+    expect(goalColumns.map((column) => column.name)).toContain(
+      'reward'
+    );
   });
 
   test('backfills due dates for legacy scheduled tasks without deleting data', async () => {

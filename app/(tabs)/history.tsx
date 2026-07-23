@@ -350,7 +350,8 @@ export default function HistoryScreen() {
     return allCompletedGoals.filter((goal) => {
       return (
         normalizedSearch.length === 0 ||
-        goal.title.toLowerCase().includes(normalizedSearch)
+        goal.title.toLowerCase().includes(normalizedSearch) ||
+        (goal.reward ?? '').toLowerCase().includes(normalizedSearch)
       );
     });
   }, [
@@ -937,6 +938,17 @@ export default function HistoryScreen() {
                                   {linkedTasks.length})
                                 </Text>
 
+                                {goal.reward ? (
+                                  <View style={styles.unlockedRewardCard}>
+                                    <Text style={styles.unlockedRewardLabel}>
+                                      🎉 Reward Unlocked
+                                    </Text>
+                                    <Text style={styles.unlockedRewardText}>
+                                      {goal.reward}
+                                    </Text>
+                                  </View>
+                                ) : null}
+
                                 <Text style={styles.completedMeta}>
                                   Completed:{' '}
                                   {formatCompletedDate(
@@ -1320,6 +1332,26 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: '800',
     color: '#111827',
+  },
+  unlockedRewardCard: {
+    marginTop: 8,
+    padding: 11,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#fbbf24',
+    backgroundColor: '#fffbeb',
+    gap: 3,
+  },
+  unlockedRewardLabel: {
+    fontSize: 12,
+    fontWeight: '900',
+    color: '#92400e',
+  },
+  unlockedRewardText: {
+    fontSize: 14,
+    lineHeight: 19,
+    fontWeight: '700',
+    color: '#78350f',
   },
   brainDumpCard: {
     flexDirection: 'row',

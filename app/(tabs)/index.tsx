@@ -16,6 +16,7 @@ import {
   getGoalDateKey,
   validateGoalDateRange,
 } from '@/lib/goalUtils';
+import { MAX_GOAL_REWARD_LENGTH } from '@/lib/goalRewardUtils';
 import {
   formatDateKey,
   getLocalDateKey,
@@ -120,6 +121,7 @@ export default function TwelveWeekGoalsScreen() {
 
   const initialGoalDates = createDefaultGoalDateRange();
   const [goalText, setGoalText] = useState('');
+  const [goalReward, setGoalReward] = useState('');
   const [goalStartDate, setGoalStartDate] = useState(
     initialGoalDates.startDateKey
   );
@@ -131,6 +133,7 @@ export default function TwelveWeekGoalsScreen() {
     number | null
   >(null);
   const [editGoalTitle, setEditGoalTitle] = useState('');
+  const [editGoalReward, setEditGoalReward] = useState('');
   const [editStartDate, setEditStartDate] = useState('');
   const [editEndDate, setEditEndDate] = useState('');
   const [editMessage, setEditMessage] = useState('');
@@ -396,12 +399,14 @@ export default function TwelveWeekGoalsScreen() {
       await addGoal(
         goalText,
         goalStartDate,
-        goalEndDate
+        goalEndDate,
+        goalReward
       );
 
       const nextDefaultDates = createDefaultGoalDateRange();
 
       setGoalText('');
+      setGoalReward('');
       setGoalStartDate(nextDefaultDates.startDateKey);
       setGoalEndDate(nextDefaultDates.endDateKey);
       setGoalFormMessage('');
@@ -420,6 +425,7 @@ export default function TwelveWeekGoalsScreen() {
 
     setEditingGoalId(goalId);
     setEditGoalTitle(goal.title);
+    setEditGoalReward(goal.reward ?? '');
     setEditStartDate(getGoalDateKey(goal.startDate));
     setEditEndDate(getGoalDateKey(goal.endDate));
     setEditMessage('');
@@ -428,6 +434,7 @@ export default function TwelveWeekGoalsScreen() {
   function cancelEditingGoal() {
     setEditingGoalId(null);
     setEditGoalTitle('');
+    setEditGoalReward('');
     setEditStartDate('');
     setEditEndDate('');
     setEditMessage('');
@@ -449,7 +456,8 @@ export default function TwelveWeekGoalsScreen() {
         goalId,
         editGoalTitle,
         editStartDate,
-        editEndDate
+        editEndDate,
+        editGoalReward
       );
       cancelEditingGoal();
     } catch (error) {
@@ -891,6 +899,25 @@ export default function TwelveWeekGoalsScreen() {
           returnKeyType="next"
         />
 
+        <View style={styles.rewardInputGroup}>
+          <Text style={styles.dateInputLabel}>Optional reward</Text>
+          <TextInput
+            style={styles.rewardInput}
+            placeholder="Example: Buy a new game"
+            value={goalReward}
+            onChangeText={(value) => {
+              setGoalReward(value);
+              setGoalFormMessage('');
+            }}
+            multiline
+            maxLength={MAX_GOAL_REWARD_LENGTH}
+          />
+          <Text style={styles.rewardHelpText}>
+            A personal reward for finishing this goal. Leave it blank if you do
+            not want one.
+          </Text>
+        </View>
+
         <View style={styles.dateInputRow}>
           <View style={styles.dateInputGroup}>
             <Text style={styles.dateInputLabel}>Start date</Text>
@@ -1056,6 +1083,13 @@ export default function TwelveWeekGoalsScreen() {
                   </View>
                 </View>
 
+                {goal.reward ? (
+                  <View style={styles.rewardCard}>
+                    <Text style={styles.rewardLabel}>🎁 Goal Reward</Text>
+                    <Text style={styles.rewardText}>{goal.reward}</Text>
+                  </View>
+                ) : null}
+
                 {editingGoalId === goal.id ? (
                   <View style={styles.editDatesCard}>
                     <Text style={styles.editDatesTitle}>
@@ -1076,6 +1110,26 @@ export default function TwelveWeekGoalsScreen() {
                         placeholder="Goal title"
                         returnKeyType="next"
                       />
+                    </View>
+
+                    <View style={styles.dateInputGroup}>
+                      <Text style={styles.dateInputLabel}>
+                        Optional reward
+                      </Text>
+                      <TextInput
+                        style={styles.editGoalRewardInput}
+                        value={editGoalReward}
+                        onChangeText={(value) => {
+                          setEditGoalReward(value);
+                          setEditMessage('');
+                        }}
+                        placeholder="Example: Buy a new game"
+                        multiline
+                        maxLength={MAX_GOAL_REWARD_LENGTH}
+                      />
+                      <Text style={styles.rewardHelpText}>
+                        Clear this field to remove the reward.
+                      </Text>
                     </View>
 
                     <View style={styles.dateInputRow}>
@@ -1710,6 +1764,27 @@ const styles = StyleSheet.create({
     gap: 10,
     marginBottom: 24,
   },
+  rewardInputGroup: {
+    backgroundColor: 'transparent',
+  },
+  rewardInput: {
+    minHeight: 76,
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 10,
+    paddingVertical: 11,
+    paddingHorizontal: 12,
+    fontSize: 14,
+    lineHeight: 20,
+    textAlignVertical: 'top',
+    backgroundColor: 'white',
+  },
+  rewardHelpText: {
+    marginTop: 5,
+    fontSize: 11,
+    lineHeight: 16,
+    color: '#6b7280',
+  },
   dateInputRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -1844,6 +1919,25 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#111827',
   },
+  rewardCard: {
+    padding: 13,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#fbbf24',
+    backgroundColor: '#fffbeb',
+    gap: 4,
+  },
+  rewardLabel: {
+    fontSize: 12,
+    fontWeight: '900',
+    color: '#92400e',
+  },
+  rewardText: {
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '700',
+    color: '#78350f',
+  },
   editGoalTitleInput: {
     borderWidth: 1,
     borderColor: '#c4b5fd',
@@ -1851,6 +1945,18 @@ const styles = StyleSheet.create({
     paddingVertical: 11,
     paddingHorizontal: 12,
     fontSize: 15,
+    backgroundColor: 'white',
+  },
+  editGoalRewardInput: {
+    minHeight: 76,
+    borderWidth: 1,
+    borderColor: '#c4b5fd',
+    borderRadius: 10,
+    paddingVertical: 11,
+    paddingHorizontal: 12,
+    fontSize: 14,
+    lineHeight: 20,
+    textAlignVertical: 'top',
     backgroundColor: 'white',
   },
   editDatesActions: {

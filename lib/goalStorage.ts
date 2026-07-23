@@ -1,4 +1,5 @@
 import { getDb, migrateDb } from './db';
+import { normalizeGoalReward } from './goalRewardUtils';
 import {
   createDefaultGoalDateRange,
   validateGoalDateRange,
@@ -12,6 +13,7 @@ export type StoredGoal = {
   completedAt: string | null;
   startDate: string;
   endDate: string;
+  reward: string | null;
 };
 
 type GoalRow = {
@@ -22,6 +24,7 @@ type GoalRow = {
   completed_at: string | null;
   start_date: string;
   end_date: string;
+  reward: string | null;
 };
 
 export async function getGoals(): Promise<StoredGoal[]> {
@@ -30,7 +33,7 @@ export async function getGoals(): Promise<StoredGoal[]> {
   const db = await getDb();
 
   const rows = await db.getAllAsync<GoalRow>(`
-    SELECT id, title, completed, created_at, completed_at, start_date, end_date
+    SELECT id, title, completed, created_at, completed_at, start_date, end_date, reward
     FROM goals
     ORDER BY created_at DESC;
   `);
@@ -43,13 +46,15 @@ export async function getGoals(): Promise<StoredGoal[]> {
     completedAt: row.completed_at,
     startDate: row.start_date,
     endDate: row.end_date,
+    reward: row.reward,
   }));
 }
 
 export async function insertGoal(
   title: string,
   startDateKey?: string,
-  endDateKey?: string
+  endDateKey?: string,
+  reward?: string | null
 ): Promise<StoredGoal> {
   await migrateDb();
 
@@ -64,6 +69,7 @@ export async function insertGoal(
   const createdAt = new Date().toISOString();
   const startDate = dateRange.startDateIso;
   const endDate = dateRange.endDateIso;
+  const normalizedReward = normalizeGoalReward(reward);
 
   await db.runAsync(
     `
@@ -74,11 +80,12 @@ export async function insertGoal(
       created_at,
       completed_at,
       start_date,
-      end_date
+      end_date,
+      reward
     )
-    VALUES (?, ?, 0, ?, NULL, ?, ?);
+    VALUES (?, ?, 0, ?, NULL, ?, ?, ?);
     `,
-    [id, title.trim(), createdAt, startDate, endDate]
+    [id, title.trim(), createdAt, startDate, endDate, normalizedReward]
   );
 
   return {
@@ -89,6 +96,7 @@ export async function insertGoal(
     completedAt: null,
     startDate,
     endDate,
+    reward: normalizedReward,
   };
 }
 
@@ -96,8 +104,14 @@ export async function updateGoalDetails(
   id: number,
   title: string,
   startDateKey: string,
-  endDateKey: string
-): Promise<{ title: string; startDate: string; endDate: string }> {
+  endDateKey: string,
+  reward?: string | null
+): Promise<{
+  title: string;
+  startDate: string;
+  endDate: string;
+  reward: string | null;
+}> {
   await migrateDb();
 
   const trimmedTitle = title.trim();
@@ -111,21 +125,23 @@ export async function updateGoalDetails(
     startDateKey,
     endDateKey
   );
+  const normalizedReward = normalizeGoalReward(reward);
 
   /*
-   * The title and date range are saved together so the goal card cannot end up
-   * partially updated if one part of the edit fails validation.
+   * The title, date range, and reward are saved together so the goal card
+   * cannot end up partially updated if one part of the edit fails validation.
    */
   await db.runAsync(
     `
     UPDATE goals
-    SET title = ?, start_date = ?, end_date = ?
+    SET title = ?, start_date = ?, end_date = ?, reward = ?
     WHERE id = ?;
     `,
     [
       trimmedTitle,
       dateRange.startDateIso,
       dateRange.endDateIso,
+      normalizedReward,
       id,
     ]
   );
@@ -134,6 +150,7 @@ export async function updateGoalDetails(
     title: trimmedTitle,
     startDate: dateRange.startDateIso,
     endDate: dateRange.endDateIso,
+    reward: normalizedReward,
   };
 }
 

@@ -427,9 +427,10 @@ export async function replaceWeekFlowData(
             created_at,
             completed_at,
             start_date,
-            end_date
+            end_date,
+            reward
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?);
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?);
           `,
           [
             goal.id,
@@ -439,6 +440,7 @@ export async function replaceWeekFlowData(
             goal.completedAt,
             goal.startDate,
             goal.endDate,
+            goal.reward,
           ]
         );
       }

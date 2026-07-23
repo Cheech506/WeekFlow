@@ -445,7 +445,8 @@ async function runMigrations() {
       created_at TEXT NOT NULL,
       completed_at TEXT,
       start_date TEXT NOT NULL,
-      end_date TEXT NOT NULL
+      end_date TEXT NOT NULL,
+      reward TEXT
     );
 
     CREATE TABLE IF NOT EXISTS brain_dumps (
@@ -519,6 +520,8 @@ async function runMigrations() {
     'recurrence_occurrence_date',
     'TEXT'
   );
+
+  await ensureColumn(db, 'goals', 'reward', 'TEXT');
 
   await ensureColumn(
     db,

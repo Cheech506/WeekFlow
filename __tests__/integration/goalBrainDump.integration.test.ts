@@ -17,16 +17,19 @@ describe('goal and brain dump storage integration', () => {
     const goal = await goalStorage.insertGoal(
       '  Integration goal  ',
       '2026-07-01',
-      '2026-09-23'
+      '2026-09-23',
+      '  Buy a new game  '
     );
 
     expect(goal.title).toBe('Integration goal');
+    expect(goal.reward).toBe('Buy a new game');
 
     const editedGoal = await goalStorage.updateGoalDetails(
       goal.id,
       '  Updated integration goal  ',
       '2026-07-08',
-      '2026-10-07'
+      '2026-10-07',
+      '  Take a full gaming night  '
     );
 
     let goals = await goalStorage.getGoals();
@@ -34,6 +37,7 @@ describe('goal and brain dump storage integration', () => {
     expect(goals[0].title).toBe('Updated integration goal');
     expect(goals[0].startDate).toBe(editedGoal.startDate);
     expect(goals[0].endDate).toBe(editedGoal.endDate);
+    expect(goals[0].reward).toBe('Take a full gaming night');
 
     const completedAt =
       await goalStorage.updateGoalCompletion(
@@ -83,6 +87,29 @@ describe('goal and brain dump storage integration', () => {
       startDate: goal.startDate,
       endDate: goal.endDate,
     });
+  });
+
+  test('normalizes blank rewards and rejects rewards that are too long', async () => {
+    const goalStorage = await import('../../lib/goalStorage');
+
+    const goal = await goalStorage.insertGoal(
+      'Reward validation goal',
+      '2026-07-01',
+      '2026-09-23',
+      '   '
+    );
+
+    expect(goal.reward).toBeNull();
+
+    await expect(
+      goalStorage.updateGoalDetails(
+        goal.id,
+        goal.title,
+        '2026-07-01',
+        '2026-09-23',
+        'x'.repeat(201)
+      )
+    ).rejects.toThrow('under 200 characters');
   });
 
   test('deleting a goal preserves linked tasks and recurring rules', async () => {

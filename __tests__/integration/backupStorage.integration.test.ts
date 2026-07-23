@@ -32,6 +32,7 @@ function makeBackup(
           completedAt: null,
           startDate: '2026-07-01T12:00:00.000Z',
           endDate: '2026-09-23T12:00:00.000Z',
+          reward: 'Buy a new game',
         },
       ],
       recurringRules: [],
@@ -126,9 +127,10 @@ describe('backup restore integration', () => {
     expect((await taskStorage.getTasks())[0].title).toBe(
       'Restored task'
     );
-    expect((await goalStorage.getGoals())[0].title).toBe(
-      'Restored goal'
-    );
+    expect((await goalStorage.getGoals())[0]).toMatchObject({
+      title: 'Restored goal',
+      reward: 'Buy a new game',
+    });
     expect(
       (await brainStorage.getBrainDumps())[0].body
     ).toBe('Restored note');

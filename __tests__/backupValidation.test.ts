@@ -24,7 +24,7 @@ import {
 } from './testFactories';
 
 function makeValidBackup(): WeekFlowBackup {
-  const goal = makeGoal({ id: 1 });
+  const goal = makeGoal({ id: 1, reward: 'Buy a new game' });
   const rule = makeRecurringRule({
     id: 10,
     goalId: 1,
@@ -213,6 +213,24 @@ describe('backup validation', () => {
     expect(result.backup.data.planningCycles).toEqual([]);
   });
 
+  test('upgrades a valid version 5 backup and adds null rewards to old goals', () => {
+    const current = makeValidBackup();
+    const versionFiveBackup = {
+      ...current,
+      version: 5,
+      data: {
+        ...current.data,
+        goals: current.data.goals.map(({ reward, ...goal }) => goal),
+      },
+    };
+
+    const result = inspectWeekFlowBackup(versionFiveBackup);
+
+    expect(result.preview.sourceVersion).toBe(5);
+    expect(result.backup.version).toBe(BACKUP_VERSION);
+    expect(result.backup.data.goals[0].reward).toBeNull();
+  });
+
   test('accepts JSON with a UTF-8 byte-order mark', () => {
     const backup = makeValidBackup();
     const result = parseWeekFlowBackupJson(
@@ -239,6 +257,15 @@ describe('backup validation', () => {
 
     expect(() => parseWeekFlowBackup(backup)).toThrow(
       'not exactly twelve weeks long'
+    );
+  });
+
+  test('rejects a current backup with an invalid goal reward', () => {
+    const backup = makeValidBackup();
+    backup.data.goals[0].reward = 'x'.repeat(201);
+
+    expect(() => parseWeekFlowBackup(backup)).toThrow(
+      'reward longer than 200 characters'
     );
   });
 
