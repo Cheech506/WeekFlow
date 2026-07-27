@@ -14,7 +14,7 @@ describe('task storage integration', () => {
   test('inserts, reads, and edits a task', async () => {
     const taskStorage = await import('../../lib/taskStorage');
 
-    await taskStorage.insertTask(
+    const taskId = await taskStorage.insertTask(
       '  Integration task  ',
       'Inbox',
       '  Stored note  ',
@@ -26,6 +26,7 @@ describe('task storage integration', () => {
     let tasks = await taskStorage.getTasks();
 
     expect(tasks).toHaveLength(1);
+    expect(tasks[0].id).toBe(taskId);
     expect(tasks[0]).toMatchObject({
       title: 'Integration task',
       day: 'Inbox',
@@ -88,6 +89,85 @@ describe('task storage integration', () => {
 
     expect(scheduledTask.day).toBe('Inbox');
     expect(scheduledTask.dueDate).toBeNull();
+  });
+
+  test('rescheduling one recurring occurrence preserves its series identity', async () => {
+    const { getDb, migrateDb } = await import('../../lib/db');
+    const taskStorage = await import('../../lib/taskStorage');
+
+    await migrateDb();
+    const db = await getDb();
+
+    await db.execAsync(`
+      INSERT INTO recurring_rules (
+        id,
+        title,
+        notes,
+        priority,
+        goal_id,
+        frequency,
+        start_date,
+        end_date,
+        weekdays,
+        active,
+        created_at
+      )
+      VALUES (
+        8,
+        'Calendar rule',
+        NULL,
+        0,
+        NULL,
+        'weekly',
+        '2026-07-06',
+        NULL,
+        '[]',
+        1,
+        '2026-07-01T12:00:00.000Z'
+      );
+
+      INSERT INTO tasks (
+        id,
+        title,
+        day,
+        due_date,
+        notes,
+        priority,
+        goal_id,
+        completed,
+        created_at,
+        completed_at,
+        recurring_rule_id,
+        recurrence_occurrence_date
+      )
+      VALUES (
+        100,
+        'Calendar occurrence',
+        'Monday',
+        '2026-07-06',
+        NULL,
+        0,
+        NULL,
+        0,
+        '2026-07-01T12:00:00.000Z',
+        NULL,
+        8,
+        '2026-07-06'
+      );
+    `);
+
+    await taskStorage.scheduleTaskByDate(100, '2027-01-15');
+
+    const task = (await taskStorage.getTasks()).find(
+      (item) => item.id === 100
+    );
+
+    expect(task).toMatchObject({
+      day: 'Friday',
+      dueDate: '2027-01-15',
+      recurringRuleId: 8,
+      recurrenceOccurrenceDate: '2026-07-06',
+    });
   });
 
   test('deleting a recurring occurrence records an exception', async () => {

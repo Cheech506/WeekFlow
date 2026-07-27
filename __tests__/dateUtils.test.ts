@@ -6,6 +6,8 @@ import {
 
 import {
   addDays,
+  addMonths,
+  getCalendarMonthDays,
   getLocalDateKey,
   getNextOccurrenceDateKey,
   getStartOfWeek,
@@ -109,6 +111,47 @@ describe('dateUtils', () => {
 
     expect(nextWeek[0].dateKey).toBe('2026-06-29');
     expect(nextWeek[6].dateKey).toBe('2026-07-05');
+  });
+
+  test('builds a stable Monday-first month calendar grid', () => {
+    const days = getCalendarMonthDays(
+      localDate(2026, 7, 15),
+      localDate(2026, 7, 27)
+    );
+
+    expect(days).toHaveLength(42);
+    expect(days[0].dateKey).toBe('2026-06-29');
+    expect(days[41].dateKey).toBe('2026-08-09');
+    expect(
+      days.find((day) => day.dateKey === '2026-07-27')
+    ).toMatchObject({
+      dayNumber: 27,
+      isCurrentMonth: true,
+      isToday: true,
+    });
+    expect(
+      days.find((day) => day.dateKey === '2026-06-30')
+    ).toMatchObject({
+      isCurrentMonth: false,
+    });
+  });
+
+  test('moves calendar months safely across short months and years', () => {
+    expect(
+      getLocalDateKey(addMonths(localDate(2026, 1, 31), 1))
+    ).toBe('2026-02-01');
+
+    expect(
+      getLocalDateKey(addMonths(localDate(2026, 12, 15), 1))
+    ).toBe('2027-01-01');
+  });
+
+  test('includes leap day in the February calendar grid', () => {
+    const days = getCalendarMonthDays(localDate(2024, 2, 10));
+
+    expect(
+      days.some((day) => day.dateKey === '2024-02-29')
+    ).toBe(true);
   });
 
   test('detects overdue dates using the local day', () => {

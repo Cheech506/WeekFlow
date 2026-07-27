@@ -7,10 +7,11 @@ import {
 } from 'react-native';
 
 import { ActiveTaskFilters } from '@/components/ActiveTaskFilters';
+import { TaskDatePicker } from '@/components/TaskDatePicker';
 import { Text, View } from '@/components/Themed';
 import { useBrainDumps } from '@/context/BrainDumpContext';
 import { useGoals } from '@/context/GoalContext';
-import { useTasks } from '@/context/TaskContext';
+import { type Task, useTasks } from '@/context/TaskContext';
 import {
   createDefaultActiveTaskFilters,
   filterActiveTasks,
@@ -44,6 +45,8 @@ export default function WeeklyScreen() {
   const [taskFilters, setTaskFilters] = useState(
     createDefaultActiveTaskFilters()
   );
+  const [datePickerTask, setDatePickerTask] =
+    useState<Task | null>(null);
 
   const columnCount = getColumnCount(width);
   const isDesktopWeek = columnCount === 7;
@@ -147,14 +150,31 @@ export default function WeeklyScreen() {
     [weekTasks, taskFilters]
   );
 
+  async function handleScheduleDate(dateKey: string) {
+    if (!datePickerTask) return;
+
+    await scheduleTask(datePickerTask.id, dateKey);
+    setDatePickerTask(null);
+  }
+
   return (
-    <ScrollView
-      style={styles.page}
-      contentContainerStyle={[
-        styles.content,
-        width < 700 && styles.contentNarrow,
-      ]}
-    >
+    <>
+      <TaskDatePicker
+        visible={datePickerTask !== null}
+        taskTitle={datePickerTask?.title}
+        initialDateKey={datePickerTask?.dueDate}
+        minimumDateKey={todayDateKey}
+        onCancel={() => setDatePickerTask(null)}
+        onSelectDate={handleScheduleDate}
+      />
+
+      <ScrollView
+        style={styles.page}
+        contentContainerStyle={[
+          styles.content,
+          width < 700 && styles.contentNarrow,
+        ]}
+      >
       <View style={styles.header}>
         <Text style={styles.title}>Weekly Tasks</Text>
         <Text style={styles.subtitle}>
@@ -505,6 +525,18 @@ export default function WeeklyScreen() {
                           <Pressable
                             style={[
                               styles.actionButton,
+                              styles.calendarButton,
+                            ]}
+                            onPress={() => setDatePickerTask(task)}
+                          >
+                            <Text style={styles.actionButtonText}>
+                              Reschedule
+                            </Text>
+                          </Pressable>
+
+                          <Pressable
+                            style={[
+                              styles.actionButton,
                               styles.inboxButton,
                             ]}
                             onPress={() => moveTaskToInbox(task.id)}
@@ -544,8 +576,9 @@ export default function WeeklyScreen() {
             </View>
           );
         })}
-      </View>
-    </ScrollView>
+        </View>
+      </ScrollView>
+    </>
   );
 }
 
@@ -873,6 +906,9 @@ const styles = StyleSheet.create({
   },
   todayButton: {
     backgroundColor: '#f97316',
+  },
+  calendarButton: {
+    backgroundColor: '#7c3aed',
   },
   inboxButton: {
     backgroundColor: '#2563eb',

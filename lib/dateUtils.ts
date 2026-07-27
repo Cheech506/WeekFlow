@@ -17,6 +17,13 @@ export type CalendarDay = {
   isToday: boolean;
 };
 
+export type CalendarMonthDay = {
+  dateKey: string;
+  dayNumber: number;
+  isCurrentMonth: boolean;
+  isToday: boolean;
+};
+
 /**
  * Removes the time portion of a Date while keeping the user's local timezone.
  */
@@ -63,6 +70,51 @@ export function addDays(date: Date, amount: number): Date {
   const updatedDate = startOfLocalDay(date);
   updatedDate.setDate(updatedDate.getDate() + amount);
   return updatedDate;
+}
+
+/**
+ * Moves to the first day of another month. Starting from day one prevents
+ * JavaScript from skipping a short month when the source date is near month-end.
+ */
+export function addMonths(date: Date, amount: number): Date {
+  return new Date(
+    date.getFullYear(),
+    date.getMonth() + amount,
+    1
+  );
+}
+
+/**
+ * Builds a stable six-week, Monday-first calendar grid for a displayed month.
+ * Adjacent-month dates are included so the picker never changes height while
+ * the user moves between months.
+ */
+export function getCalendarMonthDays(
+  displayedMonth: Date = new Date(),
+  currentDate: Date = new Date()
+): CalendarMonthDay[] {
+  const monthStart = new Date(
+    displayedMonth.getFullYear(),
+    displayedMonth.getMonth(),
+    1
+  );
+  const daysBeforeMonday = (monthStart.getDay() + 6) % 7;
+  const gridStart = addDays(monthStart, -daysBeforeMonday);
+  const todayKey = getLocalDateKey(startOfLocalDay(currentDate));
+
+  return Array.from({ length: 42 }, (_, index) => {
+    const date = addDays(gridStart, index);
+    const dateKey = getLocalDateKey(date);
+
+    return {
+      dateKey,
+      dayNumber: date.getDate(),
+      isCurrentMonth:
+        date.getFullYear() === monthStart.getFullYear() &&
+        date.getMonth() === monthStart.getMonth(),
+      isToday: dateKey === todayKey,
+    };
+  });
 }
 
 /**

@@ -7,10 +7,11 @@ import {
 } from 'react-native';
 
 import { ActiveTaskFilters } from '@/components/ActiveTaskFilters';
+import { TaskDatePicker } from '@/components/TaskDatePicker';
 import { Text, View } from '@/components/Themed';
 import { useBrainDumps } from '@/context/BrainDumpContext';
 import { useGoals } from '@/context/GoalContext';
-import { useTasks } from '@/context/TaskContext';
+import { type Task, useTasks } from '@/context/TaskContext';
 import {
   createDefaultActiveTaskFilters,
   filterActiveTasks,
@@ -18,7 +19,6 @@ import {
 import {
   formatDateKey,
   getLocalDateKey,
-  getUpcomingDays,
 } from '@/lib/dateUtils';
 import { calculateProgressStats } from '@/lib/progressStats';
 
@@ -44,9 +44,10 @@ export default function DailyScreen() {
   const [taskFilters, setTaskFilters] = useState(
     createDefaultActiveTaskFilters()
   );
+  const [datePickerTask, setDatePickerTask] =
+    useState<Task | null>(null);
 
   const isDesktop = width >= 1100;
-  const isWideDesktop = width >= 1400;
 
   const {
     tasks,
@@ -66,12 +67,6 @@ export default function DailyScreen() {
   } = useBrainDumps();
 
   const todayDateKey = getLocalDateKey(new Date());
-  // Temporary test: treat tomorrow as today.
-  // This is here to check for Overdue tasks
-  // const testNow = new Date();
-  // testNow.setDate(testNow.getDate() + 1);
-
-  // const todayDateKey = getLocalDateKey(testNow);
   const todayLabel = formatDateKey(todayDateKey, {
     weekday: 'long',
     month: 'long',
@@ -92,15 +87,7 @@ export default function DailyScreen() {
   const filteredActiveTaskCount =
     filteredActiveTasks.length + filteredOverdueTasks.length;
 
-  // This is here to check for Overdue tasks
-  // const overdueTasks = getOverdueTasks(testNow);
   const activeBrainDumps = getActiveBrainDumps();
-
-  /*
-   * The first option would be Today, which already has its own quick button.
-   * The remaining options give overdue tasks a simple future reschedule list.
-   */
-  const futureRescheduleDays = getUpcomingDays(14).slice(1);
 
   /*
    * Progress calculations remain outside the UI markup so the
@@ -108,14 +95,31 @@ export default function DailyScreen() {
    */
   const progressStats = calculateProgressStats(tasks);
 
+  async function handleScheduleDate(dateKey: string) {
+    if (!datePickerTask) return;
+
+    await scheduleTask(datePickerTask.id, dateKey);
+    setDatePickerTask(null);
+  }
+
   return (
-    <ScrollView
-      style={styles.page}
-      contentContainerStyle={[
-        styles.content,
-        isDesktop && styles.contentDesktop,
-      ]}
-    >
+    <>
+      <TaskDatePicker
+        visible={datePickerTask !== null}
+        taskTitle={datePickerTask?.title}
+        initialDateKey={datePickerTask?.dueDate}
+        minimumDateKey={todayDateKey}
+        onCancel={() => setDatePickerTask(null)}
+        onSelectDate={handleScheduleDate}
+      />
+
+      <ScrollView
+        style={styles.page}
+        contentContainerStyle={[
+          styles.content,
+          isDesktop && styles.contentDesktop,
+        ]}
+      >
       <View
         style={[
           styles.header,
@@ -236,6 +240,15 @@ export default function DailyScreen() {
                       </Pressable>
 
                       <Pressable
+                        style={styles.calendarButton}
+                        onPress={() => setDatePickerTask(task)}
+                      >
+                        <Text style={styles.actionButtonText}>
+                          Choose Date
+                        </Text>
+                      </Pressable>
+
+                      <Pressable
                         style={styles.inboxButton}
                         onPress={() => moveTaskToInbox(task.id)}
                       >
@@ -260,35 +273,6 @@ export default function DailyScreen() {
                     </View>
                   </View>
 
-                  <View style={styles.rescheduleSection}>
-                    <Text style={styles.rescheduleLabel}>
-                      Pick New Date:
-                    </Text>
-
-                    <ScrollView
-                      horizontal
-                      showsHorizontalScrollIndicator={false}
-                      contentContainerStyle={styles.rescheduleDays}
-                    >
-                      {futureRescheduleDays.map((calendarDay) => (
-                        <Pressable
-                          key={calendarDay.dateKey}
-                          style={styles.rescheduleButton}
-                          onPress={() =>
-                            scheduleTask(task.id, calendarDay.dateKey)
-                          }
-                        >
-                          <Text style={styles.rescheduleDayText}>
-                            {calendarDay.shortDayName}
-                          </Text>
-
-                          <Text style={styles.rescheduleDateText}>
-                            {calendarDay.monthDayLabel}
-                          </Text>
-                        </Pressable>
-                      ))}
-                    </ScrollView>
-                  </View>
                 </View>
               );
             })}
@@ -539,6 +523,15 @@ export default function DailyScreen() {
 
                   <View style={styles.taskActions}>
                     <Pressable
+                      style={styles.calendarButton}
+                      onPress={() => setDatePickerTask(task)}
+                    >
+                      <Text style={styles.actionButtonText}>
+                        Reschedule
+                      </Text>
+                    </Pressable>
+
+                    <Pressable
                       style={styles.inboxButton}
                       onPress={() => moveTaskToInbox(task.id)}
                     >
@@ -618,8 +611,9 @@ export default function DailyScreen() {
             ))
           )}
         </View>
-      </View>
-    </ScrollView>
+        </View>
+      </ScrollView>
+    </>
   );
 }
 
@@ -717,34 +711,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#b91c1c',
     fontWeight: '800',
-  },
-  rescheduleSection: { gap: 8, backgroundColor: 'transparent' },
-  rescheduleLabel: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#7f1d1d',
-  },
-  rescheduleDays: { gap: 8 },
-  rescheduleButton: {
-    minWidth: 82,
-    paddingVertical: 9,
-    paddingHorizontal: 12,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#fecaca',
-    backgroundColor: '#fff7ed',
-    alignItems: 'center',
-  },
-  rescheduleDayText: {
-    fontSize: 13,
-    fontWeight: '900',
-    color: '#9a3412',
-  },
-  rescheduleDateText: {
-    marginTop: 3,
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#7c2d12',
   },
   streakCard: {
     padding: 18,
@@ -935,6 +901,12 @@ const styles = StyleSheet.create({
   },
   todayButton: {
     backgroundColor: '#f97316',
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+  },
+  calendarButton: {
+    backgroundColor: '#7c3aed',
     paddingVertical: 8,
     paddingHorizontal: 14,
     borderRadius: 10,

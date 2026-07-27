@@ -8,6 +8,7 @@ import {
 } from 'react-native';
 
 import { ActiveTaskFilters } from '@/components/ActiveTaskFilters';
+import { TaskDatePicker } from '@/components/TaskDatePicker';
 import { Text, View } from '@/components/Themed';
 import { useBrainDumps } from '@/context/BrainDumpContext';
 import { useGoals } from '@/context/GoalContext';
@@ -224,6 +225,8 @@ export default function InboxScreen() {
   const [taskFilters, setTaskFilters] = useState(
     createDefaultActiveTaskFilters()
   );
+  const [datePickerTask, setDatePickerTask] =
+    useState<Task | null>(null);
 
   const [repeatChoice, setRepeatChoice] =
     useState<RepeatChoice>('none');
@@ -331,6 +334,7 @@ export default function InboxScreen() {
   const activeBrainDumps = getActiveBrainDumps();
   const scheduleOptions = getUpcomingDays(14);
   const todayKey = getLocalDateKey(new Date());
+  const tomorrowKey = getLocalDateKey(addDays(new Date(), 1));
 
   function resetTaskForm() {
     setTaskText('');
@@ -513,6 +517,7 @@ export default function InboxScreen() {
         priority,
         selectedGoalId
       );
+
       resetTaskForm();
       return;
     }
@@ -557,6 +562,20 @@ export default function InboxScreen() {
           : 'The recurring task could not be created.'
       );
     }
+  }
+
+  async function scheduleTaskForDate(
+    task: Task,
+    dateKey: string
+  ) {
+    await scheduleTask(task.id, dateKey);
+  }
+
+  async function handleScheduleDate(dateKey: string) {
+    if (!datePickerTask) return;
+
+    await scheduleTaskForDate(datePickerTask, dateKey);
+    setDatePickerTask(null);
   }
 
   async function handleAddBrainDump() {
@@ -867,14 +886,24 @@ export default function InboxScreen() {
   }
 
   return (
-    <ScrollView
-      style={styles.page}
-      contentContainerStyle={[
-        styles.content,
-        isDesktop && styles.contentDesktop,
-      ]}
-      keyboardShouldPersistTaps="handled"
-    >
+    <>
+      <TaskDatePicker
+        visible={datePickerTask !== null}
+        taskTitle={datePickerTask?.title}
+        initialDateKey={datePickerTask?.dueDate}
+        minimumDateKey={todayKey}
+        onCancel={() => setDatePickerTask(null)}
+        onSelectDate={handleScheduleDate}
+      />
+
+      <ScrollView
+        style={styles.page}
+        contentContainerStyle={[
+          styles.content,
+          isDesktop && styles.contentDesktop,
+        ]}
+        keyboardShouldPersistTaps="handled"
+      >
       <View
         style={[
           styles.header,
@@ -1303,6 +1332,7 @@ export default function InboxScreen() {
             Templates save the title, notes, priority, and linked goal.
             Repeat settings stay in Manage Recurring Tasks.
           </Text>
+
         </View>
       </View>
 
@@ -3149,61 +3179,82 @@ export default function InboxScreen() {
                   </View>
 
                   <Text style={styles.pickerLabel}>
-                    Schedule for:
+                    Choose where this task goes:
                   </Text>
-                  <ScrollView
-                    horizontal={!isWideDesktop}
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={[
-                      styles.horizontalRow,
-                      isWideDesktop && styles.horizontalRowDesktop,
-                    ]}
-                  >
-                    {scheduleOptions.map((option) => (
-                      <Pressable
-                        key={option.dateKey}
+                  <View style={styles.rowWrap}>
+                    <Pressable
+                      style={[
+                        styles.dateButton,
+                        styles.dateButtonSelected,
+                      ]}
+                      disabled
+                      accessibilityRole="button"
+                      accessibilityState={{ disabled: true }}
+                    >
+                      <Text
                         style={[
-                          styles.dateButton,
-                          option.isToday &&
-                            styles.dateButtonSelected,
+                          styles.dateDay,
+                          styles.selectedText,
                         ]}
-                        onPress={() =>
-                          scheduleTask(
-                            task.id,
-                            option.dateKey
-                          )
-                        }
                       >
-                        <Text
-                          style={[
-                            styles.dateDay,
-                            option.isToday &&
-                              styles.selectedText,
-                          ]}
-                        >
-                          {option.isToday
-                            ? 'Today'
-                            : option.shortDayName}
-                        </Text>
-                        <Text
-                          style={[
-                            styles.dateDate,
-                            option.isToday &&
-                              styles.selectedText,
-                          ]}
-                        >
-                          {option.monthDayLabel}
-                        </Text>
-                      </Pressable>
-                    ))}
-                  </ScrollView>
+                        Inbox
+                      </Text>
+                      <Text
+                        style={[
+                          styles.dateDate,
+                          styles.selectedText,
+                        ]}
+                      >
+                        Unscheduled
+                      </Text>
+                    </Pressable>
+
+                    <Pressable
+                      style={styles.dateButton}
+                      onPress={() =>
+                        scheduleTaskForDate(task, todayKey)
+                      }
+                    >
+                      <Text style={styles.dateDay}>Today</Text>
+                      <Text style={styles.dateDate}>
+                        {formatDateKey(todayKey, {
+                          month: 'short',
+                          day: 'numeric',
+                        })}
+                      </Text>
+                    </Pressable>
+
+                    <Pressable
+                      style={styles.dateButton}
+                      onPress={() =>
+                        scheduleTaskForDate(task, tomorrowKey)
+                      }
+                    >
+                      <Text style={styles.dateDay}>Tomorrow</Text>
+                      <Text style={styles.dateDate}>
+                        {formatDateKey(tomorrowKey, {
+                          month: 'short',
+                          day: 'numeric',
+                        })}
+                      </Text>
+                    </Pressable>
+
+                    <Pressable
+                      style={styles.dateButton}
+                      onPress={() => setDatePickerTask(task)}
+                    >
+                      <Text style={styles.dateDay}>Choose Date</Text>
+                      <Text style={styles.dateDate}>Any date</Text>
+                    </Pressable>
+                  </View>
                 </View>
               );
             })
           )}
         </View>
-      </View>
-    </ScrollView>
+        </View>
+      </ScrollView>
+    </>
   );
 }
 

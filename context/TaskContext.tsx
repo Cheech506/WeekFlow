@@ -83,7 +83,7 @@ type TaskContextValue = {
     priority?: number,
     goalId?: number | null,
     dueDate?: string | null
-  ) => Promise<void>;
+  ) => Promise<number | null>;
   createRecurringTask: (
     input: CreateRecurringRuleInput
   ) => Promise<void>;
@@ -243,9 +243,9 @@ export function TaskProvider({ children }: { children: ReactNode }) {
     goalId: number | null = null,
     dueDate: string | null = null
   ) {
-    if (!title.trim()) return;
+    if (!title.trim()) return null;
 
-    await insertTask(
+    const taskId = await insertTask(
       title,
       day,
       notes,
@@ -254,6 +254,8 @@ export function TaskProvider({ children }: { children: ReactNode }) {
       dueDate
     );
     await loadTasks();
+
+    return taskId;
   }
 
   async function createRecurringTask(

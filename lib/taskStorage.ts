@@ -84,7 +84,7 @@ export async function insertTask(
   priority: number = 0,
   goalId: number | null = null,
   dueDate: string | null = null
-): Promise<void> {
+): Promise<number> {
   await migrateDb();
   const db = await getDb();
   const createdAt = new Date().toISOString();
@@ -93,7 +93,7 @@ export async function insertTask(
     ? getDayNameFromDateKey(dueDate) ?? day
     : day;
 
-  await db.runAsync(
+  const result = await db.runAsync(
     `
     INSERT INTO tasks (
       title,
@@ -120,6 +120,8 @@ export async function insertTask(
       createdAt,
     ]
   );
+
+  return result.lastInsertRowId;
 }
 
 export async function updateTaskById(
