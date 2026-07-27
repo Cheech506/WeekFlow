@@ -58,6 +58,57 @@ describe('recurring storage integration', () => {
     expect(after?.count).toBe(before?.count);
   });
 
+  test('stores and generates every-two-weeks schedules', async () => {
+    const recurringStorage = await import(
+      '../../lib/recurringStorage'
+    );
+    const { getDb } = await import('../../lib/db');
+    const { addDays, getLocalDateKey } = await import(
+      '../../lib/dateUtils'
+    );
+
+    const todayDate = new Date();
+    const today = getLocalDateKey(todayDate);
+    const secondOccurrence = getLocalDateKey(
+      addDays(todayDate, 14)
+    );
+    const thirdOccurrence = getLocalDateKey(
+      addDays(todayDate, 28)
+    );
+
+    const rule = await recurringStorage.insertRecurringRule({
+      title: 'Biweekly integration task',
+      frequency: 'everyTwoWeeks',
+      startDate: today,
+    });
+
+    const db = await getDb();
+    const storedRule = await db.getFirstAsync<{
+      frequency: string;
+    }>(
+      'SELECT frequency FROM recurring_rules WHERE id = ?;',
+      [rule.id]
+    );
+    const occurrences = await db.getAllAsync<{
+      due_date: string;
+    }>(
+      `
+      SELECT due_date
+      FROM tasks
+      WHERE recurring_rule_id = ?
+      ORDER BY due_date ASC;
+      `,
+      [rule.id]
+    );
+
+    expect(storedRule?.frequency).toBe('everyTwoWeeks');
+    expect(occurrences.map((task) => task.due_date)).toEqual([
+      today,
+      secondOccurrence,
+      thirdOccurrence,
+    ]);
+  });
+
   test('paused rules do not generate occurrences', async () => {
     const recurringStorage = await import(
       '../../lib/recurringStorage'

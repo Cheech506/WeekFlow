@@ -12,6 +12,7 @@ import type {
 export const RECURRENCE_FREQUENCIES = [
   'daily',
   'weekly',
+  'everyTwoWeeks',
   'certainDays',
   'monthly',
 ] as const;
@@ -118,6 +119,17 @@ function getDaysInMonth(
   return new Date(year, monthIndex + 1, 0).getDate();
 }
 
+function getCalendarDayNumber(date: Date) {
+  return Math.floor(
+    Date.UTC(
+      date.getFullYear(),
+      date.getMonth(),
+      date.getDate()
+    ) /
+      (24 * 60 * 60 * 1000)
+  );
+}
+
 function matchesRecurringDate(
   rule: Pick<
     RecurringRule,
@@ -136,6 +148,18 @@ function matchesRecurringDate(
 
   if (rule.frequency === 'weekly') {
     return date.getDay() === startDate.getDay();
+  }
+
+  if (rule.frequency === 'everyTwoWeeks') {
+    /*
+     * Compare calendar-day numbers instead of elapsed milliseconds so a
+     * daylight-saving time change cannot shift the two-week interval.
+     */
+    const daysSinceStart =
+      getCalendarDayNumber(date) -
+      getCalendarDayNumber(startDate);
+
+    return daysSinceStart % 14 === 0;
   }
 
   if (rule.frequency === 'certainDays') {

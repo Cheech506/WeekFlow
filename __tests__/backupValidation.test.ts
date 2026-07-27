@@ -103,6 +103,22 @@ describe('backup validation', () => {
     });
   });
 
+  test('accepts every-two-weeks recurring rules in current backups', () => {
+    const backup = makeValidBackup();
+    backup.data.recurringRules[0] = makeRecurringRule({
+      id: 10,
+      goalId: 1,
+      frequency: 'everyTwoWeeks',
+      startDate: '2026-06-22',
+    });
+
+    const result = inspectWeekFlowBackup(backup);
+
+    expect(result.backup.data.recurringRules[0].frequency).toBe(
+      'everyTwoWeeks'
+    );
+  });
+
   test('upgrades a valid version 1 backup', () => {
     const versionOneBackup = {
       format: 'weekflow-backup',

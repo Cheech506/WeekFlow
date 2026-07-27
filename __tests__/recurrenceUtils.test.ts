@@ -99,6 +99,41 @@ describe('recurrenceUtils', () => {
     ]);
   });
 
+  test('generates occurrences every two weeks from the start date', () => {
+    const dates = getRecurringOccurrenceDateKeys(
+      makeRecurringRule({
+        frequency: 'everyTwoWeeks',
+        startDate: '2026-06-23',
+      }),
+      new Date(2026, 5, 23, 12),
+      42
+    );
+
+    expect(dates).toEqual([
+      '2026-06-23',
+      '2026-07-07',
+      '2026-07-21',
+      '2026-08-04',
+    ]);
+  });
+
+  test('keeps every-two-weeks dates stable across daylight-saving changes', () => {
+    const dates = getRecurringOccurrenceDateKeys(
+      makeRecurringRule({
+        frequency: 'everyTwoWeeks',
+        startDate: '2026-10-25',
+      }),
+      new Date(2026, 9, 25, 12),
+      28
+    );
+
+    expect(dates).toEqual([
+      '2026-10-25',
+      '2026-11-08',
+      '2026-11-22',
+    ]);
+  });
+
   test('generates only selected weekdays', () => {
     const dates = getRecurringOccurrenceDateKeys(
       makeRecurringRule({

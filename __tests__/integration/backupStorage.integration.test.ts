@@ -146,6 +146,42 @@ describe('backup restore integration', () => {
     });
   });
 
+  test('restores every-two-weeks recurring schedules', async () => {
+    const { replaceWeekFlowData } = await import(
+      '../../lib/backupStorage'
+    );
+    const recurringStorage = await import(
+      '../../lib/recurringStorage'
+    );
+
+    const backup = makeBackup();
+    backup.data.recurringRules = [
+      {
+        id: 50,
+        title: 'Restored biweekly schedule',
+        notes: null,
+        priority: 1,
+        goalId: 1,
+        frequency: 'everyTwoWeeks',
+        startDate: '2026-07-06',
+        endDate: null,
+        weekdays: [],
+        active: true,
+        createdAt: '2026-07-01T12:00:00.000Z',
+      },
+    ];
+
+    const counts = await replaceWeekFlowData(backup);
+    const rules = await recurringStorage.getRecurringRules();
+
+    expect(counts.recurringRules).toBe(1);
+    expect(rules).toHaveLength(1);
+    expect(rules[0]).toMatchObject({
+      title: 'Restored biweekly schedule',
+      frequency: 'everyTwoWeeks',
+    });
+  });
+
   test('rejects invalid data before deleting the current database contents', async () => {
     const { replaceWeekFlowData } = await import(
       '../../lib/backupStorage'

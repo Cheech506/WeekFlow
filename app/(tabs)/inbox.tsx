@@ -56,6 +56,7 @@ const repeatChoices: {
   { value: 'none', label: 'Does Not Repeat' },
   { value: 'daily', label: 'Daily' },
   { value: 'weekly', label: 'Weekly' },
+  { value: 'everyTwoWeeks', label: 'Every 2 Weeks' },
   { value: 'certainDays', label: 'Certain Days' },
   { value: 'monthly', label: 'Monthly' },
 ];
@@ -172,6 +173,12 @@ function getRecurringRuleDescription(rule: RecurringRule) {
     return startDate
       ? `Every ${DAY_NAMES[startDate.getDay()]}`
       : 'Every week';
+  }
+
+  if (rule.frequency === 'everyTwoWeeks') {
+    return startDate
+      ? `Every 2 weeks on ${DAY_NAMES[startDate.getDay()]}`
+      : 'Every 2 weeks';
   }
 
   if (rule.frequency === 'certainDays') {
@@ -1043,10 +1050,12 @@ export default function InboxScreen() {
                 {repeatChoice === 'daily'
                   ? 'Creates one task every day.'
                   : repeatChoice === 'weekly'
-                    ? 'Repeats on the weekday of the selected start date.'
-                    : repeatChoice === 'certainDays'
-                      ? 'Repeats on every selected weekday.'
-                      : 'Repeats on the same day number each month. Shorter months use their final day.'}
+                    ? 'Repeats every week on the weekday of the selected start date.'
+                    : repeatChoice === 'everyTwoWeeks'
+                      ? 'Repeats every 2 weeks on the weekday of the selected start date.'
+                      : repeatChoice === 'certainDays'
+                        ? 'Repeats on every selected weekday.'
+                        : 'Repeats on the same day number each month. Shorter months use their final day.'}
               </Text>
 
               {repeatChoice === 'certainDays' ? (
