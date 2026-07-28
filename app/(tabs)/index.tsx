@@ -7,6 +7,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 
+import GoalMilestoneManager from '@/components/GoalMilestoneManager';
 import { Text, View } from '@/components/Themed';
 import { useCycle } from '@/context/CycleContext';
 import { useGoals } from '@/context/GoalContext';
@@ -16,6 +17,11 @@ import {
   getGoalDateKey,
   validateGoalDateRange,
 } from '@/lib/goalUtils';
+import {
+  MAX_GOAL_NOTES_LENGTH,
+  MAX_GOAL_PURPOSE_LENGTH,
+  MAX_GOAL_SUCCESS_DEFINITION_LENGTH,
+} from '@/lib/goalPlanningUtils';
 import { MAX_GOAL_REWARD_LENGTH } from '@/lib/goalRewardUtils';
 import {
   formatDateKey,
@@ -121,6 +127,10 @@ export default function TwelveWeekGoalsScreen() {
 
   const initialGoalDates = createDefaultGoalDateRange();
   const [goalText, setGoalText] = useState('');
+  const [showGoalPlanningFields, setShowGoalPlanningFields] = useState(false);
+  const [goalPurpose, setGoalPurpose] = useState('');
+  const [goalSuccessDefinition, setGoalSuccessDefinition] = useState('');
+  const [goalNotes, setGoalNotes] = useState('');
   const [goalReward, setGoalReward] = useState('');
   const [goalStartDate, setGoalStartDate] = useState(
     initialGoalDates.startDateKey
@@ -133,6 +143,9 @@ export default function TwelveWeekGoalsScreen() {
     number | null
   >(null);
   const [editGoalTitle, setEditGoalTitle] = useState('');
+  const [editGoalPurpose, setEditGoalPurpose] = useState('');
+  const [editGoalSuccessDefinition, setEditGoalSuccessDefinition] = useState('');
+  const [editGoalNotes, setEditGoalNotes] = useState('');
   const [editGoalReward, setEditGoalReward] = useState('');
   const [editStartDate, setEditStartDate] = useState('');
   const [editEndDate, setEditEndDate] = useState('');
@@ -400,12 +413,21 @@ export default function TwelveWeekGoalsScreen() {
         goalText,
         goalStartDate,
         goalEndDate,
-        goalReward
+        goalReward,
+        {
+          purpose: goalPurpose,
+          successDefinition: goalSuccessDefinition,
+          notes: goalNotes,
+        }
       );
 
       const nextDefaultDates = createDefaultGoalDateRange();
 
       setGoalText('');
+      setGoalPurpose('');
+      setGoalSuccessDefinition('');
+      setGoalNotes('');
+      setShowGoalPlanningFields(false);
       setGoalReward('');
       setGoalStartDate(nextDefaultDates.startDateKey);
       setGoalEndDate(nextDefaultDates.endDateKey);
@@ -425,6 +447,9 @@ export default function TwelveWeekGoalsScreen() {
 
     setEditingGoalId(goalId);
     setEditGoalTitle(goal.title);
+    setEditGoalPurpose(goal.purpose ?? '');
+    setEditGoalSuccessDefinition(goal.successDefinition ?? '');
+    setEditGoalNotes(goal.notes ?? '');
     setEditGoalReward(goal.reward ?? '');
     setEditStartDate(getGoalDateKey(goal.startDate));
     setEditEndDate(getGoalDateKey(goal.endDate));
@@ -434,6 +459,9 @@ export default function TwelveWeekGoalsScreen() {
   function cancelEditingGoal() {
     setEditingGoalId(null);
     setEditGoalTitle('');
+    setEditGoalPurpose('');
+    setEditGoalSuccessDefinition('');
+    setEditGoalNotes('');
     setEditGoalReward('');
     setEditStartDate('');
     setEditEndDate('');
@@ -457,7 +485,12 @@ export default function TwelveWeekGoalsScreen() {
         editGoalTitle,
         editStartDate,
         editEndDate,
-        editGoalReward
+        editGoalReward,
+        {
+          purpose: editGoalPurpose,
+          successDefinition: editGoalSuccessDefinition,
+          notes: editGoalNotes,
+        }
       );
       cancelEditingGoal();
     } catch (error) {
@@ -899,6 +932,78 @@ export default function TwelveWeekGoalsScreen() {
           returnKeyType="next"
         />
 
+        <View style={styles.optionalPlanningSection}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ expanded: showGoalPlanningFields }}
+            style={styles.optionalPlanningToggle}
+            onPress={() =>
+              setShowGoalPlanningFields((current) => !current)
+            }
+          >
+            <View style={styles.optionalPlanningToggleText}>
+              <Text style={styles.optionalPlanningTitle}>
+                Planning Details
+              </Text>
+              <Text style={styles.optionalPlanningSubtitle}>
+                Optional purpose, success definition, and notes
+              </Text>
+            </View>
+            <Text style={styles.optionalPlanningAction}>
+              {showGoalPlanningFields ? 'Hide' : 'Add'}
+            </Text>
+          </Pressable>
+
+          {showGoalPlanningFields ? (
+            <View style={styles.optionalPlanningFields}>
+              <View style={styles.planningInputGroup}>
+                <Text style={styles.dateInputLabel}>Purpose</Text>
+                <TextInput
+                  style={styles.planningInput}
+                  placeholder="Why does this goal matter?"
+                  value={goalPurpose}
+                  onChangeText={(value) => {
+                    setGoalPurpose(value);
+                    setGoalFormMessage('');
+                  }}
+                  multiline
+                  maxLength={MAX_GOAL_PURPOSE_LENGTH}
+                />
+              </View>
+
+              <View style={styles.planningInputGroup}>
+                <Text style={styles.dateInputLabel}>Success definition</Text>
+                <TextInput
+                  style={styles.planningInput}
+                  placeholder="What specifically counts as completing this goal?"
+                  value={goalSuccessDefinition}
+                  onChangeText={(value) => {
+                    setGoalSuccessDefinition(value);
+                    setGoalFormMessage('');
+                  }}
+                  multiline
+                  maxLength={MAX_GOAL_SUCCESS_DEFINITION_LENGTH}
+                />
+              </View>
+
+              <View style={styles.planningInputGroup}>
+                <Text style={styles.dateInputLabel}>Goal notes</Text>
+                <TextInput
+                  style={styles.goalNotesInput}
+                  placeholder="Plans, links, ideas, or other useful details..."
+                  value={goalNotes}
+                  onChangeText={(value) => {
+                    setGoalNotes(value);
+                    setGoalFormMessage('');
+                  }}
+                  multiline
+                  maxLength={MAX_GOAL_NOTES_LENGTH}
+                />
+              </View>
+            </View>
+          ) : null}
+        </View>
+
         <View style={styles.rewardInputGroup}>
           <Text style={styles.dateInputLabel}>Optional reward</Text>
           <TextInput
@@ -1090,6 +1195,35 @@ export default function TwelveWeekGoalsScreen() {
                   </View>
                 ) : null}
 
+                {goal.purpose || goal.successDefinition || goal.notes ? (
+                  <View style={styles.goalPlanningCard}>
+                    {goal.purpose ? (
+                      <View style={styles.goalPlanningSection}>
+                        <Text style={styles.goalPlanningLabel}>Purpose</Text>
+                        <Text style={styles.goalPlanningText}>{goal.purpose}</Text>
+                      </View>
+                    ) : null}
+
+                    {goal.successDefinition ? (
+                      <View style={styles.goalPlanningSection}>
+                        <Text style={styles.goalPlanningLabel}>
+                          Success Definition
+                        </Text>
+                        <Text style={styles.goalPlanningText}>
+                          {goal.successDefinition}
+                        </Text>
+                      </View>
+                    ) : null}
+
+                    {goal.notes ? (
+                      <View style={styles.goalPlanningSection}>
+                        <Text style={styles.goalPlanningLabel}>Notes</Text>
+                        <Text style={styles.goalPlanningText}>{goal.notes}</Text>
+                      </View>
+                    ) : null}
+                  </View>
+                ) : null}
+
                 {editingGoalId === goal.id ? (
                   <View style={styles.editDatesCard}>
                     <Text style={styles.editDatesTitle}>
@@ -1109,6 +1243,53 @@ export default function TwelveWeekGoalsScreen() {
                         }}
                         placeholder="Goal title"
                         returnKeyType="next"
+                      />
+                    </View>
+
+                    <View style={styles.dateInputGroup}>
+                      <Text style={styles.dateInputLabel}>Purpose</Text>
+                      <TextInput
+                        style={styles.planningInput}
+                        value={editGoalPurpose}
+                        onChangeText={(value) => {
+                          setEditGoalPurpose(value);
+                          setEditMessage('');
+                        }}
+                        placeholder="Why does this goal matter?"
+                        multiline
+                        maxLength={MAX_GOAL_PURPOSE_LENGTH}
+                      />
+                    </View>
+
+                    <View style={styles.dateInputGroup}>
+                      <Text style={styles.dateInputLabel}>
+                        Success definition
+                      </Text>
+                      <TextInput
+                        style={styles.planningInput}
+                        value={editGoalSuccessDefinition}
+                        onChangeText={(value) => {
+                          setEditGoalSuccessDefinition(value);
+                          setEditMessage('');
+                        }}
+                        placeholder="What counts as completing this goal?"
+                        multiline
+                        maxLength={MAX_GOAL_SUCCESS_DEFINITION_LENGTH}
+                      />
+                    </View>
+
+                    <View style={styles.dateInputGroup}>
+                      <Text style={styles.dateInputLabel}>Goal notes</Text>
+                      <TextInput
+                        style={styles.goalNotesInput}
+                        value={editGoalNotes}
+                        onChangeText={(value) => {
+                          setEditGoalNotes(value);
+                          setEditMessage('');
+                        }}
+                        placeholder="Plans, links, ideas, or useful details..."
+                        multiline
+                        maxLength={MAX_GOAL_NOTES_LENGTH}
                       />
                     </View>
 
@@ -1205,6 +1386,8 @@ export default function TwelveWeekGoalsScreen() {
                     </View>
                   </View>
                 ) : null}
+
+                <GoalMilestoneManager goalId={goal.id} />
 
                 <View style={styles.goalProgressSection}>
                   <View style={styles.progressHeaderRow}>
@@ -1764,6 +1947,74 @@ const styles = StyleSheet.create({
     gap: 10,
     marginBottom: 24,
   },
+  optionalPlanningSection: {
+    borderWidth: 1,
+    borderColor: '#dbeafe',
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: '#f8fbff',
+  },
+  optionalPlanningToggle: {
+    paddingVertical: 11,
+    paddingHorizontal: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    backgroundColor: '#eff6ff',
+  },
+  optionalPlanningToggleText: {
+    flex: 1,
+    backgroundColor: 'transparent',
+  },
+  optionalPlanningTitle: {
+    fontSize: 13,
+    fontWeight: '900',
+    color: '#1e3a8a',
+  },
+  optionalPlanningSubtitle: {
+    marginTop: 2,
+    fontSize: 11,
+    lineHeight: 16,
+    color: '#64748b',
+  },
+  optionalPlanningAction: {
+    fontSize: 12,
+    fontWeight: '900',
+    color: '#2563eb',
+  },
+  optionalPlanningFields: {
+    padding: 12,
+    gap: 10,
+    backgroundColor: 'transparent',
+  },
+  planningInputGroup: {
+    backgroundColor: 'transparent',
+  },
+  planningInput: {
+    minHeight: 74,
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 10,
+    paddingVertical: 11,
+    paddingHorizontal: 12,
+    fontSize: 14,
+    lineHeight: 20,
+    textAlignVertical: 'top',
+    backgroundColor: 'white',
+  },
+  goalNotesInput: {
+    minHeight: 105,
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 10,
+    paddingVertical: 11,
+    paddingHorizontal: 12,
+    fontSize: 14,
+    lineHeight: 20,
+    textAlignVertical: 'top',
+    backgroundColor: 'white',
+  },
   rewardInputGroup: {
     backgroundColor: 'transparent',
   },
@@ -2004,6 +2255,30 @@ const styles = StyleSheet.create({
   saveDatesButtonText: {
     color: 'white',
     fontWeight: '800',
+  },
+  goalPlanningCard: {
+    padding: 13,
+    borderRadius: 11,
+    borderWidth: 1,
+    borderColor: '#ddd6fe',
+    backgroundColor: '#faf7ff',
+    gap: 10,
+  },
+  goalPlanningSection: {
+    backgroundColor: 'transparent',
+  },
+  goalPlanningLabel: {
+    fontSize: 11,
+    fontWeight: '900',
+    color: '#6d28d9',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  goalPlanningText: {
+    marginTop: 4,
+    fontSize: 13,
+    lineHeight: 19,
+    color: '#374151',
   },
   goalProgressSection: {
     padding: 14,

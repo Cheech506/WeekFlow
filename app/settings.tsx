@@ -87,7 +87,7 @@ export default function SettingsScreen() {
     taskTemplates,
     refreshTasks,
   } = useTasks();
-  const { goals, refreshGoals } = useGoals();
+  const { goals, milestones, refreshGoals } = useGoals();
   const { cycles, refreshCycles } = useCycle();
   const { brainDumps, refreshBrainDumps } = useBrainDumps();
 
@@ -145,6 +145,9 @@ export default function SettingsScreen() {
   const metrics = useMemo<DataMetric[]>(() => {
     const completedTasks = tasks.filter((task) => task.completed).length;
     const completedGoals = goals.filter((goal) => goal.completed).length;
+    const completedMilestones = milestones.filter(
+      (milestone) => milestone.completed
+    ).length;
     const archivedBrainDumps = brainDumps.filter(
       (brainDump) => brainDump.archived
     ).length;
@@ -163,6 +166,11 @@ export default function SettingsScreen() {
         label: 'Goals',
         value: goals.length,
         detail: pluralize(completedGoals, 'completed goal'),
+      },
+      {
+        label: 'Milestones',
+        value: milestones.length,
+        detail: pluralize(completedMilestones, 'completed milestone'),
       },
       {
         label: 'Brain Dumps',
@@ -192,6 +200,7 @@ export default function SettingsScreen() {
     brainDumps,
     cycles,
     goals,
+    milestones,
     recurringRules,
     taskTemplates,
     tasks,
@@ -223,7 +232,7 @@ export default function SettingsScreen() {
         tone: 'success',
         text:
           `Exported ${counts.tasks} tasks, ${counts.goals} goals, ` +
-          `${counts.brainDumps} brain dumps, ${counts.taskTemplates} templates, ` +
+          `${counts.goalMilestones} milestones, ${counts.brainDumps} brain dumps, ${counts.taskTemplates} templates, ` +
           `${counts.recurringRules} recurring schedules, and ` +
           `${counts.planningCycles} planning cycles.`,
       });
@@ -287,7 +296,7 @@ export default function SettingsScreen() {
         tone: 'success',
         text:
           `Imported ${counts.tasks} tasks, ${counts.goals} goals, ` +
-          `${counts.brainDumps} brain dumps, ${counts.taskTemplates} templates, ` +
+          `${counts.goalMilestones} milestones, ${counts.brainDumps} brain dumps, ${counts.taskTemplates} templates, ` +
           `${counts.recurringRules} recurring schedules, and ` +
           `${counts.planningCycles} planning cycles.`,
       });
@@ -453,6 +462,7 @@ export default function SettingsScreen() {
               <Text style={styles.importCounts}>
                 {pendingImport.preview.counts.tasks} tasks •{' '}
                 {pendingImport.preview.counts.goals} goals •{' '}
+                {pendingImport.preview.counts.goalMilestones} milestones •{' '}
                 {pendingImport.preview.counts.brainDumps} brain dumps •{' '}
                 {pendingImport.preview.counts.taskTemplates} templates
               </Text>

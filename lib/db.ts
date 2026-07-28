@@ -95,6 +95,15 @@ async function repairOrphanedRelationships(
         recurring_occurrence_exceptions.recurring_rule_id
     );
   `);
+
+  await db.runAsync(`
+    DELETE FROM goal_milestones
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM goals
+      WHERE goals.id = goal_milestones.goal_id
+    );
+  `);
 }
 
 /**
@@ -231,6 +240,26 @@ async function createRelationshipTriggers(
     END;
 
     CREATE TRIGGER IF NOT EXISTS
+      trg_milestones_goal_exists_insert
+    BEFORE INSERT ON goal_milestones
+    WHEN NOT EXISTS (
+      SELECT 1 FROM goals WHERE id = NEW.goal_id
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'Milestone goal does not exist.');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS
+      trg_milestones_goal_exists_update
+    BEFORE UPDATE OF goal_id ON goal_milestones
+    WHEN NOT EXISTS (
+      SELECT 1 FROM goals WHERE id = NEW.goal_id
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'Milestone goal does not exist.');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS
       trg_exceptions_rule_exists_insert
     BEFORE INSERT ON recurring_occurrence_exceptions
     WHEN NOT EXISTS (
@@ -273,6 +302,22 @@ async function createRelationshipTriggers(
 
       UPDATE task_templates
       SET goal_id = NULL
+      WHERE goal_id = OLD.id;
+
+      DELETE FROM goal_milestones
+      WHERE goal_id = OLD.id;
+    END;
+
+    /*
+     * Existing installations may already have the older goal cleanup trigger.
+     * Use a separate trigger name so milestone cleanup is added during upgrade
+     * even when SQLite keeps the previous trigger definition unchanged.
+     */
+    CREATE TRIGGER IF NOT EXISTS
+      trg_goal_milestones_cleanup_after_goal_delete
+    AFTER DELETE ON goals
+    BEGIN
+      DELETE FROM goal_milestones
       WHERE goal_id = OLD.id;
     END;
 
@@ -449,6 +494,17 @@ async function runMigrations() {
       reward TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS goal_milestones (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      goal_id INTEGER NOT NULL,
+      title TEXT NOT NULL,
+      notes TEXT,
+      target_date TEXT,
+      completed INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      completed_at TEXT
+    );
+
     CREATE TABLE IF NOT EXISTS brain_dumps (
       id INTEGER PRIMARY KEY NOT NULL,
       body TEXT NOT NULL,
@@ -522,6 +578,9 @@ async function runMigrations() {
   );
 
   await ensureColumn(db, 'goals', 'reward', 'TEXT');
+  await ensureColumn(db, 'goals', 'purpose', 'TEXT');
+  await ensureColumn(db, 'goals', 'success_definition', 'TEXT');
+  await ensureColumn(db, 'goals', 'notes', 'TEXT');
 
   await ensureColumn(
     db,
@@ -555,6 +614,14 @@ async function runMigrations() {
    * due_date can change when the user reschedules the task.
    */
   await db.execAsync(`
+    CREATE INDEX IF NOT EXISTS
+      idx_goal_milestones_goal_id
+    ON goal_milestones (goal_id);
+
+    CREATE INDEX IF NOT EXISTS
+      idx_goal_milestones_target_date
+    ON goal_milestones (target_date);
+
     CREATE UNIQUE INDEX IF NOT EXISTS
       idx_tasks_recurring_occurrence
     ON tasks (recurring_rule_id, recurrence_occurrence_date)

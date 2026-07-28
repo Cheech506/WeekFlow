@@ -1,5 +1,6 @@
 import type { StoredBrainDump } from '../lib/brainDumpStorage';
 import type { PlanningCycle } from '../lib/cycleStorage';
+import type { GoalMilestone } from '../lib/goalMilestoneStorage';
 import type { StoredGoal } from '../lib/goalStorage';
 import type { RecurringRule } from '../lib/recurringStorage';
 import type { Task } from '../lib/taskStorage';
@@ -47,6 +48,28 @@ export function makeGoal(
     startDate: new Date(2026, 5, 1, 12).toISOString(),
     endDate: new Date(2026, 7, 24, 12).toISOString(),
     reward: null,
+    purpose: null,
+    successDefinition: null,
+    notes: null,
+    ...overrides,
+  };
+}
+
+
+export function makeGoalMilestone(
+  overrides: Partial<GoalMilestone> = {}
+): GoalMilestone {
+  const id = overrides.id ?? nextId++;
+
+  return {
+    id,
+    goalId: 1,
+    title: `Milestone ${id}`,
+    notes: null,
+    targetDate: null,
+    completed: false,
+    createdAt: new Date(2026, 5, 1, 12).toISOString(),
+    completedAt: null,
     ...overrides,
   };
 }

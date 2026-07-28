@@ -18,6 +18,7 @@ import {
 import { getBrainDumps } from './brainDumpStorage';
 import { getPlanningCycles } from './cycleStorage';
 import { getDb, migrateDb } from './db';
+import { getGoalMilestones } from './goalMilestoneStorage';
 import { getGoals } from './goalStorage';
 import {
   getRecurringOccurrenceExceptions,
@@ -66,6 +67,7 @@ async function buildWeekFlowBackup(): Promise<WeekFlowBackup> {
   const [
     tasks,
     goals,
+    goalMilestones,
     brainDumps,
     taskTemplates,
     recurringRules,
@@ -74,6 +76,7 @@ async function buildWeekFlowBackup(): Promise<WeekFlowBackup> {
   ] = await Promise.all([
     getTasks(),
     getGoals(),
+    getGoalMilestones(),
     getBrainDumps(),
     getTaskTemplates(),
     getRecurringRules(),
@@ -92,6 +95,7 @@ async function buildWeekFlowBackup(): Promise<WeekFlowBackup> {
     data: {
       tasks,
       goals,
+      goalMilestones,
       brainDumps,
       taskTemplates,
       recurringRules,
@@ -296,6 +300,7 @@ async function readDatabaseCounts(
   const [
     tasks,
     goals,
+    goalMilestones,
     brainDumps,
     taskTemplates,
     recurringRules,
@@ -307,6 +312,9 @@ async function readDatabaseCounts(
     ),
     db.getFirstAsync<CountRow>(
       'SELECT COUNT(*) AS count FROM goals;'
+    ),
+    db.getFirstAsync<CountRow>(
+      'SELECT COUNT(*) AS count FROM goal_milestones;'
     ),
     db.getFirstAsync<CountRow>(
       'SELECT COUNT(*) AS count FROM brain_dumps;'
@@ -328,6 +336,7 @@ async function readDatabaseCounts(
   return {
     tasks: tasks?.count ?? -1,
     goals: goals?.count ?? -1,
+    goalMilestones: goalMilestones?.count ?? -1,
     brainDumps: brainDumps?.count ?? -1,
     taskTemplates: taskTemplates?.count ?? -1,
     recurringRules:
@@ -345,6 +354,7 @@ function countsMatch(
   return (
     expected.tasks === actual.tasks &&
     expected.goals === actual.goals &&
+    expected.goalMilestones === actual.goalMilestones &&
     expected.brainDumps === actual.brainDumps &&
     expected.taskTemplates === actual.taskTemplates &&
     expected.recurringRules === actual.recurringRules &&
@@ -382,6 +392,7 @@ export async function replaceWeekFlowData(
         DELETE FROM recurring_occurrence_exceptions;
         DELETE FROM recurring_rules;
         DELETE FROM task_templates;
+        DELETE FROM goal_milestones;
         DELETE FROM goals;
         DELETE FROM brain_dumps;
         DELETE FROM planning_cycles;
@@ -428,9 +439,12 @@ export async function replaceWeekFlowData(
             completed_at,
             start_date,
             end_date,
-            reward
+            reward,
+            purpose,
+            success_definition,
+            notes
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
           `,
           [
             goal.id,
@@ -441,6 +455,40 @@ export async function replaceWeekFlowData(
             goal.startDate,
             goal.endDate,
             goal.reward,
+            goal.purpose,
+            goal.successDefinition,
+            goal.notes,
+          ]
+        );
+      }
+
+      for (
+        const milestone of
+        validatedBackup.data.goalMilestones
+      ) {
+        await db.runAsync(
+          `
+          INSERT INTO goal_milestones (
+            id,
+            goal_id,
+            title,
+            notes,
+            target_date,
+            completed,
+            created_at,
+            completed_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+          `,
+          [
+            milestone.id,
+            milestone.goalId,
+            milestone.title,
+            milestone.notes,
+            milestone.targetDate,
+            milestone.completed ? 1 : 0,
+            milestone.createdAt,
+            milestone.completedAt,
           ]
         );
       }

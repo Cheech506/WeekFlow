@@ -18,18 +18,33 @@ describe('goal and brain dump storage integration', () => {
       '  Integration goal  ',
       '2026-07-01',
       '2026-09-23',
-      '  Buy a new game  '
+      '  Buy a new game  ',
+      {
+        purpose: '  Build a strong DBA portfolio  ',
+        successDefinition: '  Publish three documented lab projects  ',
+        notes: '  Keep screenshots and test results  ',
+      }
     );
 
     expect(goal.title).toBe('Integration goal');
     expect(goal.reward).toBe('Buy a new game');
+    expect(goal.purpose).toBe('Build a strong DBA portfolio');
+    expect(goal.successDefinition).toBe(
+      'Publish three documented lab projects'
+    );
+    expect(goal.notes).toBe('Keep screenshots and test results');
 
     const editedGoal = await goalStorage.updateGoalDetails(
       goal.id,
       '  Updated integration goal  ',
       '2026-07-08',
       '2026-10-07',
-      '  Take a full gaming night  '
+      '  Take a full gaming night  ',
+      {
+        purpose: '  Prove practical database administration skills  ',
+        successDefinition: '  Publish the final portfolio site  ',
+        notes: '  Add recovery timings to the documentation  ',
+      }
     );
 
     let goals = await goalStorage.getGoals();
@@ -38,6 +53,15 @@ describe('goal and brain dump storage integration', () => {
     expect(goals[0].startDate).toBe(editedGoal.startDate);
     expect(goals[0].endDate).toBe(editedGoal.endDate);
     expect(goals[0].reward).toBe('Take a full gaming night');
+    expect(goals[0].purpose).toBe(
+      'Prove practical database administration skills'
+    );
+    expect(goals[0].successDefinition).toBe(
+      'Publish the final portfolio site'
+    );
+    expect(goals[0].notes).toBe(
+      'Add recovery timings to the documentation'
+    );
 
     const completedAt =
       await goalStorage.updateGoalCompletion(
@@ -112,6 +136,69 @@ describe('goal and brain dump storage integration', () => {
     ).rejects.toThrow('under 200 characters');
   });
 
+  test('creates, edits, completes, reopens, and deletes goal milestones', async () => {
+    const goalStorage = await import('../../lib/goalStorage');
+    const milestoneStorage = await import(
+      '../../lib/goalMilestoneStorage'
+    );
+
+    const goal = await goalStorage.insertGoal(
+      'Milestone goal',
+      '2026-07-01',
+      '2026-09-23'
+    );
+
+    const milestone = await milestoneStorage.insertGoalMilestone(
+      goal.id,
+      '  Finish backup lab  ',
+      '2026-08-01',
+      '  Document the restore test  '
+    );
+
+    expect(milestone).toMatchObject({
+      goalId: goal.id,
+      title: 'Finish backup lab',
+      targetDate: '2026-08-01',
+      notes: 'Document the restore test',
+      completed: false,
+    });
+
+    await milestoneStorage.updateGoalMilestone(
+      milestone.id,
+      '  Finish backup and recovery lab  ',
+      '2026-08-08',
+      '  Capture recovery time and screenshots  '
+    );
+
+    let milestones = await milestoneStorage.getGoalMilestones();
+    expect(milestones[0]).toMatchObject({
+      title: 'Finish backup and recovery lab',
+      targetDate: '2026-08-08',
+      notes: 'Capture recovery time and screenshots',
+    });
+
+    const completedAt =
+      await milestoneStorage.updateGoalMilestoneCompletion(
+        milestone.id,
+        true
+      );
+
+    milestones = await milestoneStorage.getGoalMilestones();
+    expect(milestones[0].completed).toBe(true);
+    expect(milestones[0].completedAt).toBe(completedAt);
+
+    await milestoneStorage.updateGoalMilestoneCompletion(
+      milestone.id,
+      false
+    );
+    milestones = await milestoneStorage.getGoalMilestones();
+    expect(milestones[0].completed).toBe(false);
+    expect(milestones[0].completedAt).toBeNull();
+
+    await milestoneStorage.deleteGoalMilestoneById(milestone.id);
+    expect(await milestoneStorage.getGoalMilestones()).toEqual([]);
+  });
+
   test('deleting a goal preserves linked tasks and recurring rules', async () => {
     const { getDb, migrateDb } = await import('../../lib/db');
     const goalStorage = await import('../../lib/goalStorage');
@@ -122,6 +209,13 @@ describe('goal and brain dump storage integration', () => {
       'Linked goal',
       '2026-07-01',
       '2026-09-23'
+    );
+    const milestoneStorage = await import(
+      '../../lib/goalMilestoneStorage'
+    );
+    await milestoneStorage.insertGoalMilestone(
+      goal.id,
+      'Goal-owned milestone'
     );
 
     await db.runAsync(
@@ -183,6 +277,7 @@ describe('goal and brain dump storage integration', () => {
     expect(storedTask?.goal_id).toBeNull();
     expect(storedRule).not.toBeNull();
     expect(storedRule?.goal_id).toBeNull();
+    expect(await milestoneStorage.getGoalMilestones()).toEqual([]);
   });
 
   test('rolls back relationship cleanup when goal deletion fails', async () => {

@@ -16,6 +16,7 @@ import {
   localIso,
   makeBrainDump,
   makeGoal,
+  makeGoalMilestone,
   makePlanningCycle,
   makeRecurringRule,
   makeTask,
@@ -56,6 +57,14 @@ function makeValidBackup(): WeekFlowBackup {
         }),
       ],
       goals: [goal],
+      goalMilestones: [
+        makeGoalMilestone({
+          id: 15,
+          goalId: 1,
+          title: 'Finish the first checkpoint',
+          targetDate: '2026-07-15',
+        }),
+      ],
       brainDumps: [makeBrainDump({ id: 20 })],
       taskTemplates: [
         makeTaskTemplate({
@@ -94,6 +103,7 @@ describe('backup validation', () => {
       counts: {
         tasks: 2,
         goals: 1,
+        goalMilestones: 1,
         brainDumps: 1,
         taskTemplates: 1,
         recurringRules: 1,
@@ -152,6 +162,7 @@ describe('backup validation', () => {
     expect(result.backup.data.recurringRules).toEqual([]);
     expect(result.backup.data.taskTemplates).toEqual([]);
     expect(result.backup.data.planningCycles).toEqual([]);
+    expect(result.backup.data.goalMilestones).toEqual([]);
     expect(
       result.backup.data.tasks[0].recurringRuleId
     ).toBeNull();
@@ -179,6 +190,7 @@ describe('backup validation', () => {
     expect(result.backup.version).toBe(BACKUP_VERSION);
     expect(result.backup.metadata.appVersion).toBe('legacy-v2');
     expect(result.backup.data.planningCycles).toEqual([]);
+    expect(result.backup.data.goalMilestones).toEqual([]);
   });
 
   test('upgrades a valid version 3 backup without templates', () => {
@@ -203,6 +215,7 @@ describe('backup validation', () => {
     expect(result.backup.version).toBe(BACKUP_VERSION);
     expect(result.backup.data.taskTemplates).toEqual([]);
     expect(result.backup.data.planningCycles).toEqual([]);
+    expect(result.backup.data.goalMilestones).toEqual([]);
   });
 
   test('upgrades a valid version 4 backup without planning cycles', () => {
@@ -227,6 +240,7 @@ describe('backup validation', () => {
     expect(result.preview.sourceVersion).toBe(4);
     expect(result.backup.version).toBe(BACKUP_VERSION);
     expect(result.backup.data.planningCycles).toEqual([]);
+    expect(result.backup.data.goalMilestones).toEqual([]);
   });
 
   test('upgrades a valid version 5 backup and adds null rewards to old goals', () => {
@@ -245,6 +259,34 @@ describe('backup validation', () => {
     expect(result.preview.sourceVersion).toBe(5);
     expect(result.backup.version).toBe(BACKUP_VERSION);
     expect(result.backup.data.goals[0].reward).toBeNull();
+    expect(result.backup.data.goals[0].purpose).toBeNull();
+    expect(result.backup.data.goalMilestones).toEqual([]);
+  });
+
+  test('upgrades a valid version 6 backup with goal planning fields set to null', () => {
+    const current = makeValidBackup();
+    const versionSixBackup = {
+      ...current,
+      version: 6,
+      data: {
+        ...current.data,
+        goals: current.data.goals.map(
+          ({ purpose, successDefinition, notes, ...goal }) => goal
+        ),
+        goalMilestones: undefined,
+      },
+    };
+
+    const result = inspectWeekFlowBackup(versionSixBackup);
+
+    expect(result.preview.sourceVersion).toBe(6);
+    expect(result.backup.version).toBe(BACKUP_VERSION);
+    expect(result.backup.data.goals[0]).toMatchObject({
+      purpose: null,
+      successDefinition: null,
+      notes: null,
+    });
+    expect(result.backup.data.goalMilestones).toEqual([]);
   });
 
   test('accepts JSON with a UTF-8 byte-order mark', () => {
@@ -282,6 +324,24 @@ describe('backup validation', () => {
 
     expect(() => parseWeekFlowBackup(backup)).toThrow(
       'reward longer than 200 characters'
+    );
+  });
+
+  test('rejects a current backup with invalid goal planning details', () => {
+    const backup = makeValidBackup();
+    backup.data.goals[0].purpose = 'x'.repeat(501);
+
+    expect(() => parseWeekFlowBackup(backup)).toThrow(
+      'purpose value longer than 500 characters'
+    );
+  });
+
+  test('rejects a milestone linked to a missing goal', () => {
+    const backup = makeValidBackup();
+    backup.data.goalMilestones[0].goalId = 999;
+
+    expect(() => parseWeekFlowBackup(backup)).toThrow(
+      'linked to a goal that is not included'
     );
   });
 

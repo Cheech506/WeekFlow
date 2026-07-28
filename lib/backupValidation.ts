@@ -5,6 +5,14 @@ import {
   DAY_NAMES,
   parseLocalDateKey,
 } from './dateUtils';
+import type { GoalMilestone } from './goalMilestoneStorage';
+import {
+  MAX_GOAL_NOTES_LENGTH,
+  MAX_GOAL_PURPOSE_LENGTH,
+  MAX_GOAL_SUCCESS_DEFINITION_LENGTH,
+  MAX_MILESTONE_NOTES_LENGTH,
+  MAX_MILESTONE_TITLE_LENGTH,
+} from './goalPlanningUtils';
 import type { StoredGoal } from './goalStorage';
 import { MAX_GOAL_REWARD_LENGTH } from './goalRewardUtils';
 import { RECURRENCE_FREQUENCIES } from './recurrenceUtils';
@@ -16,12 +24,13 @@ import type { Task } from './taskStorage';
 import type { TaskTemplate } from './taskTemplateStorage';
 
 export const BACKUP_FORMAT = 'weekflow-backup';
-export const BACKUP_VERSION = 6;
+export const BACKUP_VERSION = 7;
 export const BACKUP_DATA_MODEL_VERSION = 1;
 
 export type BackupCounts = {
   tasks: number;
   goals: number;
+  goalMilestones: number;
   brainDumps: number;
   taskTemplates: number;
   recurringRules: number;
@@ -43,15 +52,22 @@ type LegacyTask = Omit<
   'recurringRuleId' | 'recurrenceOccurrenceDate'
 >;
 
-type LegacyStoredGoal = Omit<StoredGoal, 'reward'> & {
+type LegacyStoredGoal = Omit<
+  StoredGoal,
+  'reward' | 'purpose' | 'successDefinition' | 'notes'
+> & {
   reward?: string | null;
+  purpose?: string | null;
+  successDefinition?: string | null;
+  notes?: string | null;
 };
 
 type BackupDataWithLegacyGoals = Omit<
   WeekFlowBackup['data'],
-  'goals'
+  'goals' | 'goalMilestones'
 > & {
   goals: LegacyStoredGoal[];
+  goalMilestones?: GoalMilestone[];
 };
 
 type LegacyWeekFlowBackupV1 = {
@@ -106,6 +122,14 @@ type LegacyWeekFlowBackupV5 = {
   data: BackupDataWithLegacyGoals;
 };
 
+type LegacyWeekFlowBackupV6 = {
+  format: typeof BACKUP_FORMAT;
+  version: 6;
+  exportedAt: string;
+  metadata: BackupMetadata;
+  data: BackupDataWithLegacyGoals;
+};
+
 export type WeekFlowBackup = {
   format: typeof BACKUP_FORMAT;
   version: typeof BACKUP_VERSION;
@@ -114,6 +138,7 @@ export type WeekFlowBackup = {
   data: {
     tasks: Task[];
     goals: StoredGoal[];
+    goalMilestones: GoalMilestone[];
     brainDumps: StoredBrainDump[];
     taskTemplates: TaskTemplate[];
     recurringRules: RecurringRule[];
@@ -123,7 +148,7 @@ export type WeekFlowBackup = {
 };
 
 export type BackupPreview = {
-  sourceVersion: 1 | 2 | 3 | 4 | 5 | typeof BACKUP_VERSION;
+  sourceVersion: 1 | 2 | 3 | 4 | 5 | 6 | typeof BACKUP_VERSION;
   currentVersion: typeof BACKUP_VERSION;
   exportedAt: string;
   appVersion: string;
@@ -344,7 +369,8 @@ function validateTask(
 function validateGoal(
   value: unknown,
   label: string,
-  requireReward: boolean = true
+  requireReward: boolean = true,
+  requirePlanningDetails: boolean = true
 ): asserts value is StoredGoal {
   if (!isRecord(value)) {
     fail('INVALID_GOAL', `${label} is not an object.`);
@@ -385,6 +411,34 @@ function validateGoal(
     );
   }
 
+  const planningFields = [
+    ['purpose', MAX_GOAL_PURPOSE_LENGTH],
+    ['successDefinition', MAX_GOAL_SUCCESS_DEFINITION_LENGTH],
+    ['notes', MAX_GOAL_NOTES_LENGTH],
+  ] as const;
+
+  for (const [field, maxLength] of planningFields) {
+    if (
+      requirePlanningDetails &&
+      !Object.prototype.hasOwnProperty.call(value, field)
+    ) {
+      fail('INVALID_GOAL', `${label} is missing its ${field} value.`);
+    }
+
+    const fieldValue = value[field];
+
+    if (fieldValue !== undefined && !isNullableString(fieldValue)) {
+      fail('INVALID_GOAL', `${label} has an invalid ${field} value.`);
+    }
+
+    if (typeof fieldValue === 'string' && fieldValue.length > maxLength) {
+      fail(
+        'INVALID_GOAL',
+        `${label} has a ${field} value longer than ${maxLength} characters.`
+      );
+    }
+  }
+
   if (typeof value.completed !== 'boolean') {
     fail('INVALID_GOAL', `${label} has an invalid completed value.`);
   }
@@ -420,6 +474,61 @@ function validateGoal(
     fail(
       'INVALID_GOAL',
       `${label} ends before its start date.`
+    );
+  }
+}
+
+function validateGoalMilestone(
+  value: unknown,
+  label: string
+): asserts value is GoalMilestone {
+  if (!isRecord(value)) {
+    fail('INVALID_MILESTONE', `${label} is not an object.`);
+  }
+
+  if (!isPositiveInteger(value.id) || !isPositiveInteger(value.goalId)) {
+    fail('INVALID_MILESTONE', `${label} has an invalid ID or goal link.`);
+  }
+
+  if (
+    typeof value.title !== 'string' ||
+    value.title.trim().length === 0 ||
+    value.title.length > MAX_MILESTONE_TITLE_LENGTH
+  ) {
+    fail('INVALID_MILESTONE', `${label} has an invalid title.`);
+  }
+
+  if (!isNullableString(value.notes)) {
+    fail('INVALID_MILESTONE', `${label} has invalid notes.`);
+  }
+
+  if (
+    typeof value.notes === 'string' &&
+    value.notes.length > MAX_MILESTONE_NOTES_LENGTH
+  ) {
+    fail('INVALID_MILESTONE', `${label} has notes that are too long.`);
+  }
+
+  if (!isValidNullableDateKey(value.targetDate)) {
+    fail('INVALID_MILESTONE', `${label} has an invalid target date.`);
+  }
+
+  if (typeof value.completed !== 'boolean') {
+    fail('INVALID_MILESTONE', `${label} has an invalid completed value.`);
+  }
+
+  if (!isIsoTimestamp(value.createdAt)) {
+    fail('INVALID_MILESTONE', `${label} has an invalid created timestamp.`);
+  }
+
+  if (!isNullableIsoTimestamp(value.completedAt)) {
+    fail('INVALID_MILESTONE', `${label} has an invalid completed timestamp.`);
+  }
+
+  if (!hasMatchingStatusTimestamp(value.completed, value.completedAt)) {
+    fail(
+      'INVALID_MILESTONE',
+      `${label} has a completion status that does not match its completed timestamp.`
     );
   }
 }
@@ -944,6 +1053,18 @@ function validateRelationships(
     );
   }
 
+  const milestoneWithMissingGoal =
+    backup.data.goalMilestones.find(
+      (milestone) => !goalIds.has(milestone.goalId)
+    );
+
+  if (milestoneWithMissingGoal) {
+    fail(
+      'MISSING_GOAL',
+      `Milestone "${milestoneWithMissingGoal.title}" is linked to a goal that is not included in the backup.`
+    );
+  }
+
   const taskWithMissingRule =
     backup.data.tasks.find(
       (task) =>
@@ -978,7 +1099,9 @@ function validateData(
   value: Record<string, unknown>,
   requireTaskTemplates: boolean = true,
   requirePlanningCycles: boolean = true,
-  requireGoalReward: boolean = true
+  requireGoalReward: boolean = true,
+  requireGoalPlanningDetails: boolean = true,
+  requireGoalMilestones: boolean = true
 ): WeekFlowBackup['data'] {
   const requiredArrays = [
     'tasks',
@@ -1017,8 +1140,21 @@ function validateData(
     );
   }
 
+  if (
+    requireGoalMilestones &&
+    !Array.isArray(value.goalMilestones)
+  ) {
+    fail(
+      'MISSING_SECTION',
+      'The backup is missing the goalMilestones list.'
+    );
+  }
+
   const tasks = value.tasks as unknown[];
   const goals = value.goals as unknown[];
+  const goalMilestones = Array.isArray(value.goalMilestones)
+    ? (value.goalMilestones as unknown[])
+    : [];
   const brainDumps = value.brainDumps as unknown[];
   const taskTemplates = Array.isArray(value.taskTemplates)
     ? (value.taskTemplates as unknown[])
@@ -1038,7 +1174,15 @@ function validateData(
     validateGoal(
       goal,
       `Goal ${index + 1}`,
-      requireGoalReward
+      requireGoalReward,
+      requireGoalPlanningDetails
+    )
+  );
+
+  goalMilestones.forEach((milestone, index) =>
+    validateGoalMilestone(
+      milestone,
+      `Goal milestone ${index + 1}`
     )
   );
 
@@ -1080,6 +1224,7 @@ function validateData(
   return {
     tasks: tasks as Task[],
     goals: goals as StoredGoal[],
+    goalMilestones: goalMilestones as GoalMilestone[],
     brainDumps: brainDumps as StoredBrainDump[],
     taskTemplates: taskTemplates as TaskTemplate[],
     recurringRules: recurringRules as RecurringRule[],
@@ -1097,6 +1242,19 @@ function normalizeLegacyGoals(
     reward:
       typeof goal.reward === 'string' && goal.reward.trim()
         ? goal.reward.trim()
+        : null,
+    purpose:
+      typeof goal.purpose === 'string' && goal.purpose.trim()
+        ? goal.purpose.trim()
+        : null,
+    successDefinition:
+      typeof goal.successDefinition === 'string' &&
+      goal.successDefinition.trim()
+        ? goal.successDefinition.trim()
+        : null,
+    notes:
+      typeof goal.notes === 'string' && goal.notes.trim()
+        ? goal.notes.trim()
         : null,
   }));
 }
@@ -1119,6 +1277,7 @@ function normalizeLegacyBackupV1(
         recurrenceOccurrenceDate: null,
       })),
       goals: normalizeLegacyGoals(backup.data.goals),
+      goalMilestones: [],
       brainDumps: backup.data.brainDumps,
       taskTemplates: [],
       recurringRules: [],
@@ -1141,6 +1300,7 @@ function normalizeLegacyBackupV2(
     data: {
       ...backup.data,
       goals: normalizeLegacyGoals(backup.data.goals),
+      goalMilestones: [],
       taskTemplates: [],
       planningCycles: [],
     },
@@ -1156,6 +1316,7 @@ function normalizeLegacyBackupV3(
     data: {
       ...backup.data,
       goals: normalizeLegacyGoals(backup.data.goals),
+      goalMilestones: [],
       taskTemplates: [],
       planningCycles: [],
     },
@@ -1171,6 +1332,7 @@ function normalizeLegacyBackupV4(
     data: {
       ...backup.data,
       goals: normalizeLegacyGoals(backup.data.goals),
+      goalMilestones: [],
       planningCycles: [],
     },
   };
@@ -1185,6 +1347,21 @@ function normalizeLegacyBackupV5(
     data: {
       ...backup.data,
       goals: normalizeLegacyGoals(backup.data.goals),
+      goalMilestones: [],
+    },
+  };
+}
+
+function normalizeLegacyBackupV6(
+  backup: LegacyWeekFlowBackupV6
+): WeekFlowBackup {
+  return {
+    ...backup,
+    version: BACKUP_VERSION,
+    data: {
+      ...backup.data,
+      goals: normalizeLegacyGoals(backup.data.goals),
+      goalMilestones: [],
     },
   };
 }
@@ -1194,6 +1371,7 @@ function validateNormalizedBackup(
 ) {
   assertUniqueIds(backup.data.tasks, 'task');
   assertUniqueIds(backup.data.goals, 'goal');
+  assertUniqueIds(backup.data.goalMilestones, 'goal milestone');
   assertUniqueIds(backup.data.brainDumps, 'Brain Dump');
   assertUniqueIds(
     backup.data.taskTemplates,
@@ -1234,6 +1412,7 @@ export function getBackupCounts(
   return {
     tasks: backup.data.tasks.length,
     goals: backup.data.goals.length,
+    goalMilestones: backup.data.goalMilestones.length,
     brainDumps: backup.data.brainDumps.length,
     taskTemplates: backup.data.taskTemplates.length,
     recurringRules:
@@ -1316,7 +1495,7 @@ export function inspectWeekFlowBackup(
       validateBaseTask(task, `Task ${index + 1}`)
     );
     value.data.goals.forEach((goal, index) =>
-      validateGoal(goal, `Goal ${index + 1}`, false)
+      validateGoal(goal, `Goal ${index + 1}`, false, false)
     );
     value.data.brainDumps.forEach((brainDump, index) =>
       validateBrainDump(
@@ -1329,7 +1508,7 @@ export function inspectWeekFlowBackup(
       value as unknown as LegacyWeekFlowBackupV1
     );
   } else if (sourceVersion === 2) {
-    const data = validateData(value.data, false, false, false);
+    const data = validateData(value.data, false, false, false, false, false);
 
     backup = normalizeLegacyBackupV2({
       format: BACKUP_FORMAT,
@@ -1339,7 +1518,7 @@ export function inspectWeekFlowBackup(
     });
   } else if (sourceVersion === 3) {
     validateMetadata(value.metadata);
-    const data = validateData(value.data, false, false, false);
+    const data = validateData(value.data, false, false, false, false, false);
 
     backup = normalizeLegacyBackupV3({
       format: BACKUP_FORMAT,
@@ -1350,7 +1529,7 @@ export function inspectWeekFlowBackup(
     });
   } else if (sourceVersion === 4) {
     validateMetadata(value.metadata);
-    const data = validateData(value.data, true, false, false);
+    const data = validateData(value.data, true, false, false, false, false);
 
     backup = normalizeLegacyBackupV4({
       format: BACKUP_FORMAT,
@@ -1361,11 +1540,22 @@ export function inspectWeekFlowBackup(
     });
   } else if (sourceVersion === 5) {
     validateMetadata(value.metadata);
-    const data = validateData(value.data, true, true, false);
+    const data = validateData(value.data, true, true, false, false, false);
 
     backup = normalizeLegacyBackupV5({
       format: BACKUP_FORMAT,
       version: 5,
+      exportedAt: value.exportedAt,
+      metadata: value.metadata,
+      data,
+    });
+  } else if (sourceVersion === 6) {
+    validateMetadata(value.metadata);
+    const data = validateData(value.data, true, true, true, false, false);
+
+    backup = normalizeLegacyBackupV6({
+      format: BACKUP_FORMAT,
+      version: 6,
       exportedAt: value.exportedAt,
       metadata: value.metadata,
       data,

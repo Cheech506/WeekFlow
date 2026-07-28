@@ -1,4 +1,9 @@
 import { getDb, migrateDb } from './db';
+import {
+  normalizeGoalNotes,
+  normalizeGoalPurpose,
+  normalizeGoalSuccessDefinition,
+} from './goalPlanningUtils';
 import { normalizeGoalReward } from './goalRewardUtils';
 import {
   createDefaultGoalDateRange,
@@ -14,6 +19,9 @@ export type StoredGoal = {
   startDate: string;
   endDate: string;
   reward: string | null;
+  purpose: string | null;
+  successDefinition: string | null;
+  notes: string | null;
 };
 
 type GoalRow = {
@@ -25,20 +33,19 @@ type GoalRow = {
   start_date: string;
   end_date: string;
   reward: string | null;
+  purpose: string | null;
+  success_definition: string | null;
+  notes: string | null;
 };
 
-export async function getGoals(): Promise<StoredGoal[]> {
-  await migrateDb();
+export type GoalPlanningDetails = {
+  purpose?: string | null;
+  successDefinition?: string | null;
+  notes?: string | null;
+};
 
-  const db = await getDb();
-
-  const rows = await db.getAllAsync<GoalRow>(`
-    SELECT id, title, completed, created_at, completed_at, start_date, end_date, reward
-    FROM goals
-    ORDER BY created_at DESC;
-  `);
-
-  return rows.map((row) => ({
+function mapGoalRow(row: GoalRow): StoredGoal {
+  return {
     id: row.id,
     title: row.title,
     completed: row.completed === 1,
@@ -47,16 +54,51 @@ export async function getGoals(): Promise<StoredGoal[]> {
     startDate: row.start_date,
     endDate: row.end_date,
     reward: row.reward,
-  }));
+    purpose: row.purpose,
+    successDefinition: row.success_definition,
+    notes: row.notes,
+  };
+}
+
+export async function getGoals(): Promise<StoredGoal[]> {
+  await migrateDb();
+
+  const db = await getDb();
+
+  const rows = await db.getAllAsync<GoalRow>(`
+    SELECT
+      id,
+      title,
+      completed,
+      created_at,
+      completed_at,
+      start_date,
+      end_date,
+      reward,
+      purpose,
+      success_definition,
+      notes
+    FROM goals
+    ORDER BY created_at DESC;
+  `);
+
+  return rows.map(mapGoalRow);
 }
 
 export async function insertGoal(
   title: string,
   startDateKey?: string,
   endDateKey?: string,
-  reward?: string | null
+  reward?: string | null,
+  planningDetails: GoalPlanningDetails = {}
 ): Promise<StoredGoal> {
   await migrateDb();
+
+  const trimmedTitle = title.trim();
+
+  if (!trimmedTitle) {
+    throw new Error('Enter a goal title first.');
+  }
 
   const db = await getDb();
   const defaultDates = createDefaultGoalDateRange();
@@ -70,6 +112,11 @@ export async function insertGoal(
   const startDate = dateRange.startDateIso;
   const endDate = dateRange.endDateIso;
   const normalizedReward = normalizeGoalReward(reward);
+  const purpose = normalizeGoalPurpose(planningDetails.purpose);
+  const successDefinition = normalizeGoalSuccessDefinition(
+    planningDetails.successDefinition
+  );
+  const notes = normalizeGoalNotes(planningDetails.notes);
 
   await db.runAsync(
     `
@@ -81,22 +128,38 @@ export async function insertGoal(
       completed_at,
       start_date,
       end_date,
-      reward
+      reward,
+      purpose,
+      success_definition,
+      notes
     )
-    VALUES (?, ?, 0, ?, NULL, ?, ?, ?);
+    VALUES (?, ?, 0, ?, NULL, ?, ?, ?, ?, ?, ?);
     `,
-    [id, title.trim(), createdAt, startDate, endDate, normalizedReward]
+    [
+      id,
+      trimmedTitle,
+      createdAt,
+      startDate,
+      endDate,
+      normalizedReward,
+      purpose,
+      successDefinition,
+      notes,
+    ]
   );
 
   return {
     id,
-    title: title.trim(),
+    title: trimmedTitle,
     completed: false,
     createdAt,
     completedAt: null,
     startDate,
     endDate,
     reward: normalizedReward,
+    purpose,
+    successDefinition,
+    notes,
   };
 }
 
@@ -105,12 +168,16 @@ export async function updateGoalDetails(
   title: string,
   startDateKey: string,
   endDateKey: string,
-  reward?: string | null
+  reward?: string | null,
+  planningDetails: GoalPlanningDetails = {}
 ): Promise<{
   title: string;
   startDate: string;
   endDate: string;
   reward: string | null;
+  purpose: string | null;
+  successDefinition: string | null;
+  notes: string | null;
 }> {
   await migrateDb();
 
@@ -121,20 +188,29 @@ export async function updateGoalDetails(
   }
 
   const db = await getDb();
-  const dateRange = validateGoalDateRange(
-    startDateKey,
-    endDateKey
-  );
+  const dateRange = validateGoalDateRange(startDateKey, endDateKey);
   const normalizedReward = normalizeGoalReward(reward);
+  const purpose = normalizeGoalPurpose(planningDetails.purpose);
+  const successDefinition = normalizeGoalSuccessDefinition(
+    planningDetails.successDefinition
+  );
+  const notes = normalizeGoalNotes(planningDetails.notes);
 
   /*
-   * The title, date range, and reward are saved together so the goal card
-   * cannot end up partially updated if one part of the edit fails validation.
+   * All editable goal details are written together so the goal cannot be left
+   * partially updated if one field fails validation before the database write.
    */
   await db.runAsync(
     `
     UPDATE goals
-    SET title = ?, start_date = ?, end_date = ?, reward = ?
+    SET
+      title = ?,
+      start_date = ?,
+      end_date = ?,
+      reward = ?,
+      purpose = ?,
+      success_definition = ?,
+      notes = ?
     WHERE id = ?;
     `,
     [
@@ -142,6 +218,9 @@ export async function updateGoalDetails(
       dateRange.startDateIso,
       dateRange.endDateIso,
       normalizedReward,
+      purpose,
+      successDefinition,
+      notes,
       id,
     ]
   );
@@ -151,6 +230,9 @@ export async function updateGoalDetails(
     startDate: dateRange.startDateIso,
     endDate: dateRange.endDateIso,
     reward: normalizedReward,
+    purpose,
+    successDefinition,
+    notes,
   };
 }
 
@@ -162,10 +244,7 @@ export async function updateGoalDates(
   await migrateDb();
 
   const db = await getDb();
-  const dateRange = validateGoalDateRange(
-    startDateKey,
-    endDateKey
-  );
+  const dateRange = validateGoalDateRange(startDateKey, endDateKey);
 
   await db.runAsync(
     `
@@ -210,9 +289,8 @@ export async function deleteGoalById(id: number): Promise<void> {
 
   /*
    * A goal is only a planning relationship. Deleting it must not delete the
-   * user's tasks, task history, or recurring schedules. All relationship
-   * cleanup and the goal deletion happen in one transaction so a failure
-   * cannot leave the database partially updated.
+   * user's tasks, task history, or recurring schedules. Milestones belong to
+   * the goal itself, so they are removed in the same transaction.
    */
   await db.withTransactionAsync(async () => {
     await db.runAsync(
@@ -228,6 +306,14 @@ export async function deleteGoalById(id: number): Promise<void> {
       `
       UPDATE recurring_rules
       SET goal_id = NULL
+      WHERE goal_id = ?;
+      `,
+      [id]
+    );
+
+    await db.runAsync(
+      `
+      DELETE FROM goal_milestones
       WHERE goal_id = ?;
       `,
       [id]

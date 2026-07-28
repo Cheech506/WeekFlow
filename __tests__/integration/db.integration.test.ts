@@ -32,6 +32,7 @@ describe('SQLite migrations', () => {
           'tasks',
           'goals',
           'brain_dumps',
+          'goal_milestones',
           'planning_cycles',
           'recurring_rules',
           'recurring_occurrence_exceptions',
@@ -43,6 +44,7 @@ describe('SQLite migrations', () => {
     expect(tables.map((table) => table.name)).toEqual([
       'app_metadata',
       'brain_dumps',
+      'goal_milestones',
       'goals',
       'planning_cycles',
       'recurring_occurrence_exceptions',
@@ -54,8 +56,29 @@ describe('SQLite migrations', () => {
       'PRAGMA table_info(goals);'
     );
 
-    expect(goalColumns.map((column) => column.name)).toContain(
-      'reward'
+    expect(goalColumns.map((column) => column.name)).toEqual(
+      expect.arrayContaining([
+        'reward',
+        'purpose',
+        'success_definition',
+        'notes',
+      ])
+    );
+
+    const milestoneColumns = await db.getAllAsync<{ name: string }>(
+      'PRAGMA table_info(goal_milestones);'
+    );
+
+    expect(milestoneColumns.map((column) => column.name)).toEqual(
+      expect.arrayContaining([
+        'goal_id',
+        'title',
+        'notes',
+        'target_date',
+        'completed',
+        'created_at',
+        'completed_at',
+      ])
     );
   });
 

@@ -33,6 +33,21 @@ function makeBackup(
           startDate: '2026-07-01T12:00:00.000Z',
           endDate: '2026-09-23T12:00:00.000Z',
           reward: 'Buy a new game',
+          purpose: 'Build a portfolio that proves practical DBA skills.',
+          successDefinition: 'Publish the completed database portfolio.',
+          notes: 'Keep screenshots and recovery test results.',
+        },
+      ],
+      goalMilestones: [
+        {
+          id: 5,
+          goalId: 1,
+          title: 'Finish backup and recovery lab',
+          notes: 'Document the restore test.',
+          targetDate: '2026-08-01',
+          completed: true,
+          createdAt: '2026-07-01T12:00:00.000Z',
+          completedAt: '2026-07-15T12:00:00.000Z',
         },
       ],
       recurringRules: [],
@@ -101,6 +116,9 @@ describe('backup restore integration', () => {
     const brainStorage = await import(
       '../../lib/brainDumpStorage'
     );
+    const milestoneStorage = await import(
+      '../../lib/goalMilestoneStorage'
+    );
     const templateStorage = await import(
       '../../lib/taskTemplateStorage'
     );
@@ -117,6 +135,7 @@ describe('backup restore integration', () => {
     expect(counts).toEqual({
       tasks: 1,
       goals: 1,
+      goalMilestones: 1,
       brainDumps: 1,
       taskTemplates: 1,
       recurringRules: 0,
@@ -130,6 +149,15 @@ describe('backup restore integration', () => {
     expect((await goalStorage.getGoals())[0]).toMatchObject({
       title: 'Restored goal',
       reward: 'Buy a new game',
+      purpose: 'Build a portfolio that proves practical DBA skills.',
+      successDefinition: 'Publish the completed database portfolio.',
+      notes: 'Keep screenshots and recovery test results.',
+    });
+    expect((await milestoneStorage.getGoalMilestones())[0]).toMatchObject({
+      goalId: 1,
+      title: 'Finish backup and recovery lab',
+      completed: true,
+      targetDate: '2026-08-01',
     });
     expect(
       (await brainStorage.getBrainDumps())[0].body
@@ -214,6 +242,7 @@ describe('backup restore integration', () => {
 
     const orphanedBackup = makeBackup();
     orphanedBackup.data.goals = [];
+    orphanedBackup.data.goalMilestones = [];
 
     await replaceWeekFlowData(orphanedBackup);
 
