@@ -17,6 +17,11 @@ import {
   type GoalMilestone,
 } from '@/lib/goalMilestoneStorage';
 import {
+  calculateGoalAnalytics,
+  createGoalCompletionSnapshot,
+  type GoalCompletionReflection,
+} from '@/lib/goalReviewUtils';
+import {
   deleteGoalById,
   getGoals,
   insertGoal,
@@ -48,7 +53,11 @@ type GoalContextValue = {
     reward?: string | null,
     planningDetails?: GoalPlanningDetails
   ) => Promise<void>;
-  toggleGoal: (id: number) => Promise<void>;
+  completeGoal: (
+    id: number,
+    reflection?: GoalCompletionReflection
+  ) => Promise<void>;
+  reopenGoal: (id: number) => Promise<void>;
   deleteGoal: (id: number) => Promise<void>;
   addMilestone: (
     goalId: number,
@@ -72,7 +81,7 @@ export function GoalProvider({ children }: { children: React.ReactNode }) {
   const [goals, setGoals] = useState<Goal[]>([]);
   const [milestones, setMilestones] = useState<GoalMilestone[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const { refreshTasks } = useTasks();
+  const { tasks, refreshTasks } = useTasks();
 
   const refreshGoals = useCallback(async () => {
     setIsLoading(true);
@@ -164,33 +173,54 @@ export function GoalProvider({ children }: { children: React.ReactNode }) {
     []
   );
 
-  const toggleGoal = useCallback(
-    async (id: number) => {
+  const completeGoal = useCallback(
+    async (
+      id: number,
+      reflection: GoalCompletionReflection = {}
+    ) => {
       const goal = goals.find((item) => item.id === id);
-      if (!goal) return;
+      if (!goal || goal.completed) return;
 
-      const nextCompleted = !goal.completed;
+      const linkedTasks = tasks.filter((task) => task.goalId === id);
+      const goalMilestones = milestones.filter(
+        (milestone) => milestone.goalId === id
+      );
+      const analytics = calculateGoalAnalytics(
+        goal,
+        linkedTasks,
+        goalMilestones
+      );
 
       try {
-        const completedAt = await updateGoalCompletion(id, nextCompleted);
-
-        setGoals((currentGoals) =>
-          currentGoals.map((item) =>
-            item.id === id
-              ? {
-                  ...item,
-                  completed: nextCompleted,
-                  completedAt,
-                }
-              : item
-          )
+        await updateGoalCompletion(
+          id,
+          true,
+          reflection,
+          createGoalCompletionSnapshot(analytics)
         );
+        await refreshGoals();
       } catch (error) {
-        console.error('Failed to toggle goal:', error);
+        console.error('Failed to complete goal:', error);
         throw error;
       }
     },
-    [goals]
+    [goals, milestones, refreshGoals, tasks]
+  );
+
+  const reopenGoal = useCallback(
+    async (id: number) => {
+      const goal = goals.find((item) => item.id === id);
+      if (!goal || !goal.completed) return;
+
+      try {
+        await updateGoalCompletion(id, false);
+        await refreshGoals();
+      } catch (error) {
+        console.error('Failed to reopen goal:', error);
+        throw error;
+      }
+    },
+    [goals, refreshGoals]
   );
 
   const deleteGoal = useCallback(
@@ -315,7 +345,8 @@ export function GoalProvider({ children }: { children: React.ReactNode }) {
       refreshGoals,
       addGoal,
       editGoal,
-      toggleGoal,
+      completeGoal,
+      reopenGoal,
       deleteGoal,
       addMilestone,
       editMilestone,
@@ -329,7 +360,8 @@ export function GoalProvider({ children }: { children: React.ReactNode }) {
       refreshGoals,
       addGoal,
       editGoal,
-      toggleGoal,
+      completeGoal,
+      reopenGoal,
       deleteGoal,
       addMilestone,
       editMilestone,

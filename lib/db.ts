@@ -491,7 +491,19 @@ async function runMigrations() {
       completed_at TEXT,
       start_date TEXT NOT NULL,
       end_date TEXT NOT NULL,
-      reward TEXT
+      reward TEXT,
+      purpose TEXT,
+      success_definition TEXT,
+      notes TEXT,
+      completion_what_helped TEXT,
+      completion_hardest_part TEXT,
+      completion_learned TEXT,
+      completion_do_differently TEXT,
+      completion_task_total INTEGER,
+      completion_task_completed INTEGER,
+      completion_milestone_total INTEGER,
+      completion_milestone_completed INTEGER,
+      completion_high_priority_completed INTEGER
     );
 
     CREATE TABLE IF NOT EXISTS goal_milestones (
@@ -581,6 +593,20 @@ async function runMigrations() {
   await ensureColumn(db, 'goals', 'purpose', 'TEXT');
   await ensureColumn(db, 'goals', 'success_definition', 'TEXT');
   await ensureColumn(db, 'goals', 'notes', 'TEXT');
+  await ensureColumn(db, 'goals', 'completion_what_helped', 'TEXT');
+  await ensureColumn(db, 'goals', 'completion_hardest_part', 'TEXT');
+  await ensureColumn(db, 'goals', 'completion_learned', 'TEXT');
+  await ensureColumn(db, 'goals', 'completion_do_differently', 'TEXT');
+  await ensureColumn(db, 'goals', 'completion_task_total', 'INTEGER');
+  await ensureColumn(db, 'goals', 'completion_task_completed', 'INTEGER');
+  await ensureColumn(db, 'goals', 'completion_milestone_total', 'INTEGER');
+  await ensureColumn(db, 'goals', 'completion_milestone_completed', 'INTEGER');
+  await ensureColumn(
+    db,
+    'goals',
+    'completion_high_priority_completed',
+    'INTEGER'
+  );
 
   await ensureColumn(
     db,

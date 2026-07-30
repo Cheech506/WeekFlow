@@ -289,6 +289,48 @@ describe('backup validation', () => {
     expect(result.backup.data.goalMilestones).toEqual([]);
   });
 
+  test('upgrades a valid version 7 backup with empty goal review fields', () => {
+    const current = makeValidBackup();
+    const versionSevenBackup = {
+      ...current,
+      version: 7,
+      data: {
+        ...current.data,
+        goals: current.data.goals.map(
+          ({
+            completionWhatHelped,
+            completionHardestPart,
+            completionLearned,
+            completionDoDifferently,
+            completionTaskTotal,
+            completionTaskCompleted,
+            completionMilestoneTotal,
+            completionMilestoneCompleted,
+            completionHighPriorityCompleted,
+            ...goal
+          }) => goal
+        ),
+      },
+    };
+
+    const result = inspectWeekFlowBackup(versionSevenBackup);
+
+    expect(result.preview.sourceVersion).toBe(7);
+    expect(result.backup.version).toBe(BACKUP_VERSION);
+    expect(result.backup.data.goals[0]).toMatchObject({
+      completionWhatHelped: null,
+      completionHardestPart: null,
+      completionLearned: null,
+      completionDoDifferently: null,
+      completionTaskTotal: null,
+      completionTaskCompleted: null,
+      completionMilestoneTotal: null,
+      completionMilestoneCompleted: null,
+      completionHighPriorityCompleted: null,
+    });
+    expect(result.backup.data.goalMilestones).toHaveLength(1);
+  });
+
   test('accepts JSON with a UTF-8 byte-order mark', () => {
     const backup = makeValidBackup();
     const result = parseWeekFlowBackupJson(
@@ -333,6 +375,23 @@ describe('backup validation', () => {
 
     expect(() => parseWeekFlowBackup(backup)).toThrow(
       'purpose value longer than 500 characters'
+    );
+  });
+
+  test('rejects invalid goal reflection and completion snapshots', () => {
+    const reflectionBackup = makeValidBackup();
+    reflectionBackup.data.goals[0].completionLearned = 'x'.repeat(1001);
+
+    expect(() => parseWeekFlowBackup(reflectionBackup)).toThrow(
+      'completionLearned value longer than 1000 characters'
+    );
+
+    const snapshotBackup = makeValidBackup();
+    snapshotBackup.data.goals[0].completionTaskTotal = 2;
+    snapshotBackup.data.goals[0].completionTaskCompleted = 3;
+
+    expect(() => parseWeekFlowBackup(snapshotBackup)).toThrow(
+      'more completed tasks than total tasks'
     );
   });
 

@@ -442,9 +442,20 @@ export async function replaceWeekFlowData(
             reward,
             purpose,
             success_definition,
-            notes
+            notes,
+            completion_what_helped,
+            completion_hardest_part,
+            completion_learned,
+            completion_do_differently,
+            completion_task_total,
+            completion_task_completed,
+            completion_milestone_total,
+            completion_milestone_completed,
+            completion_high_priority_completed
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+          VALUES (
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+          );
           `,
           [
             goal.id,
@@ -458,6 +469,15 @@ export async function replaceWeekFlowData(
             goal.purpose,
             goal.successDefinition,
             goal.notes,
+            goal.completionWhatHelped,
+            goal.completionHardestPart,
+            goal.completionLearned,
+            goal.completionDoDifferently,
+            goal.completionTaskTotal,
+            goal.completionTaskCompleted,
+            goal.completionMilestoneTotal,
+            goal.completionMilestoneCompleted,
+            goal.completionHighPriorityCompleted,
           ]
         );
       }

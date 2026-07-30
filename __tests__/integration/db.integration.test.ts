@@ -62,6 +62,15 @@ describe('SQLite migrations', () => {
         'purpose',
         'success_definition',
         'notes',
+        'completion_what_helped',
+        'completion_hardest_part',
+        'completion_learned',
+        'completion_do_differently',
+        'completion_task_total',
+        'completion_task_completed',
+        'completion_milestone_total',
+        'completion_milestone_completed',
+        'completion_high_priority_completed',
       ])
     );
 

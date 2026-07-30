@@ -7,6 +7,8 @@ import {
   useWindowDimensions,
 } from 'react-native';
 
+import GoalAnalyticsCard from '@/components/GoalAnalyticsCard';
+import GoalCompletionPanel from '@/components/GoalCompletionPanel';
 import GoalMilestoneManager from '@/components/GoalMilestoneManager';
 import { Text, View } from '@/components/Themed';
 import { useCycle } from '@/context/CycleContext';
@@ -23,6 +25,10 @@ import {
   MAX_GOAL_SUCCESS_DEFINITION_LENGTH,
 } from '@/lib/goalPlanningUtils';
 import { MAX_GOAL_REWARD_LENGTH } from '@/lib/goalRewardUtils';
+import {
+  calculateGoalAnalytics,
+  type GoalCompletionReflection,
+} from '@/lib/goalReviewUtils';
 import {
   formatDateKey,
   getLocalDateKey,
@@ -150,6 +156,9 @@ export default function TwelveWeekGoalsScreen() {
   const [editStartDate, setEditStartDate] = useState('');
   const [editEndDate, setEditEndDate] = useState('');
   const [editMessage, setEditMessage] = useState('');
+  const [completingGoalId, setCompletingGoalId] = useState<
+    number | null
+  >(null);
 
   const [cycleStartDate, setCycleStartDate] = useState(
     getLocalDateKey(new Date())
@@ -175,10 +184,11 @@ export default function TwelveWeekGoalsScreen() {
 
   const {
     goals,
+    milestones,
     isLoading,
     addGoal,
     editGoal,
-    toggleGoal,
+    completeGoal,
     deleteGoal,
   } = useGoals();
 
@@ -502,12 +512,22 @@ export default function TwelveWeekGoalsScreen() {
     }
   }
 
-  async function handleCompleteGoal(goalId: number) {
+  function handleCompleteGoal(goalId: number) {
     if (editingGoalId === goalId) {
       cancelEditingGoal();
     }
 
-    await toggleGoal(goalId);
+    setCompletingGoalId((current) =>
+      current === goalId ? null : goalId
+    );
+  }
+
+  async function handleConfirmGoalCompletion(
+    goalId: number,
+    reflection: GoalCompletionReflection
+  ) {
+    await completeGoal(goalId, reflection);
+    setCompletingGoalId(null);
   }
 
   return (
@@ -1117,15 +1137,14 @@ export default function TwelveWeekGoalsScreen() {
             const completedLinkedTasks = linkedTasks.filter(
               (task) => task.completed
             ).length;
-
-            const activeLinkedTasks =
-              linkedTasks.length - completedLinkedTasks;
-
-            const goalTaskProgress =
-              calculateProgressPercentage(
-                completedLinkedTasks,
-                linkedTasks.length
-              );
+            const goalMilestones = milestones.filter(
+              (milestone) => milestone.goalId === goal.id
+            );
+            const goalAnalytics = calculateGoalAnalytics(
+              goal,
+              linkedTasks,
+              goalMilestones
+            );
 
             const areLinkedTasksExpanded =
               expandedLinkedTaskGoals[goal.id] ?? false;
@@ -1387,69 +1406,26 @@ export default function TwelveWeekGoalsScreen() {
                   </View>
                 ) : null}
 
+                {completingGoalId === goal.id ? (
+                  <GoalCompletionPanel
+                    goalTitle={goal.title}
+                    analytics={goalAnalytics}
+                    initialReflection={{
+                      whatHelped: goal.completionWhatHelped,
+                      hardestPart: goal.completionHardestPart,
+                      learned: goal.completionLearned,
+                      doDifferently: goal.completionDoDifferently,
+                    }}
+                    onCancel={() => setCompletingGoalId(null)}
+                    onComplete={(reflection) =>
+                      handleConfirmGoalCompletion(goal.id, reflection)
+                    }
+                  />
+                ) : null}
+
                 <GoalMilestoneManager goalId={goal.id} />
 
-                <View style={styles.goalProgressSection}>
-                  <View style={styles.progressHeaderRow}>
-                    <Text style={styles.goalProgressTitle}>
-                      Linked Task Progress
-                    </Text>
-
-                    <Text style={styles.goalProgressPercentage}>
-                      {goalTaskProgress}%
-                    </Text>
-                  </View>
-
-                  <View style={styles.progressTrack}>
-                    <View
-                      style={[
-                        styles.goalProgressFill,
-                        {
-                          width: getProgressWidth(
-                            goalTaskProgress
-                          ),
-                        },
-                      ]}
-                    />
-                  </View>
-
-                  <View style={styles.goalStatsRow}>
-                    <View style={styles.goalStat}>
-                      <Text style={styles.goalStatNumber}>
-                        {completedLinkedTasks}
-                      </Text>
-
-                      <Text style={styles.goalStatLabel}>
-                        Done
-                      </Text>
-                    </View>
-
-                    <View style={styles.goalStat}>
-                      <Text style={styles.goalStatNumber}>
-                        {activeLinkedTasks}
-                      </Text>
-
-                      <Text style={styles.goalStatLabel}>
-                        Remaining
-                      </Text>
-                    </View>
-
-                    <View style={styles.goalStat}>
-                      <Text style={styles.goalStatNumber}>
-                        {linkedTasks.length}
-                      </Text>
-
-                      <Text style={styles.goalStatLabel}>
-                        Total
-                      </Text>
-                    </View>
-                  </View>
-
-                  <Text style={styles.goalProgressNote}>
-                    The goal checkbox is controlled manually.
-                    Task progress is calculated from linked tasks.
-                  </Text>
-                </View>
+                <GoalAnalyticsCard analytics={goalAnalytics} />
 
                 <View style={styles.linkedTasksSection}>
                   <Pressable

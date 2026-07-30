@@ -51,6 +51,15 @@ export function makeGoal(
     purpose: null,
     successDefinition: null,
     notes: null,
+    completionWhatHelped: null,
+    completionHardestPart: null,
+    completionLearned: null,
+    completionDoDifferently: null,
+    completionTaskTotal: null,
+    completionTaskCompleted: null,
+    completionMilestoneTotal: null,
+    completionMilestoneCompleted: null,
+    completionHighPriorityCompleted: null,
     ...overrides,
   };
 }

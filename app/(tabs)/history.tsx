@@ -16,6 +16,11 @@ import {
   getStartOfWeek,
   startOfLocalDay,
 } from '@/lib/dateUtils';
+import {
+  calculateGoalAnalytics,
+  hasGoalCompletionReflection,
+  resolveGoalCompletionSnapshot,
+} from '@/lib/goalReviewUtils';
 
 type ContentFilter =
   | 'all'
@@ -109,6 +114,35 @@ function formatGoalDate(value: string) {
   });
 }
 
+function getGoalDurationDays(
+  startDate: string,
+  completedAt: string | null
+) {
+  const start = new Date(startDate);
+  const end = completedAt ? new Date(completedAt) : null;
+
+  if (
+    Number.isNaN(start.getTime()) ||
+    !end ||
+    Number.isNaN(end.getTime())
+  ) {
+    return null;
+  }
+
+  const startDay = new Date(
+    start.getFullYear(),
+    start.getMonth(),
+    start.getDate()
+  ).getTime();
+  const endDay = new Date(
+    end.getFullYear(),
+    end.getMonth(),
+    end.getDate()
+  ).getTime();
+
+  return Math.max(1, Math.floor((endDay - startDay) / 86_400_000) + 1);
+}
+
 function calculateProgressPercentage(
   completedCount: number,
   totalCount: number
@@ -200,6 +234,21 @@ function groupHistoryItems<T>(
   return groupedItems;
 }
 
+function HistoryDetailField({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <View style={styles.historyDetailField}>
+      <Text style={styles.historyDetailLabel}>{label}</Text>
+      <Text style={styles.historyDetailText}>{value}</Text>
+    </View>
+  );
+}
+
 export default function HistoryScreen() {
   const [searchText, setSearchText] = useState('');
   const [contentFilter, setContentFilter] =
@@ -208,9 +257,12 @@ export default function HistoryScreen() {
     useState<PriorityFilter>('all');
   const [goalFilter, setGoalFilter] =
     useState<GoalFilter>('all');
+  const [expandedGoalReviews, setExpandedGoalReviews] = useState<
+    Record<number, boolean>
+  >({});
 
   const { tasks, refreshTasks } = useTasks();
-  const { goals, refreshGoals, toggleGoal } = useGoals();
+  const { goals, milestones, refreshGoals, reopenGoal } = useGoals();
 
   const {
     getArchivedBrainDumps,
@@ -348,10 +400,31 @@ export default function HistoryScreen() {
     }
 
     return allCompletedGoals.filter((goal) => {
+      const goalMilestones = milestones.filter(
+        (milestone) => milestone.goalId === goal.id
+      );
+      const searchableText = [
+        goal.title,
+        goal.reward,
+        goal.purpose,
+        goal.successDefinition,
+        goal.notes,
+        goal.completionWhatHelped,
+        goal.completionHardestPart,
+        goal.completionLearned,
+        goal.completionDoDifferently,
+        ...goalMilestones.flatMap((milestone) => [
+          milestone.title,
+          milestone.notes,
+        ]),
+      ]
+        .filter((value): value is string => Boolean(value))
+        .join(' ')
+        .toLowerCase();
+
       return (
         normalizedSearch.length === 0 ||
-        goal.title.toLowerCase().includes(normalizedSearch) ||
-        (goal.reward ?? '').toLowerCase().includes(normalizedSearch)
+        searchableText.includes(normalizedSearch)
       );
     });
   }, [
@@ -360,6 +433,7 @@ export default function HistoryScreen() {
     goalFilter,
     normalizedSearch,
     priorityFilter,
+    milestones,
   ]);
 
   const filteredBrainDumps = useMemo(() => {
@@ -464,6 +538,12 @@ export default function HistoryScreen() {
     setGoalFilter('all');
   }
 
+  function toggleGoalReview(goalId: number) {
+    setExpandedGoalReviews((current) => ({
+      ...current,
+      [goalId]: !current[goalId],
+    }));
+  }
 
   return (
     <ScrollView
@@ -899,77 +979,251 @@ export default function HistoryScreen() {
                         const linkedTasks = tasks.filter(
                           (task) => task.goalId === goal.id
                         );
-                        const completedLinkedTasks =
-                          linkedTasks.filter(
-                            (task) => task.completed
-                          ).length;
-                        const progress =
-                          calculateProgressPercentage(
-                            completedLinkedTasks,
-                            linkedTasks.length
+                        const goalMilestones = milestones.filter(
+                          (milestone) => milestone.goalId === goal.id
+                        );
+                        const liveAnalytics = calculateGoalAnalytics(
+                          goal,
+                          linkedTasks,
+                          goalMilestones
+                        );
+                        const completionSnapshot =
+                          resolveGoalCompletionSnapshot(
+                            goal,
+                            liveAnalytics
                           );
+                        const taskProgress =
+                          calculateProgressPercentage(
+                            completionSnapshot.taskCompleted,
+                            completionSnapshot.taskTotal
+                          );
+                        const durationDays = getGoalDurationDays(
+                          goal.startDate,
+                          goal.completedAt
+                        );
+                        const isExpanded =
+                          expandedGoalReviews[goal.id] ?? false;
+                        const hasReflection =
+                          hasGoalCompletionReflection(goal);
+                        const hasPlanningDetails = Boolean(
+                          goal.purpose ||
+                            goal.successDefinition ||
+                            goal.notes
+                        );
 
                         return (
                           <View
                             key={goal.id}
                             style={styles.goalHistoryCard}
                           >
-                            <View
-                              style={styles.goalHistoryHeaderRow}
-                            >
-                              <View
-                                style={styles.goalHistoryTextWrap}
-                              >
-                                <Text
-                                  style={styles.goalHistoryTitle}
-                                >
+                            <View style={styles.goalHistoryHeaderRow}>
+                              <View style={styles.goalHistoryTextWrap}>
+                                <Text style={styles.goalHistoryTitle}>
                                   {goal.title}
                                 </Text>
 
                                 <Text style={styles.taskMeta}>
-                                  Goal dates:{' '}
-                                  {formatGoalDate(goal.startDate)} →{' '}
+                                  Goal dates: {formatGoalDate(goal.startDate)} →{' '}
                                   {formatGoalDate(goal.endDate)}
                                 </Text>
 
-                                <Text style={styles.taskMeta}>
-                                  Linked task progress: {progress}% ({' '}
-                                  {completedLinkedTasks} of{' '}
-                                  {linkedTasks.length})
-                                </Text>
-
-                                {goal.reward ? (
-                                  <View style={styles.unlockedRewardCard}>
-                                    <Text style={styles.unlockedRewardLabel}>
-                                      🎉 Reward Unlocked
-                                    </Text>
-                                    <Text style={styles.unlockedRewardText}>
-                                      {goal.reward}
-                                    </Text>
-                                  </View>
-                                ) : null}
-
                                 <Text style={styles.completedMeta}>
-                                  Completed:{' '}
-                                  {formatCompletedDate(
-                                    goal.completedAt
-                                  )}
+                                  Completed: {formatCompletedDate(goal.completedAt)}
                                 </Text>
+
+                                {durationDays !== null ? (
+                                  <Text style={styles.taskMeta}>
+                                    Duration: {durationDays} day
+                                    {durationDays === 1 ? '' : 's'}
+                                  </Text>
+                                ) : null}
                               </View>
 
                               <Pressable
                                 style={styles.restoreButton}
-                                onPress={() =>
-                                  toggleGoal(goal.id)
-                                }
+                                onPress={() => reopenGoal(goal.id)}
                               >
-                                <Text
-                                  style={styles.restoreButtonText}
-                                >
+                                <Text style={styles.restoreButtonText}>
                                   Reopen
                                 </Text>
                               </Pressable>
                             </View>
+
+                            <View style={styles.goalResultGrid}>
+                              <View style={styles.goalResultMetric}>
+                                <Text style={styles.goalResultValue}>
+                                  {completionSnapshot.taskCompleted}/
+                                  {completionSnapshot.taskTotal}
+                                </Text>
+                                <Text style={styles.goalResultLabel}>
+                                  Linked Tasks
+                                </Text>
+                              </View>
+
+                              <View style={styles.goalResultMetric}>
+                                <Text style={styles.goalResultValue}>
+                                  {taskProgress}%
+                                </Text>
+                                <Text style={styles.goalResultLabel}>
+                                  Task Progress
+                                </Text>
+                              </View>
+
+                              <View style={styles.goalResultMetric}>
+                                <Text style={styles.goalResultValue}>
+                                  {completionSnapshot.milestoneCompleted}/
+                                  {completionSnapshot.milestoneTotal}
+                                </Text>
+                                <Text style={styles.goalResultLabel}>
+                                  Milestones
+                                </Text>
+                              </View>
+
+                              <View style={styles.goalResultMetric}>
+                                <Text style={styles.goalResultValue}>
+                                  {completionSnapshot.highPriorityCompleted}
+                                </Text>
+                                <Text style={styles.goalResultLabel}>
+                                  High Priority Done
+                                </Text>
+                              </View>
+                            </View>
+
+                            {goal.reward ? (
+                              <View style={styles.unlockedRewardCard}>
+                                <Text style={styles.unlockedRewardLabel}>
+                                  🎉 Reward Unlocked
+                                </Text>
+                                <Text style={styles.unlockedRewardText}>
+                                  {goal.reward}
+                                </Text>
+                              </View>
+                            ) : null}
+
+                            <Pressable
+                              style={styles.goalReviewToggle}
+                              onPress={() => toggleGoalReview(goal.id)}
+                              accessibilityRole="button"
+                              accessibilityState={{ expanded: isExpanded }}
+                            >
+                              <Text style={styles.goalReviewToggleText}>
+                                {isExpanded ? 'Hide Goal Review' : 'View Goal Review'}
+                              </Text>
+                              <Text style={styles.goalReviewChevron}>
+                                {isExpanded ? '▼' : '▶'}
+                              </Text>
+                            </Pressable>
+
+                            {isExpanded ? (
+                              <View style={styles.goalReviewDetails}>
+                                {hasPlanningDetails ? (
+                                  <View style={styles.historyDetailCard}>
+                                    <Text style={styles.historyDetailTitle}>
+                                      Goal Plan
+                                    </Text>
+
+                                    {goal.purpose ? (
+                                      <HistoryDetailField
+                                        label="Purpose"
+                                        value={goal.purpose}
+                                      />
+                                    ) : null}
+
+                                    {goal.successDefinition ? (
+                                      <HistoryDetailField
+                                        label="Success Definition"
+                                        value={goal.successDefinition}
+                                      />
+                                    ) : null}
+
+                                    {goal.notes ? (
+                                      <HistoryDetailField
+                                        label="Notes"
+                                        value={goal.notes}
+                                      />
+                                    ) : null}
+                                  </View>
+                                ) : null}
+
+                                <View style={styles.historyDetailCard}>
+                                  <Text style={styles.historyDetailTitle}>
+                                    Milestone Results
+                                  </Text>
+
+                                  {goalMilestones.length === 0 ? (
+                                    <Text style={styles.historyDetailEmpty}>
+                                      No milestones were added to this goal.
+                                    </Text>
+                                  ) : (
+                                    goalMilestones.map((milestone) => (
+                                      <View
+                                        key={milestone.id}
+                                        style={styles.historyMilestoneRow}
+                                      >
+                                        <Text style={styles.historyMilestoneStatus}>
+                                          {milestone.completed ? '✅' : '⬜'}
+                                        </Text>
+                                        <View style={styles.historyMilestoneText}>
+                                          <Text style={styles.historyMilestoneTitle}>
+                                            {milestone.title}
+                                          </Text>
+                                          {milestone.targetDate ? (
+                                            <Text style={styles.taskMeta}>
+                                              Target: {formatDateKey(milestone.targetDate)}
+                                            </Text>
+                                          ) : null}
+                                          {milestone.notes ? (
+                                            <Text style={styles.historyMilestoneNotes}>
+                                              {milestone.notes}
+                                            </Text>
+                                          ) : null}
+                                        </View>
+                                      </View>
+                                    ))
+                                  )}
+                                </View>
+
+                                {hasReflection ? (
+                                  <View style={styles.reflectionCard}>
+                                    <Text style={styles.reflectionTitle}>
+                                      Final Reflection
+                                    </Text>
+
+                                    {goal.completionWhatHelped ? (
+                                      <HistoryDetailField
+                                        label="What Helped"
+                                        value={goal.completionWhatHelped}
+                                      />
+                                    ) : null}
+
+                                    {goal.completionHardestPart ? (
+                                      <HistoryDetailField
+                                        label="Hardest Part"
+                                        value={goal.completionHardestPart}
+                                      />
+                                    ) : null}
+
+                                    {goal.completionLearned ? (
+                                      <HistoryDetailField
+                                        label="What I Learned"
+                                        value={goal.completionLearned}
+                                      />
+                                    ) : null}
+
+                                    {goal.completionDoDifferently ? (
+                                      <HistoryDetailField
+                                        label="What I Would Do Differently"
+                                        value={goal.completionDoDifferently}
+                                      />
+                                    ) : null}
+                                  </View>
+                                ) : (
+                                  <Text style={styles.historyDetailEmpty}>
+                                    No final reflection was saved for this goal.
+                                  </Text>
+                                )}
+                              </View>
+                            ) : null}
                           </View>
                         );
                       })}
@@ -1352,6 +1606,130 @@ const styles = StyleSheet.create({
     lineHeight: 19,
     fontWeight: '700',
     color: '#78350f',
+  },
+  goalResultGrid: {
+    marginTop: 12,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    backgroundColor: 'transparent',
+  },
+  goalResultMetric: {
+    flexGrow: 1,
+    flexBasis: 120,
+    padding: 10,
+    borderRadius: 10,
+    backgroundColor: '#ede9fe',
+  },
+  goalResultValue: {
+    fontSize: 17,
+    fontWeight: '900',
+    color: '#5b21b6',
+  },
+  goalResultLabel: {
+    marginTop: 2,
+    fontSize: 11,
+    color: '#5b21b6',
+  },
+  goalReviewToggle: {
+    marginTop: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#c4b5fd',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    backgroundColor: '#f5f3ff',
+  },
+  goalReviewToggleText: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#5b21b6',
+  },
+  goalReviewChevron: {
+    fontSize: 12,
+    fontWeight: '900',
+    color: '#7c3aed',
+  },
+  goalReviewDetails: {
+    marginTop: 10,
+    gap: 10,
+    backgroundColor: 'transparent',
+  },
+  historyDetailCard: {
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#ddd6fe',
+    backgroundColor: 'white',
+    gap: 10,
+  },
+  historyDetailTitle: {
+    fontSize: 14,
+    fontWeight: '900',
+    color: '#4c1d95',
+  },
+  historyDetailField: {
+    backgroundColor: 'transparent',
+  },
+  historyDetailLabel: {
+    fontSize: 11,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+    color: '#6d28d9',
+  },
+  historyDetailText: {
+    marginTop: 4,
+    fontSize: 13,
+    lineHeight: 19,
+    color: '#374151',
+  },
+  historyDetailEmpty: {
+    fontSize: 12,
+    lineHeight: 18,
+    color: '#6b7280',
+  },
+  historyMilestoneRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    backgroundColor: 'transparent',
+  },
+  historyMilestoneStatus: {
+    fontSize: 16,
+  },
+  historyMilestoneText: {
+    flex: 1,
+    backgroundColor: 'transparent',
+  },
+  historyMilestoneTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#111827',
+  },
+  historyMilestoneNotes: {
+    marginTop: 3,
+    fontSize: 12,
+    lineHeight: 17,
+    color: '#4b5563',
+  },
+  reflectionCard: {
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#86efac',
+    backgroundColor: '#f0fdf4',
+    gap: 10,
+  },
+  reflectionTitle: {
+    fontSize: 14,
+    fontWeight: '900',
+    color: '#166534',
   },
   brainDumpCard: {
     flexDirection: 'row',

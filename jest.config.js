@@ -25,6 +25,7 @@ module.exports = {
     'lib/db.ts',
     'lib/taskStorage.ts',
     'lib/goalStorage.ts',
+    'lib/goalReviewUtils.ts',
     'lib/brainDumpStorage.ts',
     'lib/recurringStorage.ts',
     'lib/backupStorage.ts',

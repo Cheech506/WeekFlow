@@ -66,19 +66,47 @@ describe('goal and brain dump storage integration', () => {
     const completedAt =
       await goalStorage.updateGoalCompletion(
         goal.id,
-        true
+        true,
+        {
+          whatHelped: '  Weekly planning and consistent lab time  ',
+          hardestPart: '  Troubleshooting replication  ',
+          learned: '  Recovery testing matters as much as backups  ',
+          doDifferently: '  Start documentation earlier  ',
+        },
+        {
+          taskTotal: 8,
+          taskCompleted: 7,
+          milestoneTotal: 4,
+          milestoneCompleted: 3,
+          highPriorityCompleted: 2,
+        }
       );
 
     goals = await goalStorage.getGoals();
 
-    expect(goals[0].completed).toBe(true);
-    expect(goals[0].completedAt).toBe(completedAt);
+    expect(goals[0]).toMatchObject({
+      completed: true,
+      completedAt,
+      completionWhatHelped: 'Weekly planning and consistent lab time',
+      completionHardestPart: 'Troubleshooting replication',
+      completionLearned: 'Recovery testing matters as much as backups',
+      completionDoDifferently: 'Start documentation earlier',
+      completionTaskTotal: 8,
+      completionTaskCompleted: 7,
+      completionMilestoneTotal: 4,
+      completionMilestoneCompleted: 3,
+      completionHighPriorityCompleted: 2,
+    });
 
     await goalStorage.updateGoalCompletion(goal.id, false);
     goals = await goalStorage.getGoals();
 
     expect(goals[0].completed).toBe(false);
     expect(goals[0].completedAt).toBeNull();
+    expect(goals[0].completionLearned).toBe(
+      'Recovery testing matters as much as backups'
+    );
+    expect(goals[0].completionTaskTotal).toBe(8);
 
     await goalStorage.deleteGoalById(goal.id);
     goals = await goalStorage.getGoals();
