@@ -104,6 +104,50 @@ async function repairOrphanedRelationships(
       WHERE goals.id = goal_milestones.goal_id
     );
   `);
+
+  await db.runAsync(`
+    UPDATE weekly_reviews
+    SET cycle_id = NULL
+    WHERE cycle_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1
+        FROM planning_cycles
+        WHERE planning_cycles.id = weekly_reviews.cycle_id
+      );
+  `);
+
+  await db.runAsync(`
+    UPDATE weekly_commitments
+    SET cycle_id = NULL
+    WHERE cycle_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1
+        FROM planning_cycles
+        WHERE planning_cycles.id = weekly_commitments.cycle_id
+      );
+  `);
+
+  await db.runAsync(`
+    UPDATE weekly_commitments
+    SET task_id = NULL
+    WHERE task_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1
+        FROM tasks
+        WHERE tasks.id = weekly_commitments.task_id
+      );
+  `);
+
+  await db.runAsync(`
+    UPDATE weekly_task_decisions
+    SET task_id = NULL
+    WHERE task_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1
+        FROM tasks
+        WHERE tasks.id = weekly_task_decisions.task_id
+      );
+  `);
 }
 
 /**
@@ -284,6 +328,94 @@ async function createRelationshipTriggers(
       SELECT RAISE(ABORT, 'Recurring exception rule does not exist.');
     END;
 
+    CREATE TRIGGER IF NOT EXISTS
+      trg_weekly_reviews_cycle_exists_insert
+    BEFORE INSERT ON weekly_reviews
+    WHEN NEW.cycle_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM planning_cycles WHERE id = NEW.cycle_id
+      )
+    BEGIN
+      SELECT RAISE(ABORT, 'Weekly review cycle does not exist.');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS
+      trg_weekly_reviews_cycle_exists_update
+    BEFORE UPDATE OF cycle_id ON weekly_reviews
+    WHEN NEW.cycle_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM planning_cycles WHERE id = NEW.cycle_id
+      )
+    BEGIN
+      SELECT RAISE(ABORT, 'Weekly review cycle does not exist.');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS
+      trg_weekly_commitments_cycle_exists_insert
+    BEFORE INSERT ON weekly_commitments
+    WHEN NEW.cycle_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM planning_cycles WHERE id = NEW.cycle_id
+      )
+    BEGIN
+      SELECT RAISE(ABORT, 'Weekly commitment cycle does not exist.');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS
+      trg_weekly_commitments_cycle_exists_update
+    BEFORE UPDATE OF cycle_id ON weekly_commitments
+    WHEN NEW.cycle_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM planning_cycles WHERE id = NEW.cycle_id
+      )
+    BEGIN
+      SELECT RAISE(ABORT, 'Weekly commitment cycle does not exist.');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS
+      trg_weekly_commitments_task_exists_insert
+    BEFORE INSERT ON weekly_commitments
+    WHEN NEW.task_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM tasks WHERE id = NEW.task_id
+      )
+    BEGIN
+      SELECT RAISE(ABORT, 'Weekly commitment task does not exist.');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS
+      trg_weekly_commitments_task_exists_update
+    BEFORE UPDATE OF task_id ON weekly_commitments
+    WHEN NEW.task_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM tasks WHERE id = NEW.task_id
+      )
+    BEGIN
+      SELECT RAISE(ABORT, 'Weekly commitment task does not exist.');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS
+      trg_weekly_task_decisions_task_exists_insert
+    BEFORE INSERT ON weekly_task_decisions
+    WHEN NEW.task_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM tasks WHERE id = NEW.task_id
+      )
+    BEGIN
+      SELECT RAISE(ABORT, 'Weekly task decision task does not exist.');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS
+      trg_weekly_task_decisions_task_exists_update
+    BEFORE UPDATE OF task_id ON weekly_task_decisions
+    WHEN NEW.task_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM tasks WHERE id = NEW.task_id
+      )
+    BEGIN
+      SELECT RAISE(ABORT, 'Weekly task decision task does not exist.');
+    END;
+
     /*
      * These cleanup triggers mirror the app's normal delete workflows. They
      * protect the database even when a row is removed outside those workflows.
@@ -319,6 +451,51 @@ async function createRelationshipTriggers(
     BEGIN
       DELETE FROM goal_milestones
       WHERE goal_id = OLD.id;
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS
+      trg_cycles_weekly_cleanup_after_delete
+    AFTER DELETE ON planning_cycles
+    BEGIN
+      UPDATE weekly_reviews
+      SET cycle_id = NULL
+      WHERE cycle_id = OLD.id;
+
+      UPDATE weekly_commitments
+      SET cycle_id = NULL
+      WHERE cycle_id = OLD.id;
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS
+      trg_tasks_weekly_decision_cleanup_after_delete
+    AFTER DELETE ON tasks
+    BEGIN
+      UPDATE weekly_task_decisions
+      SET task_id = NULL
+      WHERE task_id = OLD.id;
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS
+      trg_tasks_weekly_commitment_cleanup_after_delete
+    AFTER DELETE ON tasks
+    BEGIN
+      UPDATE weekly_commitments
+      SET task_id = NULL,
+          title = OLD.title,
+          completed = OLD.completed,
+          completed_at = OLD.completed_at
+      WHERE task_id = OLD.id;
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS
+      trg_tasks_weekly_commitment_sync_after_update
+    AFTER UPDATE OF title, completed, completed_at ON tasks
+    BEGIN
+      UPDATE weekly_commitments
+      SET title = NEW.title,
+          completed = NEW.completed,
+          completed_at = NEW.completed_at
+      WHERE task_id = NEW.id;
     END;
 
     CREATE TRIGGER IF NOT EXISTS
@@ -565,6 +742,54 @@ async function runMigrations() {
       PRIMARY KEY (recurring_rule_id, occurrence_date)
     );
 
+    CREATE TABLE IF NOT EXISTS weekly_reviews (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      week_start TEXT NOT NULL UNIQUE,
+      cycle_id INTEGER,
+      what_went_well TEXT,
+      what_caused_problems TEXT,
+      what_learned TEXT,
+      what_change_next_week TEXT,
+      next_week_focus TEXT,
+      snapshot_completed_count INTEGER NOT NULL DEFAULT 0,
+      snapshot_unfinished_count INTEGER NOT NULL DEFAULT 0,
+      snapshot_overdue_count INTEGER NOT NULL DEFAULT 0,
+      snapshot_completion_rate INTEGER NOT NULL DEFAULT 0,
+      snapshot_goals_progressed_count INTEGER NOT NULL DEFAULT 0,
+      snapshot_best_day TEXT,
+      snapshot_best_day_count INTEGER NOT NULL DEFAULT 0,
+      snapshot_archived_brain_dump_count INTEGER NOT NULL DEFAULT 0,
+      snapshot_high_priority_completed_count INTEGER NOT NULL DEFAULT 0,
+      snapshot_recurring_completed_count INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      reviewed_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS weekly_commitments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      week_start TEXT NOT NULL,
+      cycle_id INTEGER,
+      task_id INTEGER,
+      title TEXT NOT NULL,
+      completed INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      completed_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS weekly_task_decisions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      week_start TEXT NOT NULL,
+      task_id INTEGER,
+      task_title TEXT NOT NULL,
+      original_due_date TEXT NOT NULL,
+      action TEXT NOT NULL,
+      resolved_due_date TEXT,
+      recurring_rule_id INTEGER,
+      recurrence_occurrence_date TEXT,
+      decided_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS app_metadata (
       key TEXT PRIMARY KEY NOT NULL,
       value TEXT NOT NULL,
@@ -588,6 +813,8 @@ async function runMigrations() {
     'recurrence_occurrence_date',
     'TEXT'
   );
+
+  await ensureColumn(db, 'weekly_commitments', 'task_id', 'INTEGER');
 
   await ensureColumn(db, 'goals', 'reward', 'TEXT');
   await ensureColumn(db, 'goals', 'purpose', 'TEXT');
@@ -665,6 +892,32 @@ async function runMigrations() {
     CREATE INDEX IF NOT EXISTS
       idx_recurring_rules_active
     ON recurring_rules (active);
+
+    CREATE INDEX IF NOT EXISTS
+      idx_weekly_reviews_cycle_id
+    ON weekly_reviews (cycle_id);
+
+    CREATE INDEX IF NOT EXISTS
+      idx_weekly_commitments_week_start
+    ON weekly_commitments (week_start, completed, id);
+
+    CREATE INDEX IF NOT EXISTS
+      idx_weekly_commitments_cycle_id
+    ON weekly_commitments (cycle_id);
+
+    CREATE UNIQUE INDEX IF NOT EXISTS
+      idx_weekly_commitments_task_identity
+    ON weekly_commitments (week_start, task_id)
+    WHERE task_id IS NOT NULL;
+
+    CREATE INDEX IF NOT EXISTS
+      idx_weekly_task_decisions_week_start
+    ON weekly_task_decisions (week_start, decided_at DESC);
+
+    CREATE UNIQUE INDEX IF NOT EXISTS
+      idx_weekly_task_decision_identity
+    ON weekly_task_decisions (week_start, task_id, original_due_date)
+    WHERE task_id IS NOT NULL;
 
     CREATE UNIQUE INDEX IF NOT EXISTS
       idx_planning_cycles_single_active

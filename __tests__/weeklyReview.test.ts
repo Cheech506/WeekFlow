@@ -5,7 +5,11 @@ import {
   test,
 } from '@jest/globals';
 
-import { calculateWeeklyReview } from '../lib/weeklyReview';
+import {
+  applyWeeklyReviewSnapshot,
+  calculateWeeklyReview,
+  createWeeklyReviewSnapshot,
+} from '../lib/weeklyReview';
 import {
   localIso,
   makeBrainDump,
@@ -28,6 +32,9 @@ describe('calculateWeeklyReview', () => {
         completed: true,
         completedAt: localIso(2026, 6, 22, 10),
         goalId: 1,
+        priority: 2,
+        recurringRuleId: 9,
+        recurrenceOccurrenceDate: '2026-06-22',
       }),
       makeTask({
         completed: true,
@@ -76,6 +83,8 @@ describe('calculateWeeklyReview', () => {
     expect(review.bestDay).toBe('Wednesday');
     expect(review.bestDayCount).toBe(2);
     expect(review.archivedBrainDumpCount).toBe(1);
+    expect(review.highPriorityCompletedCount).toBe(1);
+    expect(review.recurringCompletedCount).toBe(1);
   });
 
   test('summarizes a previous week', () => {
@@ -102,6 +111,38 @@ describe('calculateWeeklyReview', () => {
     expect(review.unfinishedCount).toBe(1);
     expect(review.overdueCount).toBe(1);
     expect(review.completionRate).toBe(50);
+  });
+
+  test('rebuilds a saved review from its historical snapshot', () => {
+    const liveReview = calculateWeeklyReview(
+      [
+        makeTask({
+          completed: true,
+          completedAt: localIso(2026, 6, 24),
+        }),
+      ],
+      [],
+      [],
+      new Date(2026, 5, 24, 12),
+      0
+    );
+
+    const snapshot = createWeeklyReviewSnapshot(liveReview);
+    const changedReview = calculateWeeklyReview(
+      [],
+      [],
+      [],
+      new Date(2026, 5, 24, 12),
+      0
+    );
+    const savedReview = applyWeeklyReviewSnapshot(
+      changedReview,
+      snapshot
+    );
+
+    expect(savedReview.title).toBe('Saved Weekly Review');
+    expect(savedReview.completedCount).toBe(1);
+    expect(savedReview.completionRate).toBe(100);
   });
 
   test('builds a future weekly preview', () => {

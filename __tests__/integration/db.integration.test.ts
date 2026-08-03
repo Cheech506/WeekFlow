@@ -34,6 +34,9 @@ describe('SQLite migrations', () => {
           'brain_dumps',
           'goal_milestones',
           'planning_cycles',
+          'weekly_reviews',
+          'weekly_commitments',
+          'weekly_task_decisions',
           'recurring_rules',
           'recurring_occurrence_exceptions',
           'app_metadata'
@@ -50,6 +53,9 @@ describe('SQLite migrations', () => {
       'recurring_occurrence_exceptions',
       'recurring_rules',
       'tasks',
+      'weekly_commitments',
+      'weekly_reviews',
+      'weekly_task_decisions',
     ]);
 
     const goalColumns = await db.getAllAsync<{ name: string }>(
@@ -87,6 +93,55 @@ describe('SQLite migrations', () => {
         'completed',
         'created_at',
         'completed_at',
+      ])
+    );
+
+    const weeklyReviewColumns = await db.getAllAsync<{ name: string }>(
+      'PRAGMA table_info(weekly_reviews);'
+    );
+
+    expect(weeklyReviewColumns.map((column) => column.name)).toEqual(
+      expect.arrayContaining([
+        'week_start',
+        'cycle_id',
+        'what_went_well',
+        'next_week_focus',
+        'snapshot_completed_count',
+        'snapshot_high_priority_completed_count',
+        'reviewed_at',
+      ])
+    );
+
+    const weeklyCommitmentColumns = await db.getAllAsync<{ name: string }>(
+      'PRAGMA table_info(weekly_commitments);'
+    );
+
+    expect(weeklyCommitmentColumns.map((column) => column.name)).toEqual(
+      expect.arrayContaining([
+        'week_start',
+        'cycle_id',
+        'task_id',
+        'title',
+        'completed',
+        'completed_at',
+      ])
+    );
+
+    const weeklyDecisionColumns = await db.getAllAsync<{ name: string }>(
+      'PRAGMA table_info(weekly_task_decisions);'
+    );
+
+    expect(weeklyDecisionColumns.map((column) => column.name)).toEqual(
+      expect.arrayContaining([
+        'week_start',
+        'task_id',
+        'task_title',
+        'original_due_date',
+        'action',
+        'resolved_due_date',
+        'recurring_rule_id',
+        'recurrence_occurrence_date',
+        'decided_at',
       ])
     );
   });
@@ -493,6 +548,34 @@ describe('SQLite migrations', () => {
         VALUES (999, '2026-07-20', '2026-07-20T13:02:00.000Z');
       `)
     ).rejects.toThrow('Recurring exception rule does not exist.');
+
+
+    await expect(
+      db.runAsync(`
+        INSERT INTO weekly_commitments (
+          week_start, cycle_id, task_id, title, completed,
+          created_at, completed_at
+        )
+        VALUES (
+          '2026-07-20', NULL, 999, 'Missing commitment task', 0,
+          '2026-07-20T13:02:30.000Z', NULL
+        );
+      `)
+    ).rejects.toThrow('Weekly commitment task does not exist.');
+
+    await expect(
+      db.runAsync(`
+        INSERT INTO weekly_task_decisions (
+          week_start, task_id, task_title, original_due_date,
+          action, resolved_due_date, recurring_rule_id,
+          recurrence_occurrence_date, decided_at
+        )
+        VALUES (
+          '2026-07-20', 999, 'Missing task', '2026-07-20',
+          'keep', NULL, NULL, NULL, '2026-07-20T13:03:00.000Z'
+        );
+      `)
+    ).rejects.toThrow('Weekly task decision task does not exist.');
   });
 
   test('database cleanup triggers protect links during direct deletes', async () => {
@@ -537,6 +620,43 @@ describe('SQLite migrations', () => {
       )
       VALUES (60, '2026-07-21', '2026-07-20T14:03:00.000Z');
 
+      INSERT INTO planning_cycles (
+        id, start_date, end_date, active, created_at, completed_at
+      )
+      VALUES (
+        80, '2026-07-20', '2026-10-11', 1,
+        '2026-07-20T14:04:00.000Z', NULL
+      );
+
+      INSERT INTO weekly_reviews (
+        id, week_start, cycle_id, created_at, updated_at, reviewed_at
+      )
+      VALUES (
+        90, '2026-07-20', 80,
+        '2026-07-20T14:05:00.000Z',
+        '2026-07-20T14:05:00.000Z',
+        '2026-07-20T14:05:00.000Z'
+      );
+
+      INSERT INTO weekly_commitments (
+        id, week_start, cycle_id, task_id, title, completed, created_at, completed_at
+      )
+      VALUES (
+        91, '2026-07-20', 80, 70, 'Trigger task', 0,
+        '2026-07-20T14:06:00.000Z', NULL
+      );
+
+      INSERT INTO weekly_task_decisions (
+        id, week_start, task_id, task_title, original_due_date,
+        action, resolved_due_date, recurring_rule_id,
+        recurrence_occurrence_date, decided_at
+      )
+      VALUES (
+        92, '2026-07-20', 70, 'Trigger task', '2026-07-20',
+        'keep', NULL, 60, '2026-07-20',
+        '2026-07-20T14:07:00.000Z'
+      );
+
       DELETE FROM goals WHERE id = 50;
     `);
 
@@ -579,6 +699,82 @@ describe('SQLite migrations', () => {
       recurrence_occurrence_date: null,
     });
     expect(exceptionCount?.count).toBe(0);
+
+    await db.runAsync('DELETE FROM planning_cycles WHERE id = 80;');
+
+    const weeklyLinksAfterCycleDelete = await db.getFirstAsync<{
+      review_cycle_id: number | null;
+      commitment_cycle_id: number | null;
+    }>(`
+      SELECT
+        weekly_reviews.cycle_id AS review_cycle_id,
+        weekly_commitments.cycle_id AS commitment_cycle_id
+      FROM weekly_reviews
+      JOIN weekly_commitments ON weekly_commitments.id = 91
+      WHERE weekly_reviews.id = 90;
+    `);
+
+    expect(weeklyLinksAfterCycleDelete).toEqual({
+      review_cycle_id: null,
+      commitment_cycle_id: null,
+    });
+
+    await db.runAsync(
+      `
+      UPDATE tasks
+      SET title = 'Updated trigger task',
+          completed = 1,
+          completed_at = '2026-07-22T12:00:00.000Z'
+      WHERE id = 70;
+      `
+    );
+
+    const syncedCommitment = await db.getFirstAsync<{
+      task_id: number | null;
+      title: string;
+      completed: number;
+    }>(`
+      SELECT task_id, title, completed
+      FROM weekly_commitments
+      WHERE id = 91;
+    `);
+
+    expect(syncedCommitment).toEqual({
+      task_id: 70,
+      title: 'Updated trigger task',
+      completed: 1,
+    });
+
+    await db.runAsync('DELETE FROM tasks WHERE id = 70;');
+
+    const weeklyDecisionAfterTaskDelete = await db.getFirstAsync<{
+      task_id: number | null;
+    }>(`
+      SELECT task_id
+      FROM weekly_task_decisions
+      WHERE id = 92;
+    `);
+
+    expect(weeklyDecisionAfterTaskDelete).toEqual({
+      task_id: null,
+    });
+
+
+    const commitmentAfterTaskDelete = await db.getFirstAsync<{
+      task_id: number | null;
+      title: string;
+      completed: number;
+    }>(`
+      SELECT task_id, title, completed
+      FROM weekly_commitments
+      WHERE id = 91;
+    `);
+
+    expect(commitmentAfterTaskDelete).toEqual({
+      task_id: null,
+      title: 'Updated trigger task',
+      completed: 1,
+    });
   });
 
 });

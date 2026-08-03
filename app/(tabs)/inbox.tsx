@@ -9,6 +9,7 @@ import {
 
 import { ActiveTaskFilters } from '@/components/ActiveTaskFilters';
 import { TaskDatePicker } from '@/components/TaskDatePicker';
+import { TaskWeeklyCommitmentButton } from '@/components/TaskWeeklyCommitmentButton';
 import { Text, View } from '@/components/Themed';
 import { useBrainDumps } from '@/context/BrainDumpContext';
 import { useGoals } from '@/context/GoalContext';
@@ -3149,6 +3150,7 @@ export default function InboxScreen() {
                           Edit
                         </Text>
                       </Pressable>
+                      <TaskWeeklyCommitmentButton task={task} compact />
                       <Pressable
                         style={[
                           styles.smallButton,

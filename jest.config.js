@@ -20,6 +20,7 @@ module.exports = {
     'lib/cycleStorage.ts',
     'lib/progressStats.ts',
     'lib/weeklyReview.ts',
+    'lib/weeklyReviewStorage.ts',
     'lib/recurrenceUtils.ts',
     'lib/backupValidation.ts',
     'lib/db.ts',

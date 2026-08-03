@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
+  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -7,23 +8,35 @@ import {
 } from 'react-native';
 
 import { ActiveTaskFilters } from '@/components/ActiveTaskFilters';
+import { GuidedWeeklyReviewCard } from '@/components/GuidedWeeklyReviewCard';
+import { TaskCardActionsMenu } from '@/components/TaskCardActionsMenu';
 import { TaskDatePicker } from '@/components/TaskDatePicker';
+import { UnfinishedTaskDecisionsCard } from '@/components/UnfinishedTaskDecisionsCard';
+import { WeeklyCommitmentsCard } from '@/components/WeeklyCommitmentsCard';
 import { Text, View } from '@/components/Themed';
 import { useBrainDumps } from '@/context/BrainDumpContext';
+import { useCycle } from '@/context/CycleContext';
 import { useGoals } from '@/context/GoalContext';
 import { type Task, useTasks } from '@/context/TaskContext';
+import { useWeeklyReviews } from '@/context/WeeklyReviewContext';
 import {
   createDefaultActiveTaskFilters,
   filterActiveTasks,
 } from '@/lib/activeTaskFilters';
 import {
+  addDays,
   formatDateKey,
   getLocalDateKey,
   getWeekDays,
   isDateKeyOverdue,
+  parseLocalDateKey,
 } from '@/lib/dateUtils';
 import { calculateProgressStats } from '@/lib/progressStats';
-import { calculateWeeklyReview } from '@/lib/weeklyReview';
+import {
+  applyWeeklyReviewSnapshot,
+  calculateWeeklyReview,
+  createWeeklyReviewSnapshot,
+} from '@/lib/weeklyReview';
 
 function getPriorityLabel(priority: number) {
   if (priority === 2) return 'High';
@@ -38,6 +51,12 @@ function getColumnCount(width: number) {
   return 1;
 }
 
+type DatePickerRequest = {
+  task: Task;
+  source: 'taskCard' | 'weeklyDecision';
+  originalDueDate: string | null;
+};
+
 export default function WeeklyScreen() {
   const { width } = useWindowDimensions();
   const [weekOffset, setWeekOffset] = useState(0);
@@ -45,8 +64,8 @@ export default function WeeklyScreen() {
   const [taskFilters, setTaskFilters] = useState(
     createDefaultActiveTaskFilters()
   );
-  const [datePickerTask, setDatePickerTask] =
-    useState<Task | null>(null);
+  const [datePickerRequest, setDatePickerRequest] =
+    useState<DatePickerRequest | null>(null);
 
   const columnCount = getColumnCount(width);
   const isDesktopWeek = columnCount === 7;
@@ -77,6 +96,19 @@ export default function WeeklyScreen() {
 
   const { goals } = useGoals();
   const { brainDumps } = useBrainDumps();
+  const { cycles } = useCycle();
+  const {
+    reviews,
+    commitments,
+    taskDecisions,
+    saveReview,
+    addCommitment,
+    addTaskCommitment,
+    toggleCommitment,
+    deleteCommitment,
+    recordTaskDecision,
+    deleteTaskDecision,
+  } = useWeeklyReviews();
   const todayDateKey = getLocalDateKey(new Date());
 
   /*
@@ -88,7 +120,7 @@ export default function WeeklyScreen() {
     [weekOffset]
   );
 
-  const weeklyReview = useMemo(
+  const calculatedWeeklyReview = useMemo(
     () =>
       calculateWeeklyReview(
         tasks,
@@ -129,6 +161,29 @@ export default function WeeklyScreen() {
     year: 'numeric',
   })}`;
 
+  const selectedCycle = useMemo(
+    () =>
+      cycles.find(
+        (cycle) =>
+          cycle.startDate <= lastDate && cycle.endDate >= firstDate
+      ) ?? null,
+    [cycles, firstDate, lastDate]
+  );
+  const storedWeeklyReview =
+    reviews.find((review) => review.weekStart === firstDate) ?? null;
+  const weeklyReview = storedWeeklyReview
+    ? applyWeeklyReviewSnapshot(
+        calculatedWeeklyReview,
+        storedWeeklyReview
+      )
+    : calculatedWeeklyReview;
+  const weekCommitments = commitments.filter(
+    (commitment) => commitment.weekStart === firstDate
+  );
+  const weekTaskDecisions = taskDecisions.filter(
+    (decision) => decision.weekStart === firstDate
+  );
+
   const reviewGoalCount =
     weeklyReview.status === 'future'
       ? weeklyReview.scheduledGoalCount
@@ -145,26 +200,129 @@ export default function WeeklyScreen() {
       ),
     [tasks, firstDate, lastDate]
   );
+  const commitmentTaskOptions = useMemo(
+    () =>
+      tasks.filter(
+        (task) =>
+          !task.completed &&
+          (task.dueDate === null ||
+            (task.dueDate >= firstDate && task.dueDate <= lastDate))
+      ),
+    [tasks, firstDate, lastDate]
+  );
+  const decisionTasks = useMemo(
+    () =>
+      weeklyReview.status === 'current'
+        ? weekTasks.filter(
+            (task) =>
+              task.dueDate !== null && task.dueDate <= todayDateKey
+          )
+        : weekTasks,
+    [weekTasks, weeklyReview.status, todayDateKey]
+  );
   const filteredWeekTasks = useMemo(
     () => filterActiveTasks(weekTasks, taskFilters),
     [weekTasks, taskFilters]
   );
 
   async function handleScheduleDate(dateKey: string) {
-    if (!datePickerTask) return;
+    if (!datePickerRequest) return;
 
-    await scheduleTask(datePickerTask.id, dateKey);
-    setDatePickerTask(null);
+    const { task, source, originalDueDate } = datePickerRequest;
+
+    try {
+      await scheduleTask(task.id, dateKey);
+
+      if (source === 'weeklyDecision' && originalDueDate) {
+        await recordTaskDecision({
+          weekStart: firstDate,
+          taskId: task.id,
+          taskTitle: task.title,
+          originalDueDate,
+          action: 'reschedule',
+          resolvedDueDate: dateKey,
+          recurringRuleId: task.recurringRuleId,
+          recurrenceOccurrenceDate: task.recurrenceOccurrenceDate,
+        });
+      }
+
+      setDatePickerRequest(null);
+    } catch (error) {
+      Alert.alert(
+        'Could Not Schedule Task',
+        error instanceof Error
+          ? error.message
+          : 'WeekFlow could not update that task.'
+      );
+    }
+  }
+
+  async function handleSaveWeeklyReview(reflection: {
+    whatWentWell?: string;
+    whatCausedProblems?: string;
+    whatLearned?: string;
+    whatChangeNextWeek?: string;
+    nextWeekFocus?: string;
+  }) {
+    await saveReview(
+      firstDate,
+      selectedCycle?.id ?? null,
+      reflection,
+      createWeeklyReviewSnapshot(calculatedWeeklyReview)
+    );
+  }
+
+  async function handleUnfinishedTaskDecision(
+    task: Task,
+    action: 'nextWeek' | 'inbox' | 'keep' | 'delete'
+  ) {
+    if (!task.dueDate) return;
+
+    const originalDueDate = task.dueDate;
+    let resolvedDueDate: string | null = null;
+
+    try {
+      if (action === 'nextWeek') {
+        const parsedDate = parseLocalDateKey(originalDueDate);
+        if (!parsedDate) {
+          throw new Error('The task has an invalid scheduled date.');
+        }
+        resolvedDueDate = getLocalDateKey(addDays(parsedDate, 7));
+        await scheduleTask(task.id, resolvedDueDate);
+      } else if (action === 'inbox') {
+        await moveTaskToInbox(task.id);
+      } else if (action === 'delete') {
+        await deleteTask(task.id);
+      }
+
+      await recordTaskDecision({
+        weekStart: firstDate,
+        taskId: action === 'delete' ? null : task.id,
+        taskTitle: task.title,
+        originalDueDate,
+        action,
+        resolvedDueDate,
+        recurringRuleId: task.recurringRuleId,
+        recurrenceOccurrenceDate: task.recurrenceOccurrenceDate,
+      });
+    } catch (error) {
+      Alert.alert(
+        'Could Not Apply Decision',
+        error instanceof Error
+          ? error.message
+          : 'WeekFlow could not apply that unfinished-task decision.'
+      );
+    }
   }
 
   return (
     <>
       <TaskDatePicker
-        visible={datePickerTask !== null}
-        taskTitle={datePickerTask?.title}
-        initialDateKey={datePickerTask?.dueDate}
+        visible={datePickerRequest !== null}
+        taskTitle={datePickerRequest?.task.title}
+        initialDateKey={datePickerRequest?.task.dueDate}
         minimumDateKey={todayDateKey}
-        onCancel={() => setDatePickerTask(null)}
+        onCancel={() => setDatePickerRequest(null)}
         onSelectDate={handleScheduleDate}
       />
 
@@ -351,6 +509,46 @@ export default function WeeklyScreen() {
         ) : null}
       </View>
 
+      <WeeklyCommitmentsCard
+        weekLabel={weekLabel}
+        status={weeklyReview.status}
+        commitments={weekCommitments}
+        tasks={tasks}
+        taskOptions={commitmentTaskOptions}
+        onAdd={(title) =>
+          addCommitment(firstDate, selectedCycle?.id ?? null, title)
+        }
+        onAddTask={(taskId) =>
+          addTaskCommitment(firstDate, selectedCycle?.id ?? null, taskId)
+        }
+        onToggle={toggleCommitment}
+        onDelete={deleteCommitment}
+      />
+
+      <GuidedWeeklyReviewCard
+        weekLabel={weekLabel}
+        status={weeklyReview.status}
+        review={weeklyReview}
+        storedReview={storedWeeklyReview}
+        onSave={handleSaveWeeklyReview}
+      />
+
+      <UnfinishedTaskDecisionsCard
+        status={weeklyReview.status}
+        weekLabel={weekLabel}
+        tasks={decisionTasks}
+        decisions={weekTaskDecisions}
+        onChooseDate={(task) =>
+          setDatePickerRequest({
+            task,
+            source: 'weeklyDecision',
+            originalDueDate: task.dueDate,
+          })
+        }
+        onDecision={handleUnfinishedTaskDecision}
+        onUndoKeep={deleteTaskDecision}
+      />
+
       <ActiveTaskFilters
         goals={goals}
         filters={taskFilters}
@@ -499,75 +697,28 @@ export default function WeeklyScreen() {
                           ) : null}
                         </View>
 
-                        <View
-                          style={[
-                            styles.taskActions,
-                            isCompactTaskCard &&
-                              styles.taskActionsCompact,
-                          ]}
-                        >
-                          {isOverdue ? (
-                            <Pressable
-                              style={[
-                                styles.actionButton,
-                                styles.todayButton,
-                              ]}
-                              onPress={() =>
-                                scheduleTask(task.id, todayDateKey)
-                              }
-                            >
-                              <Text style={styles.actionButtonText}>
-                                Today
-                              </Text>
-                            </Pressable>
-                          ) : null}
-
-                          <Pressable
-                            style={[
-                              styles.actionButton,
-                              styles.calendarButton,
-                            ]}
-                            onPress={() => setDatePickerTask(task)}
-                          >
-                            <Text style={styles.actionButtonText}>
-                              Reschedule
-                            </Text>
-                          </Pressable>
-
-                          <Pressable
-                            style={[
-                              styles.actionButton,
-                              styles.inboxButton,
-                            ]}
-                            onPress={() => moveTaskToInbox(task.id)}
-                          >
-                            <Text style={styles.actionButtonText}>
-                              Inbox
-                            </Text>
-                          </Pressable>
-
-                          <Pressable
-                            style={[
-                              styles.actionButton,
-                              styles.doneButton,
-                            ]}
-                            onPress={() => completeTask(task.id)}
-                          >
-                            <Text style={styles.actionButtonText}>Done</Text>
-                          </Pressable>
-
-                          <Pressable
-                            style={[
-                              styles.actionButton,
-                              styles.deleteButton,
-                            ]}
-                            onPress={() => deleteTask(task.id)}
-                          >
-                            <Text style={styles.actionButtonText}>
-                              Delete
-                            </Text>
-                          </Pressable>
-                        </View>
+                        <TaskCardActionsMenu
+                          task={task}
+                          weekStart={firstDate}
+                          commitmentDisabled={
+                            weeklyReview.status === 'past'
+                          }
+                          compact={isCompactTaskCard}
+                          showMoveToToday={isOverdue}
+                          onMoveToToday={() =>
+                            scheduleTask(task.id, todayDateKey)
+                          }
+                          onReschedule={() =>
+                            setDatePickerRequest({
+                              task,
+                              source: 'taskCard',
+                              originalDueDate: task.dueDate,
+                            })
+                          }
+                          onMoveToInbox={() => moveTaskToInbox(task.id)}
+                          onComplete={() => completeTask(task.id)}
+                          onDelete={() => deleteTask(task.id)}
+                        />
                       </View>
                     );
                   })}
@@ -886,42 +1037,5 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#374151',
     lineHeight: 17,
-  },
-  taskActions: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 7,
-    backgroundColor: 'transparent',
-  },
-  taskActionsCompact: {
-    gap: 5,
-  },
-  actionButton: {
-    flexGrow: 1,
-    minWidth: 62,
-    alignItems: 'center',
-    paddingVertical: 7,
-    paddingHorizontal: 8,
-    borderRadius: 8,
-  },
-  todayButton: {
-    backgroundColor: '#f97316',
-  },
-  calendarButton: {
-    backgroundColor: '#7c3aed',
-  },
-  inboxButton: {
-    backgroundColor: '#2563eb',
-  },
-  doneButton: {
-    backgroundColor: '#16a34a',
-  },
-  deleteButton: {
-    backgroundColor: '#dc2626',
-  },
-  actionButtonText: {
-    color: 'white',
-    fontSize: 11,
-    fontWeight: '700',
   },
 });

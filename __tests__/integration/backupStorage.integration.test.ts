@@ -107,6 +107,57 @@ function makeBackup(
           completedAt: null,
         },
       ],
+      weeklyReviews: [
+        {
+          id: 60,
+          weekStart: '2026-07-06',
+          cycleId: 40,
+          whatWentWell: 'The plan was realistic.',
+          whatCausedProblems: null,
+          whatLearned: 'Keep commitments focused.',
+          whatChangeNextWeek: null,
+          nextWeekFocus: 'Finish the restore test.',
+          completedCount: 4,
+          unfinishedCount: 1,
+          overdueCount: 1,
+          completionRate: 80,
+          goalsProgressedCount: 1,
+          bestDay: 'Wednesday',
+          bestDayCount: 2,
+          archivedBrainDumpCount: 1,
+          highPriorityCompletedCount: 1,
+          recurringCompletedCount: 1,
+          createdAt: '2026-07-12T12:00:00.000Z',
+          updatedAt: '2026-07-12T12:00:00.000Z',
+          reviewedAt: '2026-07-12T12:00:00.000Z',
+        },
+      ],
+      weeklyCommitments: [
+        {
+          id: 70,
+          weekStart: '2026-07-06',
+          cycleId: 40,
+          taskId: 10,
+          title: taskTitle,
+          completed: false,
+          createdAt: '2026-07-06T12:00:00.000Z',
+          completedAt: null,
+        },
+      ],
+      weeklyTaskDecisions: [
+        {
+          id: 80,
+          weekStart: '2026-07-06',
+          taskId: 10,
+          taskTitle: taskTitle,
+          originalDueDate: '2026-07-06',
+          action: 'nextWeek',
+          resolvedDueDate: '2026-07-13',
+          recurringRuleId: null,
+          recurrenceOccurrenceDate: null,
+          decidedAt: '2026-07-12T12:00:00.000Z',
+        },
+      ],
     },
   };
 }
@@ -134,6 +185,9 @@ describe('backup restore integration', () => {
     const cycleStorage = await import(
       '../../lib/cycleStorage'
     );
+    const weeklyReviewStorage = await import(
+      '../../lib/weeklyReviewStorage'
+    );
 
     await taskStorage.insertTask('Old task', 'Inbox');
     await goalStorage.insertGoal('Old goal');
@@ -150,6 +204,9 @@ describe('backup restore integration', () => {
       recurringRules: 0,
       recurringExceptions: 0,
       planningCycles: 1,
+      weeklyReviews: 1,
+      weeklyCommitments: 1,
+      weeklyTaskDecisions: 1,
     });
 
     expect((await taskStorage.getTasks())[0].title).toBe(
@@ -189,6 +246,20 @@ describe('backup restore integration', () => {
       startDate: '2026-07-01',
       endDate: '2026-09-22',
       active: true,
+    });
+    expect((await weeklyReviewStorage.getWeeklyReviews())[0]).toMatchObject({
+      weekStart: '2026-07-06',
+      whatWentWell: 'The plan was realistic.',
+      completionRate: 80,
+    });
+    expect((await weeklyReviewStorage.getWeeklyCommitments())[0]).toMatchObject({
+      taskId: 10,
+      title: 'Restored task',
+      completed: false,
+    });
+    expect((await weeklyReviewStorage.getWeeklyTaskDecisions())[0]).toMatchObject({
+      action: 'nextWeek',
+      resolvedDueDate: '2026-07-13',
     });
   });
 

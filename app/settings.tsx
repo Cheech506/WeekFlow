@@ -13,6 +13,7 @@ import { useBrainDumps } from '@/context/BrainDumpContext';
 import { useCycle } from '@/context/CycleContext';
 import { useGoals } from '@/context/GoalContext';
 import { useTasks } from '@/context/TaskContext';
+import { useWeeklyReviews } from '@/context/WeeklyReviewContext';
 import {
   getBackupActivity,
   recordBackupExport,
@@ -90,6 +91,11 @@ export default function SettingsScreen() {
   const { goals, milestones, refreshGoals } = useGoals();
   const { cycles, refreshCycles } = useCycle();
   const { brainDumps, refreshBrainDumps } = useBrainDumps();
+  const {
+    reviews: weeklyReviews,
+    commitments: weeklyCommitments,
+    refreshWeeklyReviews,
+  } = useWeeklyReviews();
 
   const loadBackupActivity = useCallback(async () => {
     setBackupActivity(await getBackupActivity());
@@ -109,6 +115,7 @@ export default function SettingsScreen() {
       await refreshGoals();
       await refreshBrainDumps();
       await refreshCycles();
+      await refreshWeeklyReviews();
       await loadBackupActivity();
     } catch {
       setBackupMessage({
@@ -124,6 +131,7 @@ export default function SettingsScreen() {
     refreshCycles,
     refreshGoals,
     refreshTasks,
+    refreshWeeklyReviews,
   ]);
 
   useFocusEffect(
@@ -195,6 +203,19 @@ export default function SettingsScreen() {
             ? '1 current cycle'
             : `${activeCycles} current cycles`,
       },
+      {
+        label: 'Weekly Reviews',
+        value: weeklyReviews.length,
+        detail: 'Saved guided reflections',
+      },
+      {
+        label: 'Commitments',
+        value: weeklyCommitments.length,
+        detail: pluralize(
+          weeklyCommitments.filter((item) => item.completed).length,
+          'completed commitment'
+        ),
+      },
     ];
   }, [
     brainDumps,
@@ -204,6 +225,8 @@ export default function SettingsScreen() {
     recurringRules,
     taskTemplates,
     tasks,
+    weeklyCommitments,
+    weeklyReviews,
   ]);
 
   async function handleExportBackup() {
@@ -233,8 +256,9 @@ export default function SettingsScreen() {
         text:
           `Exported ${counts.tasks} tasks, ${counts.goals} goals, ` +
           `${counts.goalMilestones} milestones, ${counts.brainDumps} brain dumps, ${counts.taskTemplates} templates, ` +
-          `${counts.recurringRules} recurring schedules, and ` +
-          `${counts.planningCycles} planning cycles.`,
+          `${counts.recurringRules} recurring schedules, ${counts.planningCycles} planning cycles, ` +
+          `${counts.weeklyReviews} weekly reviews, ${counts.weeklyCommitments} commitments, and ` +
+          `${counts.weeklyTaskDecisions} unfinished-task decisions.`,
       });
     } catch (error) {
       setBackupMessage({
@@ -279,6 +303,7 @@ export default function SettingsScreen() {
       await refreshGoals();
       await refreshBrainDumps();
       await refreshCycles();
+      await refreshWeeklyReviews();
 
       /*
        * The database replacement is already complete at this point. Device
@@ -297,8 +322,9 @@ export default function SettingsScreen() {
         text:
           `Imported ${counts.tasks} tasks, ${counts.goals} goals, ` +
           `${counts.goalMilestones} milestones, ${counts.brainDumps} brain dumps, ${counts.taskTemplates} templates, ` +
-          `${counts.recurringRules} recurring schedules, and ` +
-          `${counts.planningCycles} planning cycles.`,
+          `${counts.recurringRules} recurring schedules, ${counts.planningCycles} planning cycles, ` +
+          `${counts.weeklyReviews} weekly reviews, ${counts.weeklyCommitments} commitments, and ` +
+          `${counts.weeklyTaskDecisions} unfinished-task decisions.`,
       });
       setPendingImport(null);
     } catch (error) {
@@ -432,8 +458,9 @@ export default function SettingsScreen() {
           <Text style={styles.dangerTitle}>Replace Data from Backup</Text>
           <Text style={styles.dangerText}>
             Import replaces the current tasks, goals, templates, recurring
-            schedules, brain dumps, and planning cycles only after the selected
-            file passes validation and you confirm the replacement.
+            schedules, brain dumps, planning cycles, weekly reviews, and
+            commitments only after the selected file passes validation and you
+            confirm the replacement.
           </Text>
 
           <Pressable
@@ -472,6 +499,12 @@ export default function SettingsScreen() {
                 {pendingImport.preview.counts.recurringExceptions} skipped
                 occurrences •{' '}
                 {pendingImport.preview.counts.planningCycles} planning cycles
+              </Text>
+              <Text style={styles.importCounts}>
+                {pendingImport.preview.counts.weeklyReviews} weekly reviews •{' '}
+                {pendingImport.preview.counts.weeklyCommitments} commitments •{' '}
+                {pendingImport.preview.counts.weeklyTaskDecisions}{' '}
+                unfinished-task decisions
               </Text>
 
               {pendingImport.preview.sourceVersion <

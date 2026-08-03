@@ -2,7 +2,9 @@ import type { StoredBrainDump } from './brainDumpStorage';
 import type { PlanningCycle } from './cycleStorage';
 import { createPlanningCycleRange } from './cycleUtils';
 import {
+  addDays,
   DAY_NAMES,
+  getLocalDateKey,
   parseLocalDateKey,
 } from './dateUtils';
 import type { GoalMilestone } from './goalMilestoneStorage';
@@ -23,9 +25,17 @@ import type {
 } from './recurringStorage';
 import type { Task } from './taskStorage';
 import type { TaskTemplate } from './taskTemplateStorage';
+import {
+  MAX_WEEKLY_COMMITMENT_TITLE_LENGTH,
+  MAX_WEEKLY_REVIEW_RESPONSE_LENGTH,
+  WEEKLY_TASK_DECISION_ACTIONS,
+  type StoredWeeklyReview,
+  type WeeklyCommitment,
+  type WeeklyTaskDecision,
+} from './weeklyReviewStorage';
 
 export const BACKUP_FORMAT = 'weekflow-backup';
-export const BACKUP_VERSION = 8;
+export const BACKUP_VERSION = 10;
 export const BACKUP_DATA_MODEL_VERSION = 1;
 
 export type BackupCounts = {
@@ -37,6 +47,9 @@ export type BackupCounts = {
   recurringRules: number;
   recurringExceptions: number;
   planningCycles: number;
+  weeklyReviews: number;
+  weeklyCommitments: number;
+  weeklyTaskDecisions: number;
 };
 
 export type BackupRepairs = {
@@ -86,7 +99,11 @@ type LegacyStoredGoal = Omit<
 
 type BackupDataWithLegacyGoals = Omit<
   WeekFlowBackup['data'],
-  'goals' | 'goalMilestones'
+  | 'goals'
+  | 'goalMilestones'
+  | 'weeklyReviews'
+  | 'weeklyCommitments'
+  | 'weeklyTaskDecisions'
 > & {
   goals: LegacyStoredGoal[];
   goalMilestones?: GoalMilestone[];
@@ -160,6 +177,28 @@ type LegacyWeekFlowBackupV7 = {
   data: BackupDataWithLegacyGoals;
 };
 
+type LegacyWeekFlowBackupV8 = {
+  format: typeof BACKUP_FORMAT;
+  version: 8;
+  exportedAt: string;
+  metadata: BackupMetadata;
+  data: BackupDataWithLegacyGoals;
+};
+
+type LegacyWeeklyCommitmentV9 = Omit<WeeklyCommitment, 'taskId'> & {
+  taskId?: number | null;
+};
+
+type LegacyWeekFlowBackupV9 = {
+  format: typeof BACKUP_FORMAT;
+  version: 9;
+  exportedAt: string;
+  metadata: BackupMetadata;
+  data: Omit<WeekFlowBackup['data'], 'weeklyCommitments'> & {
+    weeklyCommitments: LegacyWeeklyCommitmentV9[];
+  };
+};
+
 export type WeekFlowBackup = {
   format: typeof BACKUP_FORMAT;
   version: typeof BACKUP_VERSION;
@@ -174,11 +213,14 @@ export type WeekFlowBackup = {
     recurringRules: RecurringRule[];
     recurringExceptions: RecurringOccurrenceException[];
     planningCycles: PlanningCycle[];
+    weeklyReviews: StoredWeeklyReview[];
+    weeklyCommitments: WeeklyCommitment[];
+    weeklyTaskDecisions: WeeklyTaskDecision[];
   };
 };
 
 export type BackupPreview = {
-  sourceVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | typeof BACKUP_VERSION;
+  sourceVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | typeof BACKUP_VERSION;
   currentVersion: typeof BACKUP_VERSION;
   exportedAt: string;
   appVersion: string;
@@ -287,6 +329,27 @@ function isValidNullableDateKey(
   value: unknown
 ): value is string | null {
   return value === null || isValidDateKey(value);
+}
+
+
+function isMondayDateKey(value: unknown): value is string {
+  const date = typeof value === 'string' ? parseLocalDateKey(value) : null;
+  return date?.getDay() === 1;
+}
+
+function isDateKeyInsideWeek(dateKey: string, weekStart: string) {
+  const date = parseLocalDateKey(dateKey);
+  const start = parseLocalDateKey(weekStart);
+
+  if (!date || !start) return false;
+
+  const end = new Date(
+    start.getFullYear(),
+    start.getMonth(),
+    start.getDate() + 7
+  );
+
+  return date >= start && date < end;
 }
 
 function isValidTaskDay(value: unknown) {
@@ -729,6 +792,299 @@ function validatePlanningCycle(
   }
 }
 
+function validateWeeklyReview(
+  value: unknown,
+  label: string
+): asserts value is StoredWeeklyReview {
+  if (!isRecord(value)) {
+    fail('INVALID_WEEKLY_REVIEW', `${label} is not an object.`);
+  }
+
+  if (!isPositiveInteger(value.id) || !isMondayDateKey(value.weekStart)) {
+    fail('INVALID_WEEKLY_REVIEW', `${label} must use a valid Monday week start.`);
+  }
+
+  if (
+    value.cycleId !== null &&
+    !isPositiveInteger(value.cycleId)
+  ) {
+    fail('INVALID_WEEKLY_REVIEW', `${label} has an invalid cycle link.`);
+  }
+
+  const responses = [
+    value.whatWentWell,
+    value.whatCausedProblems,
+    value.whatLearned,
+    value.whatChangeNextWeek,
+    value.nextWeekFocus,
+  ];
+
+  if (
+    responses.some(
+      (response) =>
+        !isNullableString(response) ||
+        (typeof response === 'string' &&
+          response.length > MAX_WEEKLY_REVIEW_RESPONSE_LENGTH)
+    )
+  ) {
+    fail('INVALID_WEEKLY_REVIEW', `${label} has an invalid reflection response.`);
+  }
+
+  const countFields = [
+    value.completedCount,
+    value.unfinishedCount,
+    value.overdueCount,
+    value.goalsProgressedCount,
+    value.bestDayCount,
+    value.archivedBrainDumpCount,
+    value.highPriorityCompletedCount,
+    value.recurringCompletedCount,
+  ];
+
+  if (
+    countFields.some(
+      (count) =>
+        typeof count !== 'number' ||
+        !Number.isSafeInteger(count) ||
+        count < 0
+    )
+  ) {
+    fail('INVALID_WEEKLY_REVIEW', `${label} has an invalid saved count.`);
+  }
+
+  if (
+    typeof value.completionRate !== 'number' ||
+    !Number.isSafeInteger(value.completionRate) ||
+    value.completionRate < 0 ||
+    value.completionRate > 100
+  ) {
+    fail('INVALID_WEEKLY_REVIEW', `${label} has an invalid completion rate.`);
+  }
+
+  /*
+   * The array validation above proves these unknown record properties are
+   * non-negative integers. Capture typed locals so the consistency checks stay
+   * strict without weakening validation for the rest of the backup object.
+   */
+  const completedCount = value.completedCount as number;
+  const unfinishedCount = value.unfinishedCount as number;
+  const overdueCount = value.overdueCount as number;
+  const goalsProgressedCount = value.goalsProgressedCount as number;
+  const bestDayCount = value.bestDayCount as number;
+  const highPriorityCompletedCount =
+    value.highPriorityCompletedCount as number;
+  const recurringCompletedCount =
+    value.recurringCompletedCount as number;
+  const completionRate = value.completionRate as number;
+
+  const reviewTotal = completedCount + unfinishedCount;
+  const expectedCompletionRate =
+    reviewTotal === 0
+      ? 0
+      : Math.round((completedCount / reviewTotal) * 100);
+
+  const hasConsistentBestDay =
+    value.bestDay === null
+      ? bestDayCount === 0
+      : bestDayCount > 0;
+
+  if (
+    completionRate !== expectedCompletionRate ||
+    overdueCount > unfinishedCount ||
+    goalsProgressedCount > completedCount ||
+    bestDayCount > completedCount ||
+    highPriorityCompletedCount > completedCount ||
+    recurringCompletedCount > completedCount ||
+    !hasConsistentBestDay
+  ) {
+    fail(
+      'INVALID_WEEKLY_REVIEW',
+      `${label} contains inconsistent saved analytics.`
+    );
+  }
+
+  if (
+    value.bestDay !== null &&
+    (typeof value.bestDay !== 'string' ||
+      ![
+        'Monday',
+        'Tuesday',
+        'Wednesday',
+        'Thursday',
+        'Friday',
+        'Saturday',
+        'Sunday',
+      ].includes(value.bestDay))
+  ) {
+    fail('INVALID_WEEKLY_REVIEW', `${label} has an invalid strongest day.`);
+  }
+
+  if (
+    !isIsoTimestamp(value.createdAt) ||
+    !isIsoTimestamp(value.updatedAt) ||
+    !isIsoTimestamp(value.reviewedAt)
+  ) {
+    fail('INVALID_WEEKLY_REVIEW', `${label} has an invalid timestamp.`);
+  }
+}
+
+function validateWeeklyCommitment(
+  value: unknown,
+  label: string,
+  requireTaskLink: boolean = true
+): asserts value is WeeklyCommitment {
+  if (!isRecord(value)) {
+    fail('INVALID_WEEKLY_COMMITMENT', `${label} is not an object.`);
+  }
+
+  if (!isPositiveInteger(value.id) || !isMondayDateKey(value.weekStart)) {
+    fail('INVALID_WEEKLY_COMMITMENT', `${label} must use a valid Monday week start.`);
+  }
+
+  if (
+    value.cycleId !== null &&
+    !isPositiveInteger(value.cycleId)
+  ) {
+    fail('INVALID_WEEKLY_COMMITMENT', `${label} has an invalid cycle link.`);
+  }
+
+  if (
+    requireTaskLink &&
+    !Object.prototype.hasOwnProperty.call(value, 'taskId')
+  ) {
+    fail('INVALID_WEEKLY_COMMITMENT', `${label} is missing its task link.`);
+  }
+
+  if (
+    value.taskId !== undefined &&
+    value.taskId !== null &&
+    !isPositiveInteger(value.taskId)
+  ) {
+    fail('INVALID_WEEKLY_COMMITMENT', `${label} has an invalid task link.`);
+  }
+
+  if (
+    typeof value.title !== 'string' ||
+    value.title.trim().length === 0 ||
+    value.title.length > MAX_WEEKLY_COMMITMENT_TITLE_LENGTH
+  ) {
+    fail('INVALID_WEEKLY_COMMITMENT', `${label} has an invalid title.`);
+  }
+
+  if (typeof value.completed !== 'boolean') {
+    fail('INVALID_WEEKLY_COMMITMENT', `${label} has an invalid completed value.`);
+  }
+
+  if (
+    !isIsoTimestamp(value.createdAt) ||
+    !isNullableIsoTimestamp(value.completedAt) ||
+    !hasMatchingStatusTimestamp(value.completed, value.completedAt)
+  ) {
+    fail('INVALID_WEEKLY_COMMITMENT', `${label} has invalid completion timestamps.`);
+  }
+}
+
+function validateWeeklyTaskDecision(
+  value: unknown,
+  label: string
+): asserts value is WeeklyTaskDecision {
+  if (!isRecord(value)) {
+    fail('INVALID_WEEKLY_TASK_DECISION', `${label} is not an object.`);
+  }
+
+  if (
+    !isPositiveInteger(value.id) ||
+    !isMondayDateKey(value.weekStart) ||
+    !isValidDateKey(value.originalDueDate) ||
+    !isDateKeyInsideWeek(value.originalDueDate, value.weekStart)
+  ) {
+    fail(
+      'INVALID_WEEKLY_TASK_DECISION',
+      `${label} has an invalid review week or original task date.`
+    );
+  }
+
+  if (
+    value.taskId !== null &&
+    !isPositiveInteger(value.taskId)
+  ) {
+    fail('INVALID_WEEKLY_TASK_DECISION', `${label} has an invalid task link.`);
+  }
+
+  if (
+    typeof value.taskTitle !== 'string' ||
+    value.taskTitle.trim().length === 0
+  ) {
+    fail('INVALID_WEEKLY_TASK_DECISION', `${label} has an invalid task title.`);
+  }
+
+  if (
+    typeof value.action !== 'string' ||
+    !WEEKLY_TASK_DECISION_ACTIONS.includes(
+      value.action as (typeof WEEKLY_TASK_DECISION_ACTIONS)[number]
+    )
+  ) {
+    fail('INVALID_WEEKLY_TASK_DECISION', `${label} has an invalid action.`);
+  }
+
+  if (!isValidNullableDateKey(value.resolvedDueDate)) {
+    fail('INVALID_WEEKLY_TASK_DECISION', `${label} has an invalid resolved date.`);
+  }
+
+  const actionMovesTask =
+    value.action === 'nextWeek' || value.action === 'reschedule';
+
+  if (actionMovesTask !== (value.resolvedDueDate !== null)) {
+    fail(
+      'INVALID_WEEKLY_TASK_DECISION',
+      `${label} has a resolved date that does not match its action.`
+    );
+  }
+
+  if (value.action === 'nextWeek' && value.resolvedDueDate !== null) {
+    const originalDueDate = parseLocalDateKey(value.originalDueDate);
+    const expectedNextWeekDate = originalDueDate
+      ? getLocalDateKey(addDays(originalDueDate, 7))
+      : null;
+
+    if (value.resolvedDueDate !== expectedNextWeekDate) {
+      fail(
+        'INVALID_WEEKLY_TASK_DECISION',
+        `${label} does not preserve the task weekday when moving it to next week.`
+      );
+    }
+  }
+
+  if (value.action === 'delete' && value.taskId !== null) {
+    fail(
+      'INVALID_WEEKLY_TASK_DECISION',
+      `${label} keeps a live task link after recording deletion.`
+    );
+  }
+
+  if (
+    value.recurringRuleId !== null &&
+    !isPositiveInteger(value.recurringRuleId)
+  ) {
+    fail('INVALID_WEEKLY_TASK_DECISION', `${label} has an invalid recurring rule link.`);
+  }
+
+  if (!isValidNullableDateKey(value.recurrenceOccurrenceDate)) {
+    fail('INVALID_WEEKLY_TASK_DECISION', `${label} has an invalid occurrence date.`);
+  }
+
+  if (
+    (value.recurringRuleId === null) !==
+    (value.recurrenceOccurrenceDate === null)
+  ) {
+    fail('INVALID_WEEKLY_TASK_DECISION', `${label} has an incomplete recurring identity.`);
+  }
+
+  if (!isIsoTimestamp(value.decidedAt)) {
+    fail('INVALID_WEEKLY_TASK_DECISION', `${label} has an invalid decision timestamp.`);
+  }
+}
+
 function validateBrainDump(
   value: unknown,
   label: string
@@ -1147,6 +1503,9 @@ function validateRelationships(
       (rule) => rule.id
     )
   );
+  const taskIds = new Set(
+    backup.data.tasks.map((task) => task.id)
+  );
 
   const taskWithMissingGoal =
     backup.data.tasks.find(
@@ -1230,6 +1589,62 @@ function validateRelationships(
       `The skipped occurrence on ${exceptionWithMissingRule.occurrenceDate} is linked to a recurring schedule that is not included in the backup.`
     );
   }
+
+  const commitmentWithMissingTask =
+    backup.data.weeklyCommitments.find(
+      (commitment) =>
+        commitment.taskId !== null && !taskIds.has(commitment.taskId)
+    );
+
+  if (commitmentWithMissingTask) {
+    fail(
+      'MISSING_TASK',
+      `The weekly commitment "${commitmentWithMissingTask.title}" is linked to a task that is not included in the backup.`
+    );
+  }
+
+  const decisionWithMissingTask =
+    backup.data.weeklyTaskDecisions.find(
+      (decision) =>
+        decision.taskId !== null && !taskIds.has(decision.taskId)
+    );
+
+  if (decisionWithMissingTask) {
+    fail(
+      'MISSING_TASK',
+      `The weekly decision for "${decisionWithMissingTask.taskTitle}" is linked to a task that is not included in the backup.`
+    );
+  }
+
+  const cycleIds = new Set(
+    backup.data.planningCycles.map((cycle) => cycle.id)
+  );
+
+  const reviewWithMissingCycle = backup.data.weeklyReviews.find(
+    (review) =>
+      review.cycleId !== null && !cycleIds.has(review.cycleId)
+  );
+
+  if (reviewWithMissingCycle) {
+    fail(
+      'MISSING_CYCLE',
+      `The weekly review for ${reviewWithMissingCycle.weekStart} is linked to a planning cycle that is not included in the backup.`
+    );
+  }
+
+  const commitmentWithMissingCycle =
+    backup.data.weeklyCommitments.find(
+      (commitment) =>
+        commitment.cycleId !== null &&
+        !cycleIds.has(commitment.cycleId)
+    );
+
+  if (commitmentWithMissingCycle) {
+    fail(
+      'MISSING_CYCLE',
+      `The weekly commitment "${commitmentWithMissingCycle.title}" is linked to a planning cycle that is not included in the backup.`
+    );
+  }
 }
 
 function validateData(
@@ -1239,7 +1654,9 @@ function validateData(
   requireGoalReward: boolean = true,
   requireGoalPlanningDetails: boolean = true,
   requireGoalReviewDetails: boolean = true,
-  requireGoalMilestones: boolean = true
+  requireGoalMilestones: boolean = true,
+  requireWeeklyReviewData: boolean = true,
+  requireWeeklyCommitmentTaskLinks: boolean = true
 ): WeekFlowBackup['data'] {
   const requiredArrays = [
     'tasks',
@@ -1288,6 +1705,20 @@ function validateData(
     );
   }
 
+  if (
+    requireWeeklyReviewData &&
+    (
+      !Array.isArray(value.weeklyReviews) ||
+      !Array.isArray(value.weeklyCommitments) ||
+      !Array.isArray(value.weeklyTaskDecisions)
+    )
+  ) {
+    fail(
+      'MISSING_SECTION',
+      'The backup is missing weekly review planning data.'
+    );
+  }
+
   const tasks = value.tasks as unknown[];
   const goals = value.goals as unknown[];
   const goalMilestones = Array.isArray(value.goalMilestones)
@@ -1302,6 +1733,15 @@ function validateData(
     value.recurringExceptions as unknown[];
   const planningCycles = Array.isArray(value.planningCycles)
     ? (value.planningCycles as unknown[])
+    : [];
+  const weeklyReviews = Array.isArray(value.weeklyReviews)
+    ? (value.weeklyReviews as unknown[])
+    : [];
+  const weeklyCommitments = Array.isArray(value.weeklyCommitments)
+    ? (value.weeklyCommitments as unknown[])
+    : [];
+  const weeklyTaskDecisions = Array.isArray(value.weeklyTaskDecisions)
+    ? (value.weeklyTaskDecisions as unknown[])
     : [];
 
   tasks.forEach((task, index) =>
@@ -1360,6 +1800,28 @@ function validateData(
     )
   );
 
+  weeklyReviews.forEach((review, index) =>
+    validateWeeklyReview(
+      review,
+      `Weekly review ${index + 1}`
+    )
+  );
+
+  weeklyCommitments.forEach((commitment, index) =>
+    validateWeeklyCommitment(
+      commitment,
+      `Weekly commitment ${index + 1}`,
+      requireWeeklyCommitmentTaskLinks
+    )
+  );
+
+  weeklyTaskDecisions.forEach((decision, index) =>
+    validateWeeklyTaskDecision(
+      decision,
+      `Weekly task decision ${index + 1}`
+    )
+  );
+
   return {
     tasks: tasks as Task[],
     goals: goals as StoredGoal[],
@@ -1370,6 +1832,10 @@ function validateData(
     recurringExceptions:
       recurringExceptions as RecurringOccurrenceException[],
     planningCycles: planningCycles as PlanningCycle[],
+    weeklyReviews: weeklyReviews as StoredWeeklyReview[],
+    weeklyCommitments: weeklyCommitments as WeeklyCommitment[],
+    weeklyTaskDecisions:
+      weeklyTaskDecisions as WeeklyTaskDecision[],
   };
 }
 
@@ -1438,6 +1904,16 @@ function normalizeLegacyGoals(
   }));
 }
 
+function normalizeLegacyWeeklyCommitments(
+  commitments: LegacyWeeklyCommitmentV9[]
+): WeeklyCommitment[] {
+  return commitments.map((commitment) => ({
+    ...commitment,
+    taskId:
+      typeof commitment.taskId === 'number' ? commitment.taskId : null,
+  }));
+}
+
 function normalizeLegacyBackupV1(
   backup: LegacyWeekFlowBackupV1
 ): WeekFlowBackup {
@@ -1462,6 +1938,9 @@ function normalizeLegacyBackupV1(
       recurringRules: [],
       recurringExceptions: [],
       planningCycles: [],
+      weeklyReviews: [],
+      weeklyCommitments: [],
+      weeklyTaskDecisions: [],
     },
   };
 }
@@ -1482,6 +1961,9 @@ function normalizeLegacyBackupV2(
       goalMilestones: [],
       taskTemplates: [],
       planningCycles: [],
+      weeklyReviews: [],
+      weeklyCommitments: [],
+      weeklyTaskDecisions: [],
     },
   };
 }
@@ -1498,6 +1980,9 @@ function normalizeLegacyBackupV3(
       goalMilestones: [],
       taskTemplates: [],
       planningCycles: [],
+      weeklyReviews: [],
+      weeklyCommitments: [],
+      weeklyTaskDecisions: [],
     },
   };
 }
@@ -1513,6 +1998,9 @@ function normalizeLegacyBackupV4(
       goals: normalizeLegacyGoals(backup.data.goals),
       goalMilestones: [],
       planningCycles: [],
+      weeklyReviews: [],
+      weeklyCommitments: [],
+      weeklyTaskDecisions: [],
     },
   };
 }
@@ -1527,6 +2015,9 @@ function normalizeLegacyBackupV5(
       ...backup.data,
       goals: normalizeLegacyGoals(backup.data.goals),
       goalMilestones: [],
+      weeklyReviews: [],
+      weeklyCommitments: [],
+      weeklyTaskDecisions: [],
     },
   };
 }
@@ -1541,6 +2032,9 @@ function normalizeLegacyBackupV6(
       ...backup.data,
       goals: normalizeLegacyGoals(backup.data.goals),
       goalMilestones: [],
+      weeklyReviews: [],
+      weeklyCommitments: [],
+      weeklyTaskDecisions: [],
     },
   };
 }
@@ -1555,6 +2049,41 @@ function normalizeLegacyBackupV7(
       ...backup.data,
       goals: normalizeLegacyGoals(backup.data.goals),
       goalMilestones: backup.data.goalMilestones ?? [],
+      weeklyReviews: [],
+      weeklyCommitments: [],
+      weeklyTaskDecisions: [],
+    },
+  };
+}
+
+function normalizeLegacyBackupV8(
+  backup: LegacyWeekFlowBackupV8
+): WeekFlowBackup {
+  return {
+    ...backup,
+    version: BACKUP_VERSION,
+    data: {
+      ...backup.data,
+      goals: normalizeLegacyGoals(backup.data.goals),
+      goalMilestones: backup.data.goalMilestones ?? [],
+      weeklyReviews: [],
+      weeklyCommitments: [],
+      weeklyTaskDecisions: [],
+    },
+  };
+}
+
+function normalizeLegacyBackupV9(
+  backup: LegacyWeekFlowBackupV9
+): WeekFlowBackup {
+  return {
+    ...backup,
+    version: BACKUP_VERSION,
+    data: {
+      ...backup.data,
+      weeklyCommitments: normalizeLegacyWeeklyCommitments(
+        backup.data.weeklyCommitments
+      ),
     },
   };
 }
@@ -1578,6 +2107,51 @@ function validateNormalizedBackup(
     backup.data.planningCycles,
     'planning cycle'
   );
+  assertUniqueIds(backup.data.weeklyReviews, 'weekly review');
+  assertUniqueIds(
+    backup.data.weeklyCommitments,
+    'weekly commitment'
+  );
+  assertUniqueIds(
+    backup.data.weeklyTaskDecisions,
+    'weekly task decision'
+  );
+
+  const weeklyReviewWeeks = new Set<string>();
+  for (const review of backup.data.weeklyReviews) {
+    if (weeklyReviewWeeks.has(review.weekStart)) {
+      fail(
+        'DUPLICATE_WEEKLY_REVIEW',
+        `The backup contains more than one weekly review for ${review.weekStart}.`
+      );
+    }
+    weeklyReviewWeeks.add(review.weekStart);
+  }
+
+  const linkedCommitmentKeys = backup.data.weeklyCommitments
+    .filter((commitment) => commitment.taskId !== null)
+    .map((commitment) => `${commitment.weekStart}:${commitment.taskId}`);
+
+  if (new Set(linkedCommitmentKeys).size !== linkedCommitmentKeys.length) {
+    fail(
+      'DUPLICATE_WEEKLY_COMMITMENTS',
+      'The backup links the same task to the same week more than once.'
+    );
+  }
+
+  const weeklyDecisionKeys = backup.data.weeklyTaskDecisions
+    .filter((decision) => decision.taskId !== null)
+    .map(
+      (decision) =>
+        `${decision.weekStart}:${decision.taskId}:${decision.originalDueDate}`
+    );
+
+  if (new Set(weeklyDecisionKeys).size !== weeklyDecisionKeys.length) {
+    fail(
+      'DUPLICATE_WEEKLY_TASK_DECISIONS',
+      'The backup contains duplicate unfinished-task decisions.'
+    );
+  }
 
   if (
     backup.data.planningCycles.filter(
@@ -1613,6 +2187,9 @@ export function getBackupCounts(
     recurringExceptions:
       backup.data.recurringExceptions.length,
     planningCycles: backup.data.planningCycles.length,
+    weeklyReviews: backup.data.weeklyReviews.length,
+    weeklyCommitments: backup.data.weeklyCommitments.length,
+    weeklyTaskDecisions: backup.data.weeklyTaskDecisions.length,
   };
 }
 
@@ -1701,7 +2278,7 @@ export function inspectWeekFlowBackup(
       value as unknown as LegacyWeekFlowBackupV1
     );
   } else if (sourceVersion === 2) {
-    const data = validateData(value.data, false, false, false, false, false, false);
+    const data = validateData(value.data, false, false, false, false, false, false, false);
 
     backup = normalizeLegacyBackupV2({
       format: BACKUP_FORMAT,
@@ -1711,7 +2288,7 @@ export function inspectWeekFlowBackup(
     });
   } else if (sourceVersion === 3) {
     validateMetadata(value.metadata);
-    const data = validateData(value.data, false, false, false, false, false, false);
+    const data = validateData(value.data, false, false, false, false, false, false, false);
 
     backup = normalizeLegacyBackupV3({
       format: BACKUP_FORMAT,
@@ -1722,7 +2299,7 @@ export function inspectWeekFlowBackup(
     });
   } else if (sourceVersion === 4) {
     validateMetadata(value.metadata);
-    const data = validateData(value.data, true, false, false, false, false, false);
+    const data = validateData(value.data, true, false, false, false, false, false, false);
 
     backup = normalizeLegacyBackupV4({
       format: BACKUP_FORMAT,
@@ -1733,7 +2310,7 @@ export function inspectWeekFlowBackup(
     });
   } else if (sourceVersion === 5) {
     validateMetadata(value.metadata);
-    const data = validateData(value.data, true, true, false, false, false, false);
+    const data = validateData(value.data, true, true, false, false, false, false, false);
 
     backup = normalizeLegacyBackupV5({
       format: BACKUP_FORMAT,
@@ -1744,7 +2321,7 @@ export function inspectWeekFlowBackup(
     });
   } else if (sourceVersion === 6) {
     validateMetadata(value.metadata);
-    const data = validateData(value.data, true, true, true, false, false, false);
+    const data = validateData(value.data, true, true, true, false, false, false, false);
 
     backup = normalizeLegacyBackupV6({
       format: BACKUP_FORMAT,
@@ -1755,11 +2332,52 @@ export function inspectWeekFlowBackup(
     });
   } else if (sourceVersion === 7) {
     validateMetadata(value.metadata);
-    const data = validateData(value.data, true, true, true, true, false, true);
+    const data = validateData(value.data, true, true, true, true, false, true, false);
 
     backup = normalizeLegacyBackupV7({
       format: BACKUP_FORMAT,
       version: 7,
+      exportedAt: value.exportedAt,
+      metadata: value.metadata,
+      data,
+    });
+  } else if (sourceVersion === 8) {
+    validateMetadata(value.metadata);
+    const data = validateData(
+      value.data,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false
+    );
+
+    backup = normalizeLegacyBackupV8({
+      format: BACKUP_FORMAT,
+      version: 8,
+      exportedAt: value.exportedAt,
+      metadata: value.metadata,
+      data,
+    });
+  } else if (sourceVersion === 9) {
+    validateMetadata(value.metadata);
+    const data = validateData(
+      value.data,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false
+    );
+
+    backup = normalizeLegacyBackupV9({
+      format: BACKUP_FORMAT,
+      version: 9,
       exportedAt: value.exportedAt,
       metadata: value.metadata,
       data,

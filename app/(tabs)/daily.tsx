@@ -7,6 +7,7 @@ import {
 } from 'react-native';
 
 import { ActiveTaskFilters } from '@/components/ActiveTaskFilters';
+import { TaskCardActionsMenu } from '@/components/TaskCardActionsMenu';
 import { TaskDatePicker } from '@/components/TaskDatePicker';
 import { Text, View } from '@/components/Themed';
 import { useBrainDumps } from '@/context/BrainDumpContext';
@@ -226,52 +227,19 @@ export default function DailyScreen() {
                         <Text style={styles.taskNotes}>{task.notes}</Text>
                       ) : null}
                     </View>
-
-                    <View style={styles.taskActions}>
-                      <Pressable
-                        style={styles.todayButton}
-                        onPress={() =>
-                          scheduleTask(task.id, todayDateKey)
-                        }
-                      >
-                        <Text style={styles.actionButtonText}>
-                          Move to Today
-                        </Text>
-                      </Pressable>
-
-                      <Pressable
-                        style={styles.calendarButton}
-                        onPress={() => setDatePickerTask(task)}
-                      >
-                        <Text style={styles.actionButtonText}>
-                          Choose Date
-                        </Text>
-                      </Pressable>
-
-                      <Pressable
-                        style={styles.inboxButton}
-                        onPress={() => moveTaskToInbox(task.id)}
-                      >
-                        <Text style={styles.actionButtonText}>
-                          Back to Inbox
-                        </Text>
-                      </Pressable>
-
-                      <Pressable
-                        style={styles.doneButton}
-                        onPress={() => completeTask(task.id)}
-                      >
-                        <Text style={styles.actionButtonText}>Done</Text>
-                      </Pressable>
-
-                      <Pressable
-                        style={styles.deleteButton}
-                        onPress={() => deleteTask(task.id)}
-                      >
-                        <Text style={styles.actionButtonText}>Delete</Text>
-                      </Pressable>
-                    </View>
                   </View>
+
+                  <TaskCardActionsMenu
+                    task={task}
+                    showMoveToToday
+                    onMoveToToday={() =>
+                      scheduleTask(task.id, todayDateKey)
+                    }
+                    onReschedule={() => setDatePickerTask(task)}
+                    onMoveToInbox={() => moveTaskToInbox(task.id)}
+                    onComplete={() => completeTask(task.id)}
+                    onDelete={() => deleteTask(task.id)}
+                  />
 
                 </View>
               );
@@ -521,39 +489,13 @@ export default function DailyScreen() {
                     ) : null}
                   </View>
 
-                  <View style={styles.taskActions}>
-                    <Pressable
-                      style={styles.calendarButton}
-                      onPress={() => setDatePickerTask(task)}
-                    >
-                      <Text style={styles.actionButtonText}>
-                        Reschedule
-                      </Text>
-                    </Pressable>
-
-                    <Pressable
-                      style={styles.inboxButton}
-                      onPress={() => moveTaskToInbox(task.id)}
-                    >
-                      <Text style={styles.actionButtonText}>
-                        Back to Inbox
-                      </Text>
-                    </Pressable>
-
-                    <Pressable
-                      style={styles.doneButton}
-                      onPress={() => completeTask(task.id)}
-                    >
-                      <Text style={styles.actionButtonText}>Done</Text>
-                    </Pressable>
-
-                    <Pressable
-                      style={styles.deleteButton}
-                      onPress={() => deleteTask(task.id)}
-                    >
-                      <Text style={styles.actionButtonText}>Delete</Text>
-                    </Pressable>
-                  </View>
+                  <TaskCardActionsMenu
+                    task={task}
+                    onReschedule={() => setDatePickerTask(task)}
+                    onMoveToInbox={() => moveTaskToInbox(task.id)}
+                    onComplete={() => completeTask(task.id)}
+                    onDelete={() => deleteTask(task.id)}
+                  />
                 </View>
               );
             })
@@ -875,9 +817,6 @@ const styles = StyleSheet.create({
   },
   taskList: { gap: 12 },
   taskCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
     padding: 16,
     borderRadius: 14,
     borderWidth: 1,
@@ -894,42 +833,6 @@ const styles = StyleSheet.create({
     color: '#374151',
     lineHeight: 20,
   },
-  taskActions: {
-    gap: 8,
-    alignItems: 'flex-end',
-    backgroundColor: 'transparent',
-  },
-  todayButton: {
-    backgroundColor: '#f97316',
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: 10,
-  },
-  calendarButton: {
-    backgroundColor: '#7c3aed',
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: 10,
-  },
-  inboxButton: {
-    backgroundColor: '#2563eb',
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: 10,
-  },
-  doneButton: {
-    backgroundColor: '#16a34a',
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: 10,
-  },
-  deleteButton: {
-    backgroundColor: '#dc2626',
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: 10,
-  },
-  actionButtonText: { color: 'white', fontWeight: '700' },
   brainDumpList: { gap: 12 },
   brainDumpCard: {
     flexDirection: 'row',

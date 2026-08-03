@@ -26,6 +26,11 @@ import {
 } from './recurringStorage';
 import { getTasks } from './taskStorage';
 import { getTaskTemplates } from './taskTemplateStorage';
+import {
+  getWeeklyCommitments,
+  getWeeklyReviews,
+  getWeeklyTaskDecisions,
+} from './weeklyReviewStorage';
 
 export type {
   BackupCounts,
@@ -73,6 +78,9 @@ async function buildWeekFlowBackup(): Promise<WeekFlowBackup> {
     recurringRules,
     recurringExceptions,
     planningCycles,
+    weeklyReviews,
+    weeklyCommitments,
+    weeklyTaskDecisions,
   ] = await Promise.all([
     getTasks(),
     getGoals(),
@@ -82,6 +90,9 @@ async function buildWeekFlowBackup(): Promise<WeekFlowBackup> {
     getRecurringRules(),
     getRecurringOccurrenceExceptions(),
     getPlanningCycles(),
+    getWeeklyReviews(),
+    getWeeklyCommitments(),
+    getWeeklyTaskDecisions(),
   ]);
 
   return {
@@ -101,6 +112,9 @@ async function buildWeekFlowBackup(): Promise<WeekFlowBackup> {
       recurringRules,
       recurringExceptions,
       planningCycles,
+      weeklyReviews,
+      weeklyCommitments,
+      weeklyTaskDecisions,
     },
   };
 }
@@ -306,6 +320,9 @@ async function readDatabaseCounts(
     recurringRules,
     recurringExceptions,
     planningCycles,
+    weeklyReviews,
+    weeklyCommitments,
+    weeklyTaskDecisions,
   ] = await Promise.all([
     db.getFirstAsync<CountRow>(
       'SELECT COUNT(*) AS count FROM tasks;'
@@ -331,6 +348,15 @@ async function readDatabaseCounts(
     db.getFirstAsync<CountRow>(
       'SELECT COUNT(*) AS count FROM planning_cycles;'
     ),
+    db.getFirstAsync<CountRow>(
+      'SELECT COUNT(*) AS count FROM weekly_reviews;'
+    ),
+    db.getFirstAsync<CountRow>(
+      'SELECT COUNT(*) AS count FROM weekly_commitments;'
+    ),
+    db.getFirstAsync<CountRow>(
+      'SELECT COUNT(*) AS count FROM weekly_task_decisions;'
+    ),
   ]);
 
   return {
@@ -344,6 +370,9 @@ async function readDatabaseCounts(
     recurringExceptions:
       recurringExceptions?.count ?? -1,
     planningCycles: planningCycles?.count ?? -1,
+    weeklyReviews: weeklyReviews?.count ?? -1,
+    weeklyCommitments: weeklyCommitments?.count ?? -1,
+    weeklyTaskDecisions: weeklyTaskDecisions?.count ?? -1,
   };
 }
 
@@ -360,7 +389,10 @@ function countsMatch(
     expected.recurringRules === actual.recurringRules &&
     expected.recurringExceptions ===
       actual.recurringExceptions &&
-    expected.planningCycles === actual.planningCycles
+    expected.planningCycles === actual.planningCycles &&
+    expected.weeklyReviews === actual.weeklyReviews &&
+    expected.weeklyCommitments === actual.weeklyCommitments &&
+    expected.weeklyTaskDecisions === actual.weeklyTaskDecisions
   );
 }
 
@@ -395,6 +427,9 @@ export async function replaceWeekFlowData(
         DELETE FROM goal_milestones;
         DELETE FROM goals;
         DELETE FROM brain_dumps;
+        DELETE FROM weekly_task_decisions;
+        DELETE FROM weekly_commitments;
+        DELETE FROM weekly_reviews;
         DELETE FROM planning_cycles;
       `);
 
@@ -665,6 +700,120 @@ export async function replaceWeekFlowData(
               : 0,
             brainDump.createdAt,
             brainDump.archivedAt,
+          ]
+        );
+      }
+
+      for (const review of validatedBackup.data.weeklyReviews) {
+        await db.runAsync(
+          `
+          INSERT INTO weekly_reviews (
+            id,
+            week_start,
+            cycle_id,
+            what_went_well,
+            what_caused_problems,
+            what_learned,
+            what_change_next_week,
+            next_week_focus,
+            snapshot_completed_count,
+            snapshot_unfinished_count,
+            snapshot_overdue_count,
+            snapshot_completion_rate,
+            snapshot_goals_progressed_count,
+            snapshot_best_day,
+            snapshot_best_day_count,
+            snapshot_archived_brain_dump_count,
+            snapshot_high_priority_completed_count,
+            snapshot_recurring_completed_count,
+            created_at,
+            updated_at,
+            reviewed_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+          `,
+          [
+            review.id,
+            review.weekStart,
+            review.cycleId,
+            review.whatWentWell,
+            review.whatCausedProblems,
+            review.whatLearned,
+            review.whatChangeNextWeek,
+            review.nextWeekFocus,
+            review.completedCount,
+            review.unfinishedCount,
+            review.overdueCount,
+            review.completionRate,
+            review.goalsProgressedCount,
+            review.bestDay,
+            review.bestDayCount,
+            review.archivedBrainDumpCount,
+            review.highPriorityCompletedCount,
+            review.recurringCompletedCount,
+            review.createdAt,
+            review.updatedAt,
+            review.reviewedAt,
+          ]
+        );
+      }
+
+      for (const commitment of validatedBackup.data.weeklyCommitments) {
+        await db.runAsync(
+          `
+          INSERT INTO weekly_commitments (
+            id,
+            week_start,
+            cycle_id,
+            task_id,
+            title,
+            completed,
+            created_at,
+            completed_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+          `,
+          [
+            commitment.id,
+            commitment.weekStart,
+            commitment.cycleId,
+            commitment.taskId,
+            commitment.title,
+            commitment.completed ? 1 : 0,
+            commitment.createdAt,
+            commitment.completedAt,
+          ]
+        );
+      }
+
+      for (const decision of validatedBackup.data.weeklyTaskDecisions) {
+        await db.runAsync(
+          `
+          INSERT INTO weekly_task_decisions (
+            id,
+            week_start,
+            task_id,
+            task_title,
+            original_due_date,
+            action,
+            resolved_due_date,
+            recurring_rule_id,
+            recurrence_occurrence_date,
+            decided_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+          `,
+          [
+            decision.id,
+            decision.weekStart,
+            decision.taskId,
+            decision.taskTitle,
+            decision.originalDueDate,
+            decision.action,
+            decision.resolvedDueDate,
+            decision.recurringRuleId,
+            decision.recurrenceOccurrenceDate,
+            decision.decidedAt,
           ]
         );
       }

@@ -21,6 +21,9 @@ import {
   makeRecurringRule,
   makeTask,
   makeTaskTemplate,
+  makeWeeklyCommitment,
+  makeWeeklyReview,
+  makeWeeklyTaskDecision,
   resetFactoryIds,
 } from './testFactories';
 
@@ -82,6 +85,29 @@ function makeValidBackup(): WeekFlowBackup {
         },
       ],
       planningCycles: [makePlanningCycle({ id: 40 })],
+      weeklyReviews: [
+        makeWeeklyReview({
+          id: 50,
+          weekStart: '2026-07-06',
+          cycleId: 40,
+        }),
+      ],
+      weeklyCommitments: [
+        makeWeeklyCommitment({
+          id: 60,
+          weekStart: '2026-07-06',
+          cycleId: 40,
+        }),
+      ],
+      weeklyTaskDecisions: [
+        makeWeeklyTaskDecision({
+          id: 70,
+          weekStart: '2026-07-06',
+          taskId: 100,
+          originalDueDate: '2026-07-08',
+          resolvedDueDate: '2026-07-15',
+        }),
+      ],
     },
   };
 }
@@ -109,8 +135,70 @@ describe('backup validation', () => {
         recurringRules: 1,
         recurringExceptions: 1,
         planningCycles: 1,
+        weeklyReviews: 1,
+        weeklyCommitments: 1,
+        weeklyTaskDecisions: 1,
       },
     });
+  });
+
+  test('rejects inconsistent weekly review snapshots', () => {
+    const backup = makeValidBackup();
+    backup.data.weeklyReviews[0].completionRate = 99;
+
+    expect(() => parseWeekFlowBackup(backup)).toThrow(
+      'inconsistent saved analytics'
+    );
+  });
+
+  test('rejects unfinished-task decisions whose action and date disagree', () => {
+    const backup = makeValidBackup();
+    backup.data.weeklyTaskDecisions[0] = makeWeeklyTaskDecision({
+      id: 70,
+      weekStart: '2026-07-06',
+      taskId: 100,
+      originalDueDate: '2026-07-08',
+      action: 'nextWeek',
+      resolvedDueDate: '2026-07-16',
+    });
+
+    expect(() => parseWeekFlowBackup(backup)).toThrow(
+      'does not preserve the task weekday'
+    );
+
+    backup.data.weeklyTaskDecisions[0] = makeWeeklyTaskDecision({
+      id: 70,
+      weekStart: '2026-07-06',
+      taskId: 100,
+      originalDueDate: '2026-07-08',
+      action: 'keep',
+      resolvedDueDate: '2026-07-08',
+    });
+
+    expect(() => parseWeekFlowBackup(backup)).toThrow(
+      'resolved date that does not match its action'
+    );
+  });
+
+  test('rejects duplicate unfinished-task decision identities', () => {
+    const backup = makeValidBackup();
+    backup.data.weeklyTaskDecisions.push({
+      ...backup.data.weeklyTaskDecisions[0],
+      id: 71,
+    });
+
+    expect(() => parseWeekFlowBackup(backup)).toThrow(
+      'duplicate unfinished-task decisions'
+    );
+  });
+
+  test('rejects a weekly decision linked to a missing task', () => {
+    const backup = makeValidBackup();
+    backup.data.weeklyTaskDecisions[0].taskId = 999;
+
+    expect(() => parseWeekFlowBackup(backup)).toThrow(
+      'linked to a task that is not included'
+    );
   });
 
   test('accepts every-two-weeks recurring rules in current backups', () => {
@@ -163,6 +251,9 @@ describe('backup validation', () => {
     expect(result.backup.data.taskTemplates).toEqual([]);
     expect(result.backup.data.planningCycles).toEqual([]);
     expect(result.backup.data.goalMilestones).toEqual([]);
+    expect(result.backup.data.weeklyReviews).toEqual([]);
+    expect(result.backup.data.weeklyCommitments).toEqual([]);
+    expect(result.backup.data.weeklyTaskDecisions).toEqual([]);
     expect(
       result.backup.data.tasks[0].recurringRuleId
     ).toBeNull();
@@ -402,6 +493,73 @@ describe('backup validation', () => {
     expect(() => parseWeekFlowBackup(backup)).toThrow(
       'linked to a goal that is not included'
     );
+  });
+
+  test('accepts linked weekly commitments and rejects broken or duplicate task links', () => {
+    const validBackup = makeValidBackup();
+    validBackup.data.weeklyCommitments[0].taskId = 100;
+
+    expect(parseWeekFlowBackup(validBackup).data.weeklyCommitments[0]).toMatchObject({
+      taskId: 100,
+    });
+
+    const missingTaskBackup = makeValidBackup();
+    missingTaskBackup.data.weeklyCommitments[0].taskId = 999;
+
+    expect(() => parseWeekFlowBackup(missingTaskBackup)).toThrow(
+      'linked to a task that is not included'
+    );
+
+    const duplicateBackup = makeValidBackup();
+    duplicateBackup.data.weeklyCommitments[0].taskId = 100;
+    duplicateBackup.data.weeklyCommitments.push({
+      ...duplicateBackup.data.weeklyCommitments[0],
+      id: 61,
+    });
+
+    expect(() => parseWeekFlowBackup(duplicateBackup)).toThrow(
+      'same task to the same week more than once'
+    );
+  });
+
+  test('upgrades a valid version 9 backup with manual commitments', () => {
+    const current = makeValidBackup();
+    const legacyCommitments = current.data.weeklyCommitments.map(
+      ({ taskId: _taskId, ...commitment }) => commitment
+    );
+
+    const result = inspectWeekFlowBackup({
+      ...current,
+      version: 9,
+      data: {
+        ...current.data,
+        weeklyCommitments: legacyCommitments,
+      },
+    });
+
+    expect(result.preview.sourceVersion).toBe(9);
+    expect(result.backup.data.weeklyCommitments[0].taskId).toBeNull();
+  });
+
+  test('upgrades a valid version 8 backup without weekly review data', () => {
+    const current = makeValidBackup();
+    const {
+      weeklyReviews: _weeklyReviews,
+      weeklyCommitments: _weeklyCommitments,
+      weeklyTaskDecisions: _weeklyTaskDecisions,
+      ...legacyData
+    } = current.data;
+
+    const result = inspectWeekFlowBackup({
+      ...current,
+      version: 8,
+      data: legacyData,
+    });
+
+    expect(result.preview.sourceVersion).toBe(8);
+    expect(result.backup.data.weeklyReviews).toEqual([]);
+    expect(result.backup.data.weeklyCommitments).toEqual([]);
+    expect(result.backup.data.weeklyTaskDecisions).toEqual([]);
   });
 
   test('rejects malformed JSON text', () => {

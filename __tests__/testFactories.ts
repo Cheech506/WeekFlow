@@ -5,6 +5,11 @@ import type { StoredGoal } from '../lib/goalStorage';
 import type { RecurringRule } from '../lib/recurringStorage';
 import type { Task } from '../lib/taskStorage';
 import type { TaskTemplate } from '../lib/taskTemplateStorage';
+import type {
+  StoredWeeklyReview,
+  WeeklyCommitment,
+  WeeklyTaskDecision,
+} from '../lib/weeklyReviewStorage';
 
 let nextId = 1;
 
@@ -149,6 +154,77 @@ export function makeRecurringRule(
     weekdays: [],
     active: true,
     createdAt: new Date(2026, 5, 22, 12).toISOString(),
+    ...overrides,
+  };
+}
+
+
+
+export function makeWeeklyReview(
+  overrides: Partial<StoredWeeklyReview> = {}
+): StoredWeeklyReview {
+  const id = overrides.id ?? nextId++;
+
+  return {
+    id,
+    weekStart: '2026-06-22',
+    cycleId: null,
+    whatWentWell: null,
+    whatCausedProblems: null,
+    whatLearned: null,
+    whatChangeNextWeek: null,
+    nextWeekFocus: null,
+    completedCount: 4,
+    unfinishedCount: 1,
+    overdueCount: 1,
+    completionRate: 80,
+    goalsProgressedCount: 1,
+    bestDay: 'Wednesday',
+    bestDayCount: 2,
+    archivedBrainDumpCount: 1,
+    highPriorityCompletedCount: 1,
+    recurringCompletedCount: 1,
+    createdAt: localIso(2026, 6, 28),
+    updatedAt: localIso(2026, 6, 28),
+    reviewedAt: localIso(2026, 6, 28),
+    ...overrides,
+  };
+}
+
+export function makeWeeklyCommitment(
+  overrides: Partial<WeeklyCommitment> = {}
+): WeeklyCommitment {
+  const id = overrides.id ?? nextId++;
+
+  return {
+    id,
+    weekStart: '2026-06-22',
+    cycleId: null,
+    taskId: null,
+    title: `Weekly commitment ${id}`,
+    completed: false,
+    createdAt: localIso(2026, 6, 22),
+    completedAt: null,
+    ...overrides,
+  };
+}
+
+export function makeWeeklyTaskDecision(
+  overrides: Partial<WeeklyTaskDecision> = {}
+): WeeklyTaskDecision {
+  const id = overrides.id ?? nextId++;
+
+  return {
+    id,
+    weekStart: '2026-06-22',
+    taskId: 1,
+    taskTitle: 'Unfinished task',
+    originalDueDate: '2026-06-24',
+    action: 'nextWeek',
+    resolvedDueDate: '2026-07-01',
+    recurringRuleId: null,
+    recurrenceOccurrenceDate: null,
+    decidedAt: localIso(2026, 6, 28),
     ...overrides,
   };
 }

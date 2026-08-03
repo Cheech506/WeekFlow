@@ -11,20 +11,25 @@ import {
 
 export type WeeklyReviewStatus = 'past' | 'current' | 'future';
 
-export type WeeklyReview = {
-  status: WeeklyReviewStatus;
-  title: string;
-  collapsedSummary: string;
-  summaryLines: string[];
+export type WeeklyReviewSnapshot = {
   completedCount: number;
   unfinishedCount: number;
   overdueCount: number;
   completionRate: number;
   goalsProgressedCount: number;
-  scheduledGoalCount: number;
   bestDay: string | null;
   bestDayCount: number;
   archivedBrainDumpCount: number;
+  highPriorityCompletedCount: number;
+  recurringCompletedCount: number;
+};
+
+export type WeeklyReview = WeeklyReviewSnapshot & {
+  status: WeeklyReviewStatus;
+  title: string;
+  collapsedSummary: string;
+  summaryLines: string[];
+  scheduledGoalCount: number;
 };
 
 const WEEKDAY_NAMES = [
@@ -73,9 +78,132 @@ function pluralize(count: number, singular: string, plural?: string) {
   return `${count} ${count === 1 ? singular : plural ?? `${singular}s`}`;
 }
 
+function buildPastOrCurrentSummary(
+  status: 'past' | 'current',
+  snapshot: WeeklyReviewSnapshot
+) {
+  const strongestDayLine =
+    snapshot.bestDay && snapshot.bestDayCount > 0
+      ? `${snapshot.bestDay} ${
+          status === 'past' ? 'was' : 'is'
+        } your strongest day with ${pluralize(
+          snapshot.bestDayCount,
+          'completed task'
+        )}.`
+      : status === 'past'
+        ? 'No tasks were completed during this week.'
+        : 'No tasks have been completed yet this week.';
+
+  const unfinishedLine =
+    snapshot.unfinishedCount === 0
+      ? status === 'past'
+        ? 'No scheduled tasks from this week remain unfinished.'
+        : 'No scheduled tasks currently remain this week.'
+      : snapshot.overdueCount > 0
+        ? `${pluralize(
+            snapshot.unfinishedCount,
+            'scheduled task'
+          )} remain, including ${pluralize(
+            snapshot.overdueCount,
+            'overdue task'
+          )}.`
+        : `${pluralize(
+            snapshot.unfinishedCount,
+            'scheduled task'
+          )} still remain this week.`;
+
+  const summaryLines = [
+    `You ${
+      status === 'past' ? 'completed' : 'have completed'
+    } ${pluralize(snapshot.completedCount, 'task')} this week.`,
+    strongestDayLine,
+    snapshot.goalsProgressedCount > 0
+      ? `You made progress on ${pluralize(
+          snapshot.goalsProgressedCount,
+          'goal'
+        )}.`
+      : 'No completed tasks were linked to a goal this week.',
+    unfinishedLine,
+  ];
+
+  if (snapshot.highPriorityCompletedCount > 0) {
+    summaryLines.push(
+      `${pluralize(
+        snapshot.highPriorityCompletedCount,
+        'high-priority task'
+      )} were completed.`
+    );
+  }
+
+  if (snapshot.recurringCompletedCount > 0) {
+    summaryLines.push(
+      `${pluralize(
+        snapshot.recurringCompletedCount,
+        'recurring task'
+      )} were completed.`
+    );
+  }
+
+  if (snapshot.archivedBrainDumpCount > 0) {
+    summaryLines.push(
+      `You also archived ${pluralize(
+        snapshot.archivedBrainDumpCount,
+        'brain dump'
+      )}.`
+    );
+  }
+
+  return summaryLines;
+}
+
+/**
+ * Captures the calculated fields that should remain historically stable after
+ * a guided weekly review is first saved.
+ */
+export function createWeeklyReviewSnapshot(
+  review: WeeklyReview
+): WeeklyReviewSnapshot {
+  return {
+    completedCount: review.completedCount,
+    unfinishedCount: review.unfinishedCount,
+    overdueCount: review.overdueCount,
+    completionRate: review.completionRate,
+    goalsProgressedCount: review.goalsProgressedCount,
+    bestDay: review.bestDay,
+    bestDayCount: review.bestDayCount,
+    archivedBrainDumpCount: review.archivedBrainDumpCount,
+    highPriorityCompletedCount: review.highPriorityCompletedCount,
+    recurringCompletedCount: review.recurringCompletedCount,
+  };
+}
+
+/**
+ * Rebuilds a past/current review from its saved snapshot. Written reflections
+ * can be edited later, but subsequent task changes must not rewrite the numbers
+ * that were recorded when the review was completed.
+ */
+export function applyWeeklyReviewSnapshot(
+  review: WeeklyReview,
+  snapshot: WeeklyReviewSnapshot
+): WeeklyReview {
+  if (review.status === 'future') {
+    return review;
+  }
+
+  return {
+    ...review,
+    ...snapshot,
+    title: 'Saved Weekly Review',
+    collapsedSummary: `${pluralize(
+      snapshot.completedCount,
+      'task'
+    )} completed • ${snapshot.completionRate}%`,
+    summaryLines: buildPastOrCurrentSummary(review.status, snapshot),
+  };
+}
+
 /**
  * Builds the summary for whichever Monday-through-Sunday week is selected.
- *
  * Completion activity is based on completedAt timestamps, while unfinished
  * work is based on tasks whose due dates belong to the selected week.
  */
@@ -114,11 +242,7 @@ export function calculateWeeklyReview(
         completedDate: Date;
       } =>
         item.completedDate !== null &&
-        isDateInsideWeek(
-          item.completedDate,
-          weekStart,
-          nextWeekStart
-        )
+        isDateInsideWeek(item.completedDate, weekStart, nextWeekStart)
     );
 
   const unfinishedScheduledTasks = tasks.filter((task) => {
@@ -129,29 +253,24 @@ export function calculateWeeklyReview(
     const dueDate = parseLocalDateKey(task.dueDate);
 
     return Boolean(
-      dueDate &&
-        isDateInsideWeek(dueDate, weekStart, nextWeekStart)
+      dueDate && isDateInsideWeek(dueDate, weekStart, nextWeekStart)
     );
   });
 
   const todayKey = getLocalDateKey(today);
-
   const overdueCount = unfinishedScheduledTasks.filter(
-    (task) =>
-      task.dueDate !== null && task.dueDate < todayKey
+    (task) => task.dueDate !== null && task.dueDate < todayKey
   ).length;
 
   const completedCount = completedDuringWeek.length;
   const unfinishedCount = unfinishedScheduledTasks.length;
   const reviewTotal = completedCount + unfinishedCount;
-
   const completionRate =
     reviewTotal === 0
       ? 0
       : Math.round((completedCount / reviewTotal) * 100);
 
   const validGoalIds = new Set(goals.map((goal) => goal.id));
-
   const goalsProgressedCount = new Set(
     completedDuringWeek
       .map(({ task }) => task.goalId)
@@ -171,10 +290,8 @@ export function calculateWeeklyReview(
   ).size;
 
   const completionCountsByDate = new Map<string, number>();
-
   completedDuringWeek.forEach(({ completedDate }) => {
     const dateKey = getLocalDateKey(completedDate);
-
     completionCountsByDate.set(
       dateKey,
       (completionCountsByDate.get(dateKey) ?? 0) + 1
@@ -186,8 +303,7 @@ export function calculateWeeklyReview(
 
   WEEKDAY_NAMES.forEach((dayName, index) => {
     const dateKey = getLocalDateKey(addDays(weekStart, index));
-    const completedOnDay =
-      completionCountsByDate.get(dateKey) ?? 0;
+    const completedOnDay = completionCountsByDate.get(dateKey) ?? 0;
 
     if (completedOnDay > bestDayCount) {
       bestDay = dayName;
@@ -200,118 +316,58 @@ export function calculateWeeklyReview(
 
     return Boolean(
       archivedDate &&
-        isDateInsideWeek(
-          archivedDate,
-          weekStart,
-          nextWeekStart
-        )
+        isDateInsideWeek(archivedDate, weekStart, nextWeekStart)
     );
   }).length;
 
+  const highPriorityCompletedCount = completedDuringWeek.filter(
+    ({ task }) => task.priority === 2
+  ).length;
+  const recurringCompletedCount = completedDuringWeek.filter(
+    ({ task }) => task.recurringRuleId !== null
+  ).length;
+
+  const snapshot: WeeklyReviewSnapshot = {
+    completedCount,
+    unfinishedCount,
+    overdueCount,
+    completionRate,
+    goalsProgressedCount,
+    bestDay,
+    bestDayCount,
+    archivedBrainDumpCount,
+    highPriorityCompletedCount,
+    recurringCompletedCount,
+  };
+
   if (status === 'future') {
     const summaryLines = [
-      `You have ${pluralize(
-        unfinishedCount,
-        'task'
-      )} scheduled for this week.`,
+      `You have ${pluralize(unfinishedCount, 'task')} scheduled for this week.`,
       scheduledGoalCount > 0
-        ? `Those tasks support ${pluralize(
-            scheduledGoalCount,
-            'goal'
-          )}.`
+        ? `Those tasks support ${pluralize(scheduledGoalCount, 'goal')}.`
         : 'No scheduled tasks are linked to a goal yet.',
       'Completion results will appear here as the week progresses.',
     ];
 
     return {
+      ...snapshot,
       status,
       title: 'Weekly Preview',
-      collapsedSummary: `${pluralize(
-        unfinishedCount,
-        'task'
-      )} scheduled`,
+      collapsedSummary: `${pluralize(unfinishedCount, 'task')} scheduled`,
       summaryLines,
-      completedCount,
-      unfinishedCount,
-      overdueCount,
-      completionRate,
-      goalsProgressedCount,
       scheduledGoalCount,
-      bestDay,
-      bestDayCount,
-      archivedBrainDumpCount,
     };
   }
 
-  const strongestDayLine =
-    bestDay && bestDayCount > 0
-      ? `${bestDay} ${
-          status === 'past' ? 'was' : 'is'
-        } your strongest day with ${pluralize(
-          bestDayCount,
-          'completed task'
-        )}.`
-      : status === 'past'
-        ? 'No tasks were completed during this week.'
-        : 'No tasks have been completed yet this week.';
-
-  const unfinishedLine =
-    unfinishedCount === 0
-      ? status === 'past'
-        ? 'No scheduled tasks from this week remain unfinished.'
-        : 'No scheduled tasks currently remain this week.'
-      : overdueCount > 0
-        ? `${pluralize(
-            unfinishedCount,
-            'scheduled task'
-          )} remain, including ${pluralize(
-            overdueCount,
-            'overdue task'
-          )}.`
-        : `${pluralize(
-            unfinishedCount,
-            'scheduled task'
-          )} still remain this week.`;
-
-  const summaryLines = [
-    `You ${
-      status === 'past' ? 'completed' : 'have completed'
-    } ${pluralize(completedCount, 'task')} this week.`,
-    strongestDayLine,
-    goalsProgressedCount > 0
-      ? `You made progress on ${pluralize(
-          goalsProgressedCount,
-          'goal'
-        )}.`
-      : 'No completed tasks were linked to a goal this week.',
-    unfinishedLine,
-  ];
-
-  if (archivedBrainDumpCount > 0) {
-    summaryLines.push(
-      `You also archived ${pluralize(
-        archivedBrainDumpCount,
-        'brain dump'
-      )}.`
-    );
-  }
-
   return {
+    ...snapshot,
     status,
     title: status === 'current' ? 'Week So Far' : 'Weekly Review',
     collapsedSummary: `${pluralize(
       completedCount,
       'task'
     )} completed • ${completionRate}%`,
-    summaryLines,
-    completedCount,
-    unfinishedCount,
-    overdueCount,
-    completionRate,
-    goalsProgressedCount,
+    summaryLines: buildPastOrCurrentSummary(status, snapshot),
     scheduledGoalCount,
-    bestDay,
-    bestDayCount,
-    archivedBrainDumpCount,
   };
 }
