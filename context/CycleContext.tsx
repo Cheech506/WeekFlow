@@ -10,30 +10,29 @@ import React, {
 import {
   getPlanningCycles,
   startPlanningCycle,
-  updatePlanningCycleStartDate,
+  updatePlanningCycle,
   type PlanningCycle,
 } from '@/lib/cycleStorage';
+import type { PlanningCycleDetails } from '@/lib/cycleIdentityUtils';
 
 type CycleContextValue = {
   cycles: PlanningCycle[];
   currentCycle: PlanningCycle | null;
   isLoading: boolean;
   refreshCycles: () => Promise<void>;
-  startCycle: (startDateKey: string) => Promise<void>;
+  startCycle: (
+    startDateKey: string,
+    details?: PlanningCycleDetails
+  ) => Promise<void>;
   editCurrentCycle: (
-    startDateKey: string
+    startDateKey: string,
+    details?: PlanningCycleDetails
   ) => Promise<void>;
 };
 
-const CycleContext = createContext<CycleContextValue | null>(
-  null
-);
+const CycleContext = createContext<CycleContextValue | null>(null);
 
-export function CycleProvider({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export function CycleProvider({ children }: { children: React.ReactNode }) {
   const [cycles, setCycles] = useState<PlanningCycle[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -50,7 +49,7 @@ export function CycleProvider({
   }, []);
 
   useEffect(() => {
-    refreshCycles();
+    void refreshCycles();
   }, [refreshCycles]);
 
   const currentCycle = useMemo(
@@ -59,22 +58,29 @@ export function CycleProvider({
   );
 
   const startCycle = useCallback(
-    async (startDateKey: string) => {
-      await startPlanningCycle(startDateKey);
+    async (
+      startDateKey: string,
+      details: PlanningCycleDetails = {}
+    ) => {
+      await startPlanningCycle(startDateKey, details);
       await refreshCycles();
     },
     [refreshCycles]
   );
 
   const editCurrentCycle = useCallback(
-    async (startDateKey: string) => {
+    async (
+      startDateKey: string,
+      details: PlanningCycleDetails = {}
+    ) => {
       if (!currentCycle) {
         throw new Error('Start a planning cycle first.');
       }
 
-      await updatePlanningCycleStartDate(
+      await updatePlanningCycle(
         currentCycle.id,
-        startDateKey
+        startDateKey,
+        details
       );
       await refreshCycles();
     },

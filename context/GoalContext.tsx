@@ -43,7 +43,8 @@ type GoalContextValue = {
     startDateKey?: string,
     endDateKey?: string,
     reward?: string | null,
-    planningDetails?: GoalPlanningDetails
+    planningDetails?: GoalPlanningDetails,
+    cycleId?: number | null
   ) => Promise<void>;
   editGoal: (
     id: number,
@@ -115,7 +116,8 @@ export function GoalProvider({ children }: { children: React.ReactNode }) {
       startDateKey?: string,
       endDateKey?: string,
       reward?: string | null,
-      planningDetails?: GoalPlanningDetails
+      planningDetails?: GoalPlanningDetails,
+      cycleId: number | null = null
     ) => {
       if (!title.trim()) return;
 
@@ -125,7 +127,8 @@ export function GoalProvider({ children }: { children: React.ReactNode }) {
           startDateKey,
           endDateKey,
           reward,
-          planningDetails
+          planningDetails,
+          cycleId
         );
         setGoals((currentGoals) => [newGoal, ...currentGoals]);
       } catch (error) {

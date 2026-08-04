@@ -441,16 +441,22 @@ export async function replaceWeekFlowData(
           `
           INSERT INTO planning_cycles (
             id,
+            name,
+            primary_focus,
+            theme,
             start_date,
             end_date,
             active,
             created_at,
             completed_at
           )
-          VALUES (?, ?, ?, ?, ?, ?);
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
           `,
           [
             cycle.id,
+            cycle.name,
+            cycle.primaryFocus,
+            cycle.theme,
             cycle.startDate,
             cycle.endDate,
             cycle.active ? 1 : 0,
@@ -468,6 +474,7 @@ export async function replaceWeekFlowData(
           `
           INSERT INTO goals (
             id,
+            cycle_id,
             title,
             completed,
             created_at,
@@ -489,11 +496,12 @@ export async function replaceWeekFlowData(
             completion_high_priority_completed
           )
           VALUES (
-            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
           );
           `,
           [
             goal.id,
+            goal.cycleId,
             goal.title,
             goal.completed ? 1 : 0,
             goal.createdAt,

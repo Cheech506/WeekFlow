@@ -7,9 +7,11 @@ import {
   useWindowDimensions,
 } from 'react-native';
 
+import CycleIdentityFields from '@/components/CycleIdentityFields';
 import GoalAnalyticsCard from '@/components/GoalAnalyticsCard';
 import GoalCompletionPanel from '@/components/GoalCompletionPanel';
 import GoalMilestoneManager from '@/components/GoalMilestoneManager';
+import PastCycleFolder from '@/components/PastCycleFolder';
 import { Text, View } from '@/components/Themed';
 import { useCycle } from '@/context/CycleContext';
 import { useGoals } from '@/context/GoalContext';
@@ -33,6 +35,9 @@ import {
   formatDateKey,
   getLocalDateKey,
 } from '@/lib/dateUtils';
+import {
+  getPlanningCycleDisplayName,
+} from '@/lib/cycleIdentityUtils';
 import {
   createPlanningCycleRange,
   getNextPlanningCycleStartDate,
@@ -163,6 +168,9 @@ export default function TwelveWeekGoalsScreen() {
   const [cycleStartDate, setCycleStartDate] = useState(
     getLocalDateKey(new Date())
   );
+  const [cycleName, setCycleName] = useState('');
+  const [cyclePrimaryFocus, setCyclePrimaryFocus] = useState('');
+  const [cycleTheme, setCycleTheme] = useState('');
   const [cycleMessage, setCycleMessage] = useState('');
   const [isEditingCycle, setIsEditingCycle] = useState(false);
 
@@ -190,6 +198,7 @@ export default function TwelveWeekGoalsScreen() {
     editGoal,
     completeGoal,
     deleteGoal,
+    refreshGoals,
   } = useGoals();
 
   const { tasks } = useTasks();
@@ -229,12 +238,26 @@ export default function TwelveWeekGoalsScreen() {
         : currentCycle.startDate;
 
     setCycleStartDate(suggestedStart);
+
+    if (cycleProgress.state === 'complete') {
+      setCycleName('');
+      setCyclePrimaryFocus('');
+      setCycleTheme('');
+    } else {
+      setCycleName(currentCycle.name ?? '');
+      setCyclePrimaryFocus(currentCycle.primaryFocus ?? '');
+      setCycleTheme(currentCycle.theme ?? '');
+    }
+
     setCycleMessage('');
     setIsEditingCycle(false);
   }, [
     currentCycle?.id,
     currentCycle?.startDate,
     currentCycle?.endDate,
+    currentCycle?.name,
+    currentCycle?.primaryFocus,
+    currentCycle?.theme,
     cycleProgress?.state,
   ]);
 
@@ -249,24 +272,34 @@ export default function TwelveWeekGoalsScreen() {
   );
 
   const cycleGoals = currentCycle
-    ? goals.filter((goal) => {
-        const goalStartDate = getGoalDateKey(goal.startDate);
-        const goalEndDate = getGoalDateKey(goal.endDate);
-
-        return (
-          goalStartDate <= currentCycle.endDate &&
-          goalEndDate >= currentCycle.startDate
-        );
-      })
+    ? goals.filter((goal) => goal.cycleId === currentCycle.id)
     : [];
+  const activeGoalsForDisplay = currentCycle
+    ? activeGoals.filter((goal) => goal.cycleId === currentCycle.id)
+    : activeGoals.filter((goal) => goal.cycleId === null);
+  const chronologicalCycles = [...cycles].sort((a, b) =>
+    a.startDate.localeCompare(b.startDate)
+  );
+  const historicalCycles = cycles.filter((cycle) => !cycle.active);
+  const currentCycleNumber = currentCycle
+    ? Math.max(
+        1,
+        chronologicalCycles.findIndex(
+          (cycle) => cycle.id === currentCycle.id
+        ) + 1
+      )
+    : cycles.length + 1;
+  const currentCycleLabel = currentCycle
+    ? getPlanningCycleDisplayName(
+        currentCycle.name,
+        currentCycleNumber
+      )
+    : '';
 
   const completedGoalsThisCycle = currentCycle
-    ? goals.filter((goal) =>
-        isDateKeyWithinCycle(
-          getTimestampDateKey(goal.completedAt),
-          currentCycle.startDate,
-          currentCycle.endDate
-        )
+    ? goals.filter(
+        (goal) =>
+          goal.cycleId === currentCycle.id && goal.completed
       ).length
     : 0;
 
@@ -290,7 +323,7 @@ export default function TwelveWeekGoalsScreen() {
 
   /*
    * Goal progress inside the cycle only includes tasks linked to goals
-   * that overlap the current planning cycle. This keeps the goal-progress
+   * that belong to the current planning cycle. This keeps the goal-progress
    * percentage separate from the broader count of every task completed
    * during the cycle.
    */
@@ -349,7 +382,18 @@ export default function TwelveWeekGoalsScreen() {
     }
 
     try {
-      await startCycle(cycleStartDate);
+      await startCycle(cycleStartDate, {
+        name: cycleName,
+        primaryFocus: cyclePrimaryFocus,
+        theme: cycleTheme,
+      });
+
+      /*
+       * Starting the first cycle can claim legacy goals that were created
+       * before cycle folders existed. Refresh goal state immediately so those
+       * goals appear in the new folder without requiring an app restart.
+       */
+      await refreshGoals();
       setCycleMessage('');
       setIsEditingCycle(false);
     } catch (error) {
@@ -365,6 +409,9 @@ export default function TwelveWeekGoalsScreen() {
     if (!currentCycle) return;
 
     setCycleStartDate(currentCycle.startDate);
+    setCycleName(currentCycle.name ?? '');
+    setCyclePrimaryFocus(currentCycle.primaryFocus ?? '');
+    setCycleTheme(currentCycle.theme ?? '');
     setCycleMessage('');
     setIsEditingCycle(true);
   }
@@ -372,6 +419,9 @@ export default function TwelveWeekGoalsScreen() {
   function cancelEditingCycle() {
     if (currentCycle) {
       setCycleStartDate(currentCycle.startDate);
+      setCycleName(currentCycle.name ?? '');
+      setCyclePrimaryFocus(currentCycle.primaryFocus ?? '');
+      setCycleTheme(currentCycle.theme ?? '');
     }
 
     setCycleMessage('');
@@ -388,7 +438,11 @@ export default function TwelveWeekGoalsScreen() {
     }
 
     try {
-      await editCurrentCycle(cycleStartDate);
+      await editCurrentCycle(cycleStartDate, {
+        name: cycleName,
+        primaryFocus: cyclePrimaryFocus,
+        theme: cycleTheme,
+      });
       setCycleMessage('');
       setIsEditingCycle(false);
     } catch (error) {
@@ -428,7 +482,8 @@ export default function TwelveWeekGoalsScreen() {
           purpose: goalPurpose,
           successDefinition: goalSuccessDefinition,
           notes: goalNotes,
-        }
+        },
+        currentCycle?.id ?? null
       );
 
       const nextDefaultDates = createDefaultGoalDateRange();
@@ -569,9 +624,27 @@ export default function TwelveWeekGoalsScreen() {
             </Text>
 
             <Text style={styles.cycleSubtitle}>
-              Choose the first day. WeekFlow will create one focused
-              84-day cycle and track where you are in it.
+              Name the 12-week folder, describe its focus, and choose the
+              first day. The name, focus, and theme are all optional.
             </Text>
+
+            <CycleIdentityFields
+              name={cycleName}
+              primaryFocus={cyclePrimaryFocus}
+              theme={cycleTheme}
+              onNameChange={(value) => {
+                setCycleName(value);
+                setCycleMessage('');
+              }}
+              onPrimaryFocusChange={(value) => {
+                setCyclePrimaryFocus(value);
+                setCycleMessage('');
+              }}
+              onThemeChange={(value) => {
+                setCycleTheme(value);
+                setCycleMessage('');
+              }}
+            />
 
             <View style={styles.cycleForm}>
               <View style={styles.cycleDateField}>
@@ -628,11 +701,11 @@ export default function TwelveWeekGoalsScreen() {
             <View style={styles.cycleHeaderRow}>
               <View style={styles.cycleHeaderText}>
                 <Text style={styles.cycleTitle}>
-                  Current 12-Week Cycle
+                  {currentCycleLabel}
                 </Text>
 
                 <Text style={styles.cycleSubtitle}>
-                  Cycle {cycles.length} •{' '}
+                  12-Week Cycle {currentCycleNumber} •{' '}
                   {formatDateKey(currentCycle.startDate)} →{' '}
                   {formatDateKey(currentCycle.endDate)}
                 </Text>
@@ -652,6 +725,30 @@ export default function TwelveWeekGoalsScreen() {
                 </Text>
               </View>
             </View>
+
+            {currentCycle.primaryFocus || currentCycle.theme ? (
+              <View style={styles.cycleIdentitySummary}>
+                {currentCycle.primaryFocus ? (
+                  <View style={styles.cycleIdentitySection}>
+                    <Text style={styles.cycleIdentityLabel}>
+                      Primary Focus
+                    </Text>
+                    <Text style={styles.cycleIdentityText}>
+                      {currentCycle.primaryFocus}
+                    </Text>
+                  </View>
+                ) : null}
+
+                {currentCycle.theme ? (
+                  <View style={styles.cycleIdentitySection}>
+                    <Text style={styles.cycleIdentityLabel}>Theme</Text>
+                    <Text style={styles.cycleIdentityText}>
+                      {currentCycle.theme}
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
+            ) : null}
 
             <View style={styles.cycleProgressHeader}>
               <Text style={styles.cycleProgressLabel}>
@@ -723,7 +820,7 @@ export default function TwelveWeekGoalsScreen() {
                   Goal progress in this cycle
                 </Text>
                 <Text style={styles.cycleGoalProgressSubtitle}>
-                  Tasks linked to goals that overlap this planning cycle.
+                  Tasks linked to goals stored in this planning cycle.
                 </Text>
               </View>
 
@@ -794,10 +891,10 @@ export default function TwelveWeekGoalsScreen() {
             </View>
 
             <Text style={styles.cycleSummaryText}>
-              {cycleGoals.length} goals overlap this cycle and{' '}
+              {cycleGoals.length} goals belong to this cycle and{' '}
               {unfinishedCycleTaskCount} tracked tasks remain unfinished.
               Total task completions count everything finished during the
-              cycle; goal progress only counts tasks linked to cycle goals.
+              cycle; goal progress only counts tasks linked to this cycle's goals.
             </Text>
 
             {cycleProgress.state === 'complete' ? (
@@ -813,6 +910,24 @@ export default function TwelveWeekGoalsScreen() {
                   WeekFlow automatically, so you can carry them forward or
                   clean them up before starting again.
                 </Text>
+
+                <CycleIdentityFields
+                  name={cycleName}
+                  primaryFocus={cyclePrimaryFocus}
+                  theme={cycleTheme}
+                  onNameChange={(value) => {
+                    setCycleName(value);
+                    setCycleMessage('');
+                  }}
+                  onPrimaryFocusChange={(value) => {
+                    setCyclePrimaryFocus(value);
+                    setCycleMessage('');
+                  }}
+                  onThemeChange={(value) => {
+                    setCycleTheme(value);
+                    setCycleMessage('');
+                  }}
+                />
 
                 <View style={styles.cycleForm}>
                   <View style={styles.cycleDateField}>
@@ -864,6 +979,24 @@ export default function TwelveWeekGoalsScreen() {
                 <Text style={styles.cycleEditTitle}>
                   Edit Current Cycle
                 </Text>
+
+                <CycleIdentityFields
+                  name={cycleName}
+                  primaryFocus={cyclePrimaryFocus}
+                  theme={cycleTheme}
+                  onNameChange={(value) => {
+                    setCycleName(value);
+                    setCycleMessage('');
+                  }}
+                  onPrimaryFocusChange={(value) => {
+                    setCyclePrimaryFocus(value);
+                    setCycleMessage('');
+                  }}
+                  onThemeChange={(value) => {
+                    setCycleTheme(value);
+                    setCycleMessage('');
+                  }}
+                />
 
                 <View style={styles.cycleForm}>
                   <View style={styles.cycleDateField}>
@@ -927,7 +1060,7 @@ export default function TwelveWeekGoalsScreen() {
                 onPress={beginEditingCycle}
               >
                 <Text style={styles.editCycleButtonText}>
-                  Edit Cycle Dates
+                  Edit Cycle
                 </Text>
               </Pressable>
             )}
@@ -1101,6 +1234,19 @@ export default function TwelveWeekGoalsScreen() {
         </Pressable>
       </View>
 
+      <View style={styles.goalFolderHeader}>
+        <Text style={styles.goalFolderTitle}>
+          {currentCycle
+            ? `Goals in ${currentCycleLabel}`
+            : 'Goals Waiting for a Cycle'}
+        </Text>
+        <Text style={styles.goalFolderSubtitle}>
+          {currentCycle
+            ? 'New goals are stored inside the current 12-week cycle folder.'
+            : 'These goals are not assigned yet. Starting your first cycle will place active goals into that folder automatically.'}
+        </Text>
+      </View>
+
       <View
         style={[
           styles.goalList,
@@ -1114,7 +1260,7 @@ export default function TwelveWeekGoalsScreen() {
               Loading goals...
             </Text>
           </View>
-        ) : activeGoals.length === 0 ? (
+        ) : activeGoalsForDisplay.length === 0 ? (
           <View style={styles.emptyCard}>
             <Text style={styles.emptyTitle}>
               No active goals
@@ -1125,7 +1271,7 @@ export default function TwelveWeekGoalsScreen() {
             </Text>
           </View>
         ) : (
-          activeGoals.map((goal) => {
+          activeGoalsForDisplay.map((goal) => {
             /*
              * Goal progress is calculated from tasks linked
              * through the task's goalId field.
@@ -1510,6 +1656,38 @@ export default function TwelveWeekGoalsScreen() {
           })
         )}
       </View>
+
+      {historicalCycles.length > 0 ? (
+        <View style={styles.pastCyclesSection}>
+          <Text style={styles.pastCyclesTitle}>Past Cycles</Text>
+          <Text style={styles.pastCyclesSubtitle}>
+            Open a previous 12-week folder to see the goals that belonged to it.
+          </Text>
+
+          <View style={styles.pastCyclesList}>
+            {historicalCycles.map((cycle) => {
+              const cycleNumber =
+                chronologicalCycles.findIndex(
+                  (item) => item.id === cycle.id
+                ) + 1;
+
+              return (
+                <PastCycleFolder
+                  key={cycle.id}
+                  cycle={cycle}
+                  cycleLabel={getPlanningCycleDisplayName(
+                    cycle.name,
+                    Math.max(1, cycleNumber)
+                  )}
+                  goals={goals.filter(
+                    (goal) => goal.cycleId === cycle.id
+                  )}
+                />
+              );
+            })}
+          </View>
+        </View>
+      ) : null}
     </ScrollView>
   );
 }
@@ -1583,6 +1761,29 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '900',
     color: '#1e3a8a',
+  },
+  cycleIdentitySummary: {
+    padding: 13,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#c7d2fe',
+    backgroundColor: '#f8f7ff',
+    gap: 10,
+  },
+  cycleIdentitySection: {
+    backgroundColor: 'transparent',
+  },
+  cycleIdentityLabel: {
+    fontSize: 11,
+    fontWeight: '900',
+    color: '#6d28d9',
+    textTransform: 'uppercase',
+  },
+  cycleIdentityText: {
+    marginTop: 4,
+    fontSize: 14,
+    lineHeight: 20,
+    color: '#1f2937',
   },
   cycleProgressHeader: {
     flexDirection: 'row',
@@ -2071,6 +2272,41 @@ const styles = StyleSheet.create({
     color: 'white',
     fontWeight: '700',
     fontSize: 16,
+  },
+  goalFolderHeader: {
+    width: '100%',
+    marginBottom: 12,
+    backgroundColor: 'transparent',
+  },
+  goalFolderTitle: {
+    fontSize: 23,
+    fontWeight: '900',
+    color: '#111827',
+  },
+  goalFolderSubtitle: {
+    marginTop: 4,
+    color: '#64748b',
+    lineHeight: 19,
+  },
+  pastCyclesSection: {
+    width: '100%',
+    marginTop: 28,
+    backgroundColor: 'transparent',
+  },
+  pastCyclesTitle: {
+    fontSize: 23,
+    fontWeight: '900',
+    color: '#111827',
+  },
+  pastCyclesSubtitle: {
+    marginTop: 4,
+    color: '#64748b',
+    lineHeight: 19,
+  },
+  pastCyclesList: {
+    marginTop: 12,
+    gap: 12,
+    backgroundColor: 'transparent',
   },
   goalList: {
     gap: 12,

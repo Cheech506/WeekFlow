@@ -17,6 +17,7 @@ module.exports = {
   collectCoverageFrom: [
     'lib/dateUtils.ts',
     'lib/cycleUtils.ts',
+    'lib/cycleIdentityUtils.ts',
     'lib/cycleStorage.ts',
     'lib/progressStats.ts',
     'lib/weeklyReview.ts',

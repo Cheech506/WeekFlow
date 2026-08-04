@@ -17,6 +17,7 @@ import {
 
 export type StoredGoal = {
   id: number;
+  cycleId: number | null;
   title: string;
   completed: boolean;
   createdAt: string;
@@ -40,6 +41,7 @@ export type StoredGoal = {
 
 type GoalRow = {
   id: number;
+  cycle_id: number | null;
   title: string;
   completed: number;
   created_at: string;
@@ -70,6 +72,7 @@ export type GoalPlanningDetails = {
 function mapGoalRow(row: GoalRow): StoredGoal {
   return {
     id: row.id,
+    cycleId: row.cycle_id,
     title: row.title,
     completed: row.completed === 1,
     createdAt: row.created_at,
@@ -156,6 +159,7 @@ export async function getGoals(): Promise<StoredGoal[]> {
   const rows = await db.getAllAsync<GoalRow>(`
     SELECT
       id,
+      cycle_id,
       title,
       completed,
       created_at,
@@ -187,7 +191,8 @@ export async function insertGoal(
   startDateKey?: string,
   endDateKey?: string,
   reward?: string | null,
-  planningDetails: GoalPlanningDetails = {}
+  planningDetails: GoalPlanningDetails = {},
+  cycleId: number | null = null
 ): Promise<StoredGoal> {
   await migrateDb();
 
@@ -215,10 +220,15 @@ export async function insertGoal(
   );
   const notes = normalizeGoalNotes(planningDetails.notes);
 
+  if (cycleId !== null && (!Number.isInteger(cycleId) || cycleId <= 0)) {
+    throw new Error('The selected planning cycle is invalid.');
+  }
+
   await db.runAsync(
     `
     INSERT INTO goals (
       id,
+      cycle_id,
       title,
       completed,
       created_at,
@@ -240,12 +250,13 @@ export async function insertGoal(
       completion_high_priority_completed
     )
     VALUES (
-      ?, ?, 0, ?, NULL, ?, ?, ?, ?, ?, ?,
+      ?, ?, ?, 0, ?, NULL, ?, ?, ?, ?, ?, ?,
       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
     );
     `,
     [
       id,
+      cycleId,
       trimmedTitle,
       createdAt,
       startDate,
@@ -259,6 +270,7 @@ export async function insertGoal(
 
   return {
     id,
+    cycleId,
     title: trimmedTitle,
     completed: false,
     createdAt,

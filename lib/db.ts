@@ -106,6 +106,17 @@ async function repairOrphanedRelationships(
   `);
 
   await db.runAsync(`
+    UPDATE goals
+    SET cycle_id = NULL
+    WHERE cycle_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1
+        FROM planning_cycles
+        WHERE planning_cycles.id = goals.cycle_id
+      );
+  `);
+
+  await db.runAsync(`
     UPDATE weekly_reviews
     SET cycle_id = NULL
     WHERE cycle_id IS NOT NULL
@@ -146,6 +157,36 @@ async function repairOrphanedRelationships(
         SELECT 1
         FROM tasks
         WHERE tasks.id = weekly_task_decisions.task_id
+      );
+  `);
+}
+
+/**
+ * Older WeekFlow versions grouped goals into cycles by overlapping dates only.
+ * Once explicit goal-cycle folders exist, assign each unlinked legacy goal to
+ * the newest overlapping cycle, preferring the active cycle when one exists.
+ */
+async function backfillLegacyGoalCycles(
+  db: SQLite.SQLiteDatabase
+) {
+  await db.runAsync(`
+    UPDATE goals
+    SET cycle_id = (
+      SELECT planning_cycles.id
+      FROM planning_cycles
+      WHERE substr(goals.start_date, 1, 10) <= planning_cycles.end_date
+        AND substr(goals.end_date, 1, 10) >= planning_cycles.start_date
+      ORDER BY planning_cycles.active DESC,
+               planning_cycles.start_date DESC,
+               planning_cycles.id DESC
+      LIMIT 1
+    )
+    WHERE cycle_id IS NULL
+      AND EXISTS (
+        SELECT 1
+        FROM planning_cycles
+        WHERE substr(goals.start_date, 1, 10) <= planning_cycles.end_date
+          AND substr(goals.end_date, 1, 10) >= planning_cycles.start_date
       );
   `);
 }
@@ -281,6 +322,28 @@ async function createRelationshipTriggers(
       )
     BEGIN
       SELECT RAISE(ABORT, 'Recurring task identity is invalid.');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS
+      trg_goals_cycle_exists_insert
+    BEFORE INSERT ON goals
+    WHEN NEW.cycle_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM planning_cycles WHERE id = NEW.cycle_id
+      )
+    BEGIN
+      SELECT RAISE(ABORT, 'Goal cycle does not exist.');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS
+      trg_goals_cycle_exists_update
+    BEFORE UPDATE OF cycle_id ON goals
+    WHEN NEW.cycle_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM planning_cycles WHERE id = NEW.cycle_id
+      )
+    BEGIN
+      SELECT RAISE(ABORT, 'Goal cycle does not exist.');
     END;
 
     CREATE TRIGGER IF NOT EXISTS
@@ -466,6 +529,20 @@ async function createRelationshipTriggers(
       WHERE cycle_id = OLD.id;
     END;
 
+    /*
+     * Older installations already have the weekly cleanup trigger above.
+     * A separate trigger name guarantees goal-folder cleanup is added during
+     * upgrade even when SQLite preserves the older trigger definition.
+     */
+    CREATE TRIGGER IF NOT EXISTS
+      trg_goals_cycle_cleanup_after_cycle_delete
+    AFTER DELETE ON planning_cycles
+    BEGIN
+      UPDATE goals
+      SET cycle_id = NULL
+      WHERE cycle_id = OLD.id;
+    END;
+
     CREATE TRIGGER IF NOT EXISTS
       trg_tasks_weekly_decision_cleanup_after_delete
     AFTER DELETE ON tasks
@@ -539,17 +616,20 @@ async function ensureColumn(
   );
 
   if (columns.some((column) => column.name === columnName)) {
-    return;
+    return false;
   }
 
   try {
     await db.execAsync(
       `ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnDefinition};`
     );
+    return true;
   } catch (error) {
     if (!isDuplicateColumnError(error)) {
       throw error;
     }
+
+    return false;
   }
 }
 
@@ -662,6 +742,7 @@ async function runMigrations() {
 
     CREATE TABLE IF NOT EXISTS goals (
       id INTEGER PRIMARY KEY NOT NULL,
+      cycle_id INTEGER,
       title TEXT NOT NULL,
       completed INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
@@ -704,6 +785,9 @@ async function runMigrations() {
 
     CREATE TABLE IF NOT EXISTS planning_cycles (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT,
+      primary_focus TEXT,
+      theme TEXT,
       start_date TEXT NOT NULL,
       end_date TEXT NOT NULL,
       active INTEGER NOT NULL DEFAULT 1,
@@ -816,6 +900,12 @@ async function runMigrations() {
 
   await ensureColumn(db, 'weekly_commitments', 'task_id', 'INTEGER');
 
+  const addedGoalCycleColumn = await ensureColumn(
+    db,
+    'goals',
+    'cycle_id',
+    'INTEGER'
+  );
   await ensureColumn(db, 'goals', 'reward', 'TEXT');
   await ensureColumn(db, 'goals', 'purpose', 'TEXT');
   await ensureColumn(db, 'goals', 'success_definition', 'TEXT');
@@ -834,6 +924,10 @@ async function runMigrations() {
     'completion_high_priority_completed',
     'INTEGER'
   );
+
+  await ensureColumn(db, 'planning_cycles', 'name', 'TEXT');
+  await ensureColumn(db, 'planning_cycles', 'primary_focus', 'TEXT');
+  await ensureColumn(db, 'planning_cycles', 'theme', 'TEXT');
 
   await ensureColumn(
     db,
@@ -856,6 +950,15 @@ async function runMigrations() {
   await repairOrphanedRelationships(db);
 
   /*
+   * Date-overlap assignment is a one-time migration from the old implicit
+   * model. Once cycle_id exists, a null value is meaningful and should not be
+   * silently reassigned on every app launch.
+   */
+  if (addedGoalCycleColumn) {
+    await backfillLegacyGoalCycles(db);
+  }
+
+  /*
    * Older databases or manually restored data may contain duplicate recurring
    * identities from before the unique index existed. Repair those rows without
    * deleting tasks so the index can always be created safely.
@@ -867,6 +970,10 @@ async function runMigrations() {
    * due_date can change when the user reschedules the task.
    */
   await db.execAsync(`
+    CREATE INDEX IF NOT EXISTS
+      idx_goals_cycle_id
+    ON goals (cycle_id, completed, created_at DESC);
+
     CREATE INDEX IF NOT EXISTS
       idx_goal_milestones_goal_id
     ON goal_milestones (goal_id);

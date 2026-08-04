@@ -26,6 +26,7 @@ function makeBackup(
       goals: [
         {
           id: 1,
+          cycleId: 40,
           title: 'Restored goal',
           completed: true,
           createdAt: '2026-07-01T12:00:00.000Z',
@@ -100,6 +101,9 @@ function makeBackup(
       planningCycles: [
         {
           id: 40,
+          name: 'Summer 2026',
+          primaryFocus: 'Finish WeekFlow local v1.0',
+          theme: 'Build the foundation',
           startDate: '2026-07-01',
           endDate: '2026-09-22',
           active: true,
@@ -213,6 +217,7 @@ describe('backup restore integration', () => {
       'Restored task'
     );
     expect((await goalStorage.getGoals())[0]).toMatchObject({
+      cycleId: 40,
       title: 'Restored goal',
       reward: 'Buy a new game',
       purpose: 'Build a portfolio that proves practical DBA skills.',
@@ -243,6 +248,9 @@ describe('backup restore integration', () => {
     expect(
       (await cycleStorage.getPlanningCycles())[0]
     ).toMatchObject({
+      name: 'Summer 2026',
+      primaryFocus: 'Finish WeekFlow local v1.0',
+      theme: 'Build the foundation',
       startDate: '2026-07-01',
       endDate: '2026-09-22',
       active: true,

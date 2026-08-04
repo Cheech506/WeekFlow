@@ -46,6 +46,7 @@ export function makeGoal(
 
   return {
     id,
+    cycleId: null,
     title: `Goal ${id}`,
     completed: false,
     createdAt: new Date(2026, 5, 1, 12).toISOString(),
@@ -111,6 +112,9 @@ export function makePlanningCycle(
 
   return {
     id,
+    name: null,
+    primaryFocus: null,
+    theme: null,
     startDate: '2026-07-01',
     endDate: '2026-09-22',
     active: true,

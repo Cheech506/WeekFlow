@@ -64,6 +64,7 @@ describe('SQLite migrations', () => {
 
     expect(goalColumns.map((column) => column.name)).toEqual(
       expect.arrayContaining([
+        'cycle_id',
         'reward',
         'purpose',
         'success_definition',
@@ -77,6 +78,20 @@ describe('SQLite migrations', () => {
         'completion_milestone_total',
         'completion_milestone_completed',
         'completion_high_priority_completed',
+      ])
+    );
+
+    const planningCycleColumns = await db.getAllAsync<{ name: string }>(
+      'PRAGMA table_info(planning_cycles);'
+    );
+
+    expect(planningCycleColumns.map((column) => column.name)).toEqual(
+      expect.arrayContaining([
+        'name',
+        'primary_focus',
+        'theme',
+        'start_date',
+        'end_date',
       ])
     );
 
@@ -144,6 +159,81 @@ describe('SQLite migrations', () => {
         'decided_at',
       ])
     );
+  });
+
+  test('adds cycle folders and assigns legacy goals to the active overlapping cycle', async () => {
+    const { getDb, migrateDb } = await import('../../lib/db');
+
+    const db = await getDb();
+
+    await db.execAsync(`
+      CREATE TABLE goals (
+        id INTEGER PRIMARY KEY NOT NULL,
+        title TEXT NOT NULL,
+        completed INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        completed_at TEXT,
+        start_date TEXT NOT NULL,
+        end_date TEXT NOT NULL
+      );
+
+      CREATE TABLE planning_cycles (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        start_date TEXT NOT NULL,
+        end_date TEXT NOT NULL,
+        active INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        completed_at TEXT
+      );
+
+      INSERT INTO planning_cycles (
+        id, start_date, end_date, active, created_at, completed_at
+      )
+      VALUES
+      (
+        10, '2026-06-01', '2026-08-23', 0,
+        '2026-06-01T09:00:00.000Z', '2026-08-24T09:00:00.000Z'
+      ),
+      (
+        11, '2026-07-01', '2026-09-22', 1,
+        '2026-07-01T09:00:00.000Z', NULL
+      );
+
+      INSERT INTO goals (
+        id, title, completed, created_at, completed_at,
+        start_date, end_date
+      )
+      VALUES (
+        20, 'Legacy overlapping goal', 0,
+        '2026-07-15T12:00:00.000Z', NULL,
+        '2026-07-15T12:00:00.000Z',
+        '2026-09-15T12:00:00.000Z'
+      );
+    `);
+
+    await migrateDb();
+
+    const goal = await db.getFirstAsync<{ cycle_id: number | null }>(`
+      SELECT cycle_id
+      FROM goals
+      WHERE id = 20;
+    `);
+    const cycle = await db.getFirstAsync<{
+      name: string | null;
+      primary_focus: string | null;
+      theme: string | null;
+    }>(`
+      SELECT name, primary_focus, theme
+      FROM planning_cycles
+      WHERE id = 11;
+    `);
+
+    expect(goal?.cycle_id).toBe(11);
+    expect(cycle).toEqual({
+      name: null,
+      primary_focus: null,
+      theme: null,
+    });
   });
 
   test('backfills due dates for legacy scheduled tasks without deleting data', async () => {
@@ -552,6 +642,21 @@ describe('SQLite migrations', () => {
 
     await expect(
       db.runAsync(`
+        INSERT INTO goals (
+          id, cycle_id, title, completed, created_at, completed_at,
+          start_date, end_date
+        )
+        VALUES (
+          998, 999, 'Orphan cycle goal', 0,
+          '2026-07-20T13:02:15.000Z', NULL,
+          '2026-07-20T12:00:00.000Z',
+          '2026-10-12T12:00:00.000Z'
+        );
+      `)
+    ).rejects.toThrow('Goal cycle does not exist.');
+
+    await expect(
+      db.runAsync(`
         INSERT INTO weekly_commitments (
           week_start, cycle_id, task_id, title, completed,
           created_at, completed_at
@@ -628,6 +733,17 @@ describe('SQLite migrations', () => {
         '2026-07-20T14:04:00.000Z', NULL
       );
 
+      INSERT INTO goals (
+        id, cycle_id, title, completed, created_at, completed_at,
+        start_date, end_date
+      )
+      VALUES (
+        51, 80, 'Cycle folder goal', 0,
+        '2026-07-20T14:04:30.000Z', NULL,
+        '2026-07-20T12:00:00.000Z',
+        '2026-10-12T12:00:00.000Z'
+      );
+
       INSERT INTO weekly_reviews (
         id, week_start, cycle_id, created_at, updated_at, reviewed_at
       )
@@ -702,19 +818,23 @@ describe('SQLite migrations', () => {
 
     await db.runAsync('DELETE FROM planning_cycles WHERE id = 80;');
 
-    const weeklyLinksAfterCycleDelete = await db.getFirstAsync<{
+    const linksAfterCycleDelete = await db.getFirstAsync<{
+      goal_cycle_id: number | null;
       review_cycle_id: number | null;
       commitment_cycle_id: number | null;
     }>(`
       SELECT
+        goals.cycle_id AS goal_cycle_id,
         weekly_reviews.cycle_id AS review_cycle_id,
         weekly_commitments.cycle_id AS commitment_cycle_id
-      FROM weekly_reviews
+      FROM goals
+      JOIN weekly_reviews ON weekly_reviews.id = 90
       JOIN weekly_commitments ON weekly_commitments.id = 91
-      WHERE weekly_reviews.id = 90;
+      WHERE goals.id = 51;
     `);
 
-    expect(weeklyLinksAfterCycleDelete).toEqual({
+    expect(linksAfterCycleDelete).toEqual({
+      goal_cycle_id: null,
       review_cycle_id: null,
       commitment_cycle_id: null,
     });

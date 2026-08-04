@@ -28,7 +28,11 @@ import {
 } from './testFactories';
 
 function makeValidBackup(): WeekFlowBackup {
-  const goal = makeGoal({ id: 1, reward: 'Buy a new game' });
+  const goal = makeGoal({
+    id: 1,
+    cycleId: 40,
+    reward: 'Buy a new game',
+  });
   const rule = makeRecurringRule({
     id: 10,
     goalId: 1,
@@ -84,7 +88,14 @@ function makeValidBackup(): WeekFlowBackup {
           createdAt: localIso(2026, 6, 23),
         },
       ],
-      planningCycles: [makePlanningCycle({ id: 40 })],
+      planningCycles: [
+        makePlanningCycle({
+          id: 40,
+          name: 'Summer 2026',
+          primaryFocus: 'Finish WeekFlow',
+          theme: 'Build the foundation',
+        }),
+      ],
       weeklyReviews: [
         makeWeeklyReview({
           id: 50,
@@ -451,6 +462,22 @@ describe('backup validation', () => {
     );
   });
 
+  test('rejects invalid cycle identity fields and missing goal-cycle links', () => {
+    const invalidNameBackup = makeValidBackup();
+    invalidNameBackup.data.planningCycles[0].name = 'x'.repeat(81);
+
+    expect(() => parseWeekFlowBackup(invalidNameBackup)).toThrow(
+      'name value longer than 80 characters'
+    );
+
+    const missingCycleBackup = makeValidBackup();
+    missingCycleBackup.data.goals[0].cycleId = 999;
+
+    expect(() => parseWeekFlowBackup(missingCycleBackup)).toThrow(
+      'linked to a planning cycle that is not included'
+    );
+  });
+
   test('rejects a current backup with an invalid goal reward', () => {
     const backup = makeValidBackup();
     backup.data.goals[0].reward = 'x'.repeat(201);
@@ -520,6 +547,39 @@ describe('backup validation', () => {
     expect(() => parseWeekFlowBackup(duplicateBackup)).toThrow(
       'same task to the same week more than once'
     );
+  });
+
+  test('upgrades a valid version 10 backup with named-cycle fields and goal links', () => {
+    const current = makeValidBackup();
+    const legacyGoals = current.data.goals.map(
+      ({ cycleId: _cycleId, ...goal }) => goal
+    );
+    const legacyCycles = current.data.planningCycles.map(
+      ({
+        name: _name,
+        primaryFocus: _primaryFocus,
+        theme: _theme,
+        ...cycle
+      }) => cycle
+    );
+
+    const result = inspectWeekFlowBackup({
+      ...current,
+      version: 10,
+      data: {
+        ...current.data,
+        goals: legacyGoals,
+        planningCycles: legacyCycles,
+      },
+    });
+
+    expect(result.preview.sourceVersion).toBe(10);
+    expect(result.backup.data.planningCycles[0]).toMatchObject({
+      name: null,
+      primaryFocus: null,
+      theme: null,
+    });
+    expect(result.backup.data.goals[0].cycleId).toBe(40);
   });
 
   test('upgrades a valid version 9 backup with manual commitments', () => {
