@@ -1,5 +1,5 @@
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { router, Tabs, type Href } from 'expo-router';
-import { SymbolView } from 'expo-symbols';
 import React from 'react';
 import { Pressable } from 'react-native';
 
@@ -15,7 +15,7 @@ export default function TabLayout() {
       screenOptions={{
         tabBarActiveTintColor: Colors[colorScheme].tint,
 
-        // Keeps header stable on web.
+        // Keeps the header stable on web.
         headerShown: useClientOnlyValue(false, true),
 
         // Settings stays outside the permanent bottom navigation so the main
@@ -29,14 +29,10 @@ export default function TabLayout() {
             onPress={() => router.push('/settings' as Href)}
           >
             {({ pressed }) => (
-              <SymbolView
-                name={{
-                  ios: 'gearshape',
-                  android: 'settings',
-                  web: 'settings',
-                }}
+              <Ionicons
+                name="settings-outline"
                 size={25}
-                tintColor={Colors[colorScheme].text}
+                color={Colors[colorScheme].text}
                 style={{ opacity: pressed ? 0.5 : 1 }}
               />
             )}
@@ -49,15 +45,7 @@ export default function TabLayout() {
         options={{
           title: 'Goals',
           tabBarIcon: ({ color }) => (
-            <SymbolView
-              name={{
-                ios: 'target',
-                android: 'code',
-                web: 'code',
-              }}
-              tintColor={color}
-              size={28}
-            />
+            <Ionicons name="flag-outline" color={color} size={28} />
           ),
         }}
       />
@@ -67,15 +55,7 @@ export default function TabLayout() {
         options={{
           title: 'Inbox',
           tabBarIcon: ({ color }) => (
-            <SymbolView
-              name={{
-                ios: 'tray',
-                android: 'code',
-                web: 'code',
-              }}
-              tintColor={color}
-              size={28}
-            />
+            <Ionicons name="file-tray-outline" color={color} size={28} />
           ),
         }}
       />
@@ -85,15 +65,7 @@ export default function TabLayout() {
         options={{
           title: 'Daily',
           tabBarIcon: ({ color }) => (
-            <SymbolView
-              name={{
-                ios: 'checkmark.circle',
-                android: 'code',
-                web: 'code',
-              }}
-              tintColor={color}
-              size={28}
-            />
+            <Ionicons name="checkmark-circle-outline" color={color} size={28} />
           ),
         }}
       />
@@ -103,15 +75,7 @@ export default function TabLayout() {
         options={{
           title: 'Weekly',
           tabBarIcon: ({ color }) => (
-            <SymbolView
-              name={{
-                ios: 'calendar',
-                android: 'code',
-                web: 'code',
-              }}
-              tintColor={color}
-              size={28}
-            />
+            <Ionicons name="calendar-outline" color={color} size={28} />
           ),
         }}
       />
@@ -121,15 +85,7 @@ export default function TabLayout() {
         options={{
           title: 'History',
           tabBarIcon: ({ color }) => (
-            <SymbolView
-              name={{
-                ios: 'clock.arrow.circlepath',
-                android: 'code',
-                web: 'code',
-              }}
-              tintColor={color}
-              size={28}
-            />
+            <Ionicons name="time-outline" color={color} size={28} />
           ),
         }}
       />
