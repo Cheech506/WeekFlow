@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { router, type Href } from 'expo-router';
 import {
   Pressable,
   ScrollView,
@@ -11,12 +12,14 @@ import CycleIdentityFields from '@/components/CycleIdentityFields';
 import CycleReviewPanel from '@/components/CycleReviewPanel';
 import GoalAnalyticsCard from '@/components/GoalAnalyticsCard';
 import GoalCompletionPanel from '@/components/GoalCompletionPanel';
+import GoalDashboardOverview from '@/components/GoalDashboardOverview';
 import GoalMilestoneManager from '@/components/GoalMilestoneManager';
 import PastCycleFolder from '@/components/PastCycleFolder';
 import { Text, View } from '@/components/Themed';
 import { useCycle } from '@/context/CycleContext';
 import { useGoals } from '@/context/GoalContext';
 import { useTasks } from '@/context/TaskContext';
+import { useWeeklyReviews } from '@/context/WeeklyReviewContext';
 import {
   createDefaultGoalDateRange,
   getGoalDateKey,
@@ -28,6 +31,7 @@ import {
   MAX_GOAL_SUCCESS_DEFINITION_LENGTH,
 } from '@/lib/goalPlanningUtils';
 import { MAX_GOAL_REWARD_LENGTH } from '@/lib/goalRewardUtils';
+import { calculateGoalDashboardSnapshot } from '@/lib/dashboardUtils';
 import {
   calculateGoalAnalytics,
   type GoalCompletionReflection,
@@ -165,6 +169,7 @@ export default function TwelveWeekGoalsScreen() {
   const [completingGoalId, setCompletingGoalId] = useState<
     number | null
   >(null);
+  const [isCycleDetailsExpanded, setIsCycleDetailsExpanded] = useState(false);
 
   const [cycleStartDate, setCycleStartDate] = useState(
     getLocalDateKey(new Date())
@@ -203,6 +208,7 @@ export default function TwelveWeekGoalsScreen() {
   } = useGoals();
 
   const { tasks } = useTasks();
+  const { commitments } = useWeeklyReviews();
 
   const cycleProgress = currentCycle
     ? getPlanningCycleProgress(
@@ -261,6 +267,10 @@ export default function TwelveWeekGoalsScreen() {
     currentCycle?.theme,
     cycleProgress?.state,
   ]);
+
+  useEffect(() => {
+    setIsCycleDetailsExpanded(false);
+  }, [currentCycle?.id]);
 
   const activeGoals = goals.filter((goal) => !goal.completed);
   const addGoalDateFeedback = getGoalDateFeedback(
@@ -372,6 +382,22 @@ export default function TwelveWeekGoalsScreen() {
       : cycleProgress.state === 'complete'
         ? 'Cycle Complete'
         : `Week ${cycleProgress.weekNumber} of 12`;
+
+  /*
+   * The dashboard is derived from the same task, goal, milestone, and weekly
+   * commitment records used by the rest of WeekFlow. It does not persist a
+   * second analytics snapshot or introduce another source of truth.
+   */
+  const dashboardSnapshot =
+    currentCycle && cycleProgress?.state === 'active'
+      ? calculateGoalDashboardSnapshot(
+          tasks,
+          goals,
+          milestones,
+          commitments,
+          currentCycle.id
+        )
+      : null;
 
   async function handleStartPlanningCycle() {
     if (cycleDateError || !cycleRangePreview) {
@@ -586,6 +612,106 @@ export default function TwelveWeekGoalsScreen() {
     setCompletingGoalId(null);
   }
 
+  function openDaily() {
+    router.push('/daily' as Href);
+  }
+
+  function openWeekly() {
+    router.push('/weekly' as Href);
+  }
+
+  function renderCycleEditor(showEndedCycleWarning = false) {
+    return (
+      <View style={styles.cycleEditCard}>
+        <Text style={styles.cycleEditTitle}>
+          Edit Current Cycle
+        </Text>
+
+        {showEndedCycleWarning ? (
+          <Text style={styles.cycleHelpText}>
+            This cycle has reached its end date, but its Week 13 review has
+            not been finalized yet. Changing the dates may hide the review
+            until the cycle ends again.
+          </Text>
+        ) : null}
+
+        <CycleIdentityFields
+          name={cycleName}
+          primaryFocus={cyclePrimaryFocus}
+          theme={cycleTheme}
+          onNameChange={(value) => {
+            setCycleName(value);
+            setCycleMessage('');
+          }}
+          onPrimaryFocusChange={(value) => {
+            setCyclePrimaryFocus(value);
+            setCycleMessage('');
+          }}
+          onThemeChange={(value) => {
+            setCycleTheme(value);
+            setCycleMessage('');
+          }}
+        />
+
+        <View style={styles.cycleForm}>
+          <View style={styles.cycleDateField}>
+            <Text style={styles.dateInputLabel}>
+              Cycle start date
+            </Text>
+            <TextInput
+              style={styles.dateInput}
+              value={cycleStartDate}
+              onChangeText={(value) => {
+                setCycleStartDate(value);
+                setCycleMessage('');
+              }}
+              placeholder="YYYY-MM-DD"
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+          </View>
+
+          <View style={styles.cycleDatePreview}>
+            <Text style={styles.cycleDatePreviewLabel}>
+              New end date
+            </Text>
+            <Text style={styles.cycleDatePreviewValue}>
+              {cycleRangePreview
+                ? formatDateKey(cycleRangePreview.endDate)
+                : 'Enter a valid start date'}
+            </Text>
+          </View>
+        </View>
+
+        {cycleMessage || cycleDateError ? (
+          <Text style={styles.dateErrorText}>
+            {cycleMessage || cycleDateError}
+          </Text>
+        ) : null}
+
+        <View style={styles.cycleEditActions}>
+          <Pressable
+            style={styles.cancelButton}
+            onPress={cancelEditingCycle}
+          >
+            <Text style={styles.cancelButtonText}>
+              Cancel
+            </Text>
+          </Pressable>
+
+          <Pressable
+            style={styles.saveCycleButton}
+            onPress={handleSaveCycle}
+          >
+            <Text style={styles.saveCycleButtonText}>
+              Save Cycle
+            </Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
+
   return (
     <ScrollView
       style={styles.page}
@@ -600,11 +726,10 @@ export default function TwelveWeekGoalsScreen() {
           isDesktop && styles.fullWidthPanel,
         ]}
       >
-        <Text style={styles.title}>12 Week Goals</Text>
+        <Text style={styles.title}>WeekFlow Dashboard</Text>
 
         <Text style={styles.subtitle}>
-          Pick the bigger goals you want to make progress on
-          over the next 3 months.
+          See where your cycle, today, weekly commitments, and goals stand.
         </Text>
       </View>
 
@@ -773,6 +898,35 @@ export default function TwelveWeekGoalsScreen() {
               />
             </View>
 
+            {dashboardSnapshot ? (
+              <GoalDashboardOverview
+                snapshot={dashboardSnapshot}
+                onOpenDaily={openDaily}
+                onOpenWeekly={openWeekly}
+              />
+            ) : null}
+
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ expanded: isCycleDetailsExpanded }}
+              style={styles.cycleDetailsToggle}
+              onPress={() =>
+                setIsCycleDetailsExpanded((current) => !current)
+              }
+            >
+              <View style={styles.cycleDetailsToggleText}>
+                <Text style={styles.cycleDetailsTitle}>Cycle Details</Text>
+                <Text style={styles.cycleDetailsSubtitle}>
+                  Goal totals, linked-task progress, and cycle-wide counts
+                </Text>
+              </View>
+              <Text style={styles.cycleDetailsAction}>
+                {isCycleDetailsExpanded ? 'Hide' : 'View'}
+              </Text>
+            </Pressable>
+
+            {isCycleDetailsExpanded ? (
+              <View style={styles.cycleDetailsContent}>
             <View style={styles.cycleStatsGrid}>
               <View style={styles.cycleStatBox}>
                 <Text style={styles.cycleStatNumber}>
@@ -897,93 +1051,38 @@ export default function TwelveWeekGoalsScreen() {
               Total task completions count everything finished during the
               cycle; goal progress only counts tasks linked to this cycle's goals.
             </Text>
+              </View>
+            ) : null}
 
             {cycleProgress.state === 'complete' ? (
-              <CycleReviewPanel
-                cycle={currentCycle}
-                cycleLabel={currentCycleLabel}
-                cycleGoals={cycleGoals}
-              />
-            ) : isEditingCycle ? (
-              <View style={styles.cycleEditCard}>
-                <Text style={styles.cycleEditTitle}>
-                  Edit Current Cycle
-                </Text>
-
-                <CycleIdentityFields
-                  name={cycleName}
-                  primaryFocus={cyclePrimaryFocus}
-                  theme={cycleTheme}
-                  onNameChange={(value) => {
-                    setCycleName(value);
-                    setCycleMessage('');
-                  }}
-                  onPrimaryFocusChange={(value) => {
-                    setCyclePrimaryFocus(value);
-                    setCycleMessage('');
-                  }}
-                  onThemeChange={(value) => {
-                    setCycleTheme(value);
-                    setCycleMessage('');
-                  }}
+              <>
+                <CycleReviewPanel
+                  cycle={currentCycle}
+                  cycleLabel={currentCycleLabel}
+                  cycleGoals={cycleGoals}
                 />
 
-                <View style={styles.cycleForm}>
-                  <View style={styles.cycleDateField}>
-                    <Text style={styles.dateInputLabel}>
-                      Cycle start date
+                {isEditingCycle ? (
+                  renderCycleEditor(true)
+                ) : (
+                  <View style={styles.endedCycleEditSection}>
+                    <Text style={styles.cycleHelpText}>
+                      Need to correct this cycle's dates? You can still edit
+                      the current cycle until the Week 13 review is finalized.
                     </Text>
-                    <TextInput
-                      style={styles.dateInput}
-                      value={cycleStartDate}
-                      onChangeText={(value) => {
-                        setCycleStartDate(value);
-                        setCycleMessage('');
-                      }}
-                      placeholder="YYYY-MM-DD"
-                      autoCapitalize="none"
-                      autoCorrect={false}
-                    />
+                    <Pressable
+                      style={styles.editCycleButton}
+                      onPress={beginEditingCycle}
+                    >
+                      <Text style={styles.editCycleButtonText}>
+                        Edit Cycle Dates
+                      </Text>
+                    </Pressable>
                   </View>
-
-                  <View style={styles.cycleDatePreview}>
-                    <Text style={styles.cycleDatePreviewLabel}>
-                      New end date
-                    </Text>
-                    <Text style={styles.cycleDatePreviewValue}>
-                      {cycleRangePreview
-                        ? formatDateKey(cycleRangePreview.endDate)
-                        : 'Enter a valid start date'}
-                    </Text>
-                  </View>
-                </View>
-
-                {cycleMessage || cycleDateError ? (
-                  <Text style={styles.dateErrorText}>
-                    {cycleMessage || cycleDateError}
-                  </Text>
-                ) : null}
-
-                <View style={styles.cycleEditActions}>
-                  <Pressable
-                    style={styles.cancelButton}
-                    onPress={cancelEditingCycle}
-                  >
-                    <Text style={styles.cancelButtonText}>
-                      Cancel
-                    </Text>
-                  </Pressable>
-
-                  <Pressable
-                    style={styles.saveCycleButton}
-                    onPress={handleSaveCycle}
-                  >
-                    <Text style={styles.saveCycleButtonText}>
-                      Save Cycle
-                    </Text>
-                  </Pressable>
-                </View>
-              </View>
+                )}
+              </>
+            ) : isEditingCycle ? (
+              renderCycleEditor()
             ) : (
               <Pressable
                 style={styles.editCycleButton}
@@ -1840,6 +1939,42 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#6b7280',
   },
+  cycleDetailsToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    paddingVertical: 11,
+    paddingHorizontal: 13,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+    backgroundColor: '#dbeafe',
+  },
+  cycleDetailsToggleText: {
+    flex: 1,
+    backgroundColor: 'transparent',
+  },
+  cycleDetailsTitle: {
+    fontSize: 14,
+    fontWeight: '900',
+    color: '#1e3a8a',
+  },
+  cycleDetailsSubtitle: {
+    marginTop: 2,
+    fontSize: 10,
+    lineHeight: 14,
+    color: '#4b5563',
+  },
+  cycleDetailsAction: {
+    fontSize: 12,
+    fontWeight: '900',
+    color: '#1d4ed8',
+  },
+  cycleDetailsContent: {
+    gap: 12,
+    backgroundColor: 'transparent',
+  },
   cycleForm: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -1888,6 +2023,10 @@ const styles = StyleSheet.create({
   startCycleButtonText: {
     color: 'white',
     fontWeight: '900',
+  },
+  endedCycleEditSection: {
+    gap: 8,
+    backgroundColor: 'transparent',
   },
   editCycleButton: {
     alignSelf: 'flex-start',

@@ -20,6 +20,7 @@ module.exports = {
     'lib/cycleIdentityUtils.ts',
     'lib/cycleReviewUtils.ts',
     'lib/cycleReviewStorage.ts',
+    'lib/dashboardUtils.ts',
     'lib/cycleStorage.ts',
     'lib/progressStats.ts',
     'lib/weeklyReview.ts',
