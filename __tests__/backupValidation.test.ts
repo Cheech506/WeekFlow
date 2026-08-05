@@ -15,6 +15,8 @@ import {
 import {
   localIso,
   makeBrainDump,
+  makeCycleGoalOutcome,
+  makeCycleReview,
   makeGoal,
   makeGoalMilestone,
   makePlanningCycle,
@@ -119,6 +121,24 @@ function makeValidBackup(): WeekFlowBackup {
           resolvedDueDate: '2026-07-15',
         }),
       ],
+      cycleReviews: [
+        makeCycleReview({
+          id: 80,
+          cycleId: 40,
+          goalTotal: 1,
+          goalCompleted: 0,
+          rewardsUnlocked: 0,
+          nextCycleId: null,
+        }),
+      ],
+      cycleGoalOutcomes: [
+        makeCycleGoalOutcome({
+          id: 90,
+          cycleReviewId: 80,
+          goalId: 1,
+          goalTitle: goal.title,
+        }),
+      ],
     },
   };
 }
@@ -149,6 +169,8 @@ describe('backup validation', () => {
         weeklyReviews: 1,
         weeklyCommitments: 1,
         weeklyTaskDecisions: 1,
+        cycleReviews: 1,
+        cycleGoalOutcomes: 1,
       },
     });
   });
@@ -549,6 +571,25 @@ describe('backup validation', () => {
     );
   });
 
+  test('upgrades a valid version 11 backup without Week 13 review data', () => {
+    const current = makeValidBackup();
+    const {
+      cycleReviews: _cycleReviews,
+      cycleGoalOutcomes: _cycleGoalOutcomes,
+      ...legacyData
+    } = current.data;
+
+    const result = inspectWeekFlowBackup({
+      ...current,
+      version: 11,
+      data: legacyData,
+    });
+
+    expect(result.preview.sourceVersion).toBe(11);
+    expect(result.backup.data.cycleReviews).toEqual([]);
+    expect(result.backup.data.cycleGoalOutcomes).toEqual([]);
+  });
+
   test('upgrades a valid version 10 backup with named-cycle fields and goal links', () => {
     const current = makeValidBackup();
     const legacyGoals = current.data.goals.map(
@@ -620,6 +661,18 @@ describe('backup validation', () => {
     expect(result.backup.data.weeklyReviews).toEqual([]);
     expect(result.backup.data.weeklyCommitments).toEqual([]);
     expect(result.backup.data.weeklyTaskDecisions).toEqual([]);
+  });
+
+  test('rejects invalid or duplicate first-week commitments', () => {
+    const backup = makeValidBackup();
+    backup.data.cycleReviews[0].nextCycleFirstWeekCommitments = [
+      'First commitment',
+      ' first commitment ',
+    ];
+
+    expect(() => parseWeekFlowBackup(backup)).toThrow(
+      'duplicate first-week commitments'
+    );
   });
 
   test('rejects malformed JSON text', () => {

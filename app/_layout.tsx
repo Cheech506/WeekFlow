@@ -9,6 +9,7 @@ import 'react-native-reanimated';
 import { useColorScheme } from '@/components/useColorScheme';
 import { BrainDumpProvider } from '@/context/BrainDumpContext';
 import { CycleProvider } from '@/context/CycleContext';
+import { CycleReviewProvider } from '@/context/CycleReviewContext';
 import { GoalProvider } from '@/context/GoalContext';
 import { TaskProvider } from '@/context/TaskContext';
 import { WeeklyReviewProvider } from '@/context/WeeklyReviewContext';
@@ -63,53 +64,58 @@ function RootLayoutNav() {
           <GoalProvider>
             <BrainDumpProvider>
               <WeeklyReviewProvider>
-                <Stack>
-                  <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-                  <Stack.Screen
-                    name="settings"
-                    options={({ navigation }) => ({
-                      title: 'Settings',
-                      headerBackVisible: false,
-                      headerLeft: ({ tintColor }) => (
-                        <Pressable
-                          accessibilityRole="button"
-                          accessibilityLabel="Return to WeekFlow"
-                          hitSlop={10}
-                          onPress={() => {
-                            /*
-                             * Fast refresh or opening /settings directly can leave
-                             * the stack without a previous screen. Fall back to the
-                             * Goals tab instead of dispatching an invalid GO_BACK.
-                             */
-                            if (navigation.canGoBack()) {
-                              navigation.goBack();
-                            } else {
-                              router.replace('/' as Href);
-                            }
-                          }}
-                          style={({ pressed }) => ({
-                            paddingHorizontal: 4,
-                            opacity: pressed ? 0.5 : 1,
-                          })}
-                        >
-                          <Text
-                            style={{
-                              color: tintColor,
-                              fontSize: 16,
-                              fontWeight: '600',
+                <CycleReviewProvider>
+                  <Stack>
+                    <Stack.Screen
+                      name="(tabs)"
+                      options={{ headerShown: false }}
+                    />
+                    <Stack.Screen
+                      name="settings"
+                      options={({ navigation }) => ({
+                        title: 'Settings',
+                        headerBackVisible: false,
+                        headerLeft: ({ tintColor }) => (
+                          <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel="Return to WeekFlow"
+                            hitSlop={10}
+                            onPress={() => {
+                              /*
+                               * Fast refresh or opening /settings directly can leave
+                               * the stack without a previous screen. Fall back to the
+                               * Goals tab instead of dispatching an invalid GO_BACK.
+                               */
+                              if (navigation.canGoBack()) {
+                                navigation.goBack();
+                              } else {
+                                router.replace('/' as Href);
+                              }
                             }}
+                            style={({ pressed }) => ({
+                              paddingHorizontal: 4,
+                              opacity: pressed ? 0.5 : 1,
+                            })}
                           >
-                            ‹ Back
-                          </Text>
-                        </Pressable>
-                      ),
-                    })}
-                  />
-                  <Stack.Screen
-                    name="modal"
-                    options={{ presentation: 'modal' }}
-                  />
-                </Stack>
+                            <Text
+                              style={{
+                                color: tintColor,
+                                fontSize: 16,
+                                fontWeight: '600',
+                              }}
+                            >
+                              ‹ Back
+                            </Text>
+                          </Pressable>
+                        ),
+                      })}
+                    />
+                    <Stack.Screen
+                      name="modal"
+                      options={{ presentation: 'modal' }}
+                    />
+                  </Stack>
+                </CycleReviewProvider>
               </WeeklyReviewProvider>
             </BrainDumpProvider>
           </GoalProvider>

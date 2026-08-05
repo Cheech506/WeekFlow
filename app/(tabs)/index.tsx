@@ -8,6 +8,7 @@ import {
 } from 'react-native';
 
 import CycleIdentityFields from '@/components/CycleIdentityFields';
+import CycleReviewPanel from '@/components/CycleReviewPanel';
 import GoalAnalyticsCard from '@/components/GoalAnalyticsCard';
 import GoalCompletionPanel from '@/components/GoalCompletionPanel';
 import GoalMilestoneManager from '@/components/GoalMilestoneManager';
@@ -898,82 +899,11 @@ export default function TwelveWeekGoalsScreen() {
             </Text>
 
             {cycleProgress.state === 'complete' ? (
-              <View style={styles.cycleCompletionCard}>
-                <Text style={styles.cycleCompletionTitle}>
-                  Cycle complete 🎉
-                </Text>
-                <Text style={styles.cycleCompletionText}>
-                  You finished {completedGoalsThisCycle} goals and{' '}
-                  {completedTasksThisCycle} tasks during this cycle.
-                  Your {activeCycleGoalCount} active goals and{' '}
-                  {unfinishedCycleTaskCount} unfinished tasks stay in
-                  WeekFlow automatically, so you can carry them forward or
-                  clean them up before starting again.
-                </Text>
-
-                <CycleIdentityFields
-                  name={cycleName}
-                  primaryFocus={cyclePrimaryFocus}
-                  theme={cycleTheme}
-                  onNameChange={(value) => {
-                    setCycleName(value);
-                    setCycleMessage('');
-                  }}
-                  onPrimaryFocusChange={(value) => {
-                    setCyclePrimaryFocus(value);
-                    setCycleMessage('');
-                  }}
-                  onThemeChange={(value) => {
-                    setCycleTheme(value);
-                    setCycleMessage('');
-                  }}
-                />
-
-                <View style={styles.cycleForm}>
-                  <View style={styles.cycleDateField}>
-                    <Text style={styles.dateInputLabel}>
-                      Next cycle start date
-                    </Text>
-                    <TextInput
-                      style={styles.dateInput}
-                      value={cycleStartDate}
-                      onChangeText={(value) => {
-                        setCycleStartDate(value);
-                        setCycleMessage('');
-                      }}
-                      placeholder="YYYY-MM-DD"
-                      autoCapitalize="none"
-                      autoCorrect={false}
-                    />
-                  </View>
-
-                  <View style={styles.cycleDatePreview}>
-                    <Text style={styles.cycleDatePreviewLabel}>
-                      Next cycle ends
-                    </Text>
-                    <Text style={styles.cycleDatePreviewValue}>
-                      {cycleRangePreview
-                        ? formatDateKey(cycleRangePreview.endDate)
-                        : 'Enter a valid start date'}
-                    </Text>
-                  </View>
-                </View>
-
-                {cycleMessage || cycleDateError ? (
-                  <Text style={styles.dateErrorText}>
-                    {cycleMessage || cycleDateError}
-                  </Text>
-                ) : null}
-
-                <Pressable
-                  style={styles.startCycleButton}
-                  onPress={handleStartPlanningCycle}
-                >
-                  <Text style={styles.startCycleButtonText}>
-                    Start Next 12-Week Cycle
-                  </Text>
-                </Pressable>
-              </View>
+              <CycleReviewPanel
+                cycle={currentCycle}
+                cycleLabel={currentCycleLabel}
+                cycleGoals={cycleGoals}
+              />
             ) : isEditingCycle ? (
               <View style={styles.cycleEditCard}>
                 <Text style={styles.cycleEditTitle}>

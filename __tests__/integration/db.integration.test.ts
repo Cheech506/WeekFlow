@@ -37,6 +37,8 @@ describe('SQLite migrations', () => {
           'weekly_reviews',
           'weekly_commitments',
           'weekly_task_decisions',
+          'cycle_reviews',
+          'cycle_goal_outcomes',
           'recurring_rules',
           'recurring_occurrence_exceptions',
           'app_metadata'
@@ -47,6 +49,8 @@ describe('SQLite migrations', () => {
     expect(tables.map((table) => table.name)).toEqual([
       'app_metadata',
       'brain_dumps',
+      'cycle_goal_outcomes',
+      'cycle_reviews',
       'goal_milestones',
       'goals',
       'planning_cycles',
@@ -157,6 +161,36 @@ describe('SQLite migrations', () => {
         'recurring_rule_id',
         'recurrence_occurrence_date',
         'decided_at',
+      ])
+    );
+
+    const cycleReviewColumns = await db.getAllAsync<{ name: string }>(
+      'PRAGMA table_info(cycle_reviews);'
+    );
+    expect(cycleReviewColumns.map((column) => column.name)).toEqual(
+      expect.arrayContaining([
+        'cycle_id',
+        'biggest_accomplishment',
+        'snapshot_goal_total',
+        'snapshot_task_completed',
+        'next_cycle_start_date',
+        'next_cycle_first_commitments',
+        'next_cycle_id',
+        'finalized_at',
+      ])
+    );
+
+    const cycleOutcomeColumns = await db.getAllAsync<{ name: string }>(
+      'PRAGMA table_info(cycle_goal_outcomes);'
+    );
+    expect(cycleOutcomeColumns.map((column) => column.name)).toEqual(
+      expect.arrayContaining([
+        'cycle_review_id',
+        'goal_id',
+        'goal_title',
+        'action',
+        'replacement_title',
+        'destination_goal_id',
       ])
     );
   });

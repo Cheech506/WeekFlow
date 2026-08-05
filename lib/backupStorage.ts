@@ -17,6 +17,10 @@ import {
 } from './backupValidation';
 import { getBrainDumps } from './brainDumpStorage';
 import { getPlanningCycles } from './cycleStorage';
+import {
+  getCycleGoalOutcomes,
+  getCycleReviews,
+} from './cycleReviewStorage';
 import { getDb, migrateDb } from './db';
 import { getGoalMilestones } from './goalMilestoneStorage';
 import { getGoals } from './goalStorage';
@@ -81,6 +85,8 @@ async function buildWeekFlowBackup(): Promise<WeekFlowBackup> {
     weeklyReviews,
     weeklyCommitments,
     weeklyTaskDecisions,
+    cycleReviews,
+    cycleGoalOutcomes,
   ] = await Promise.all([
     getTasks(),
     getGoals(),
@@ -93,6 +99,8 @@ async function buildWeekFlowBackup(): Promise<WeekFlowBackup> {
     getWeeklyReviews(),
     getWeeklyCommitments(),
     getWeeklyTaskDecisions(),
+    getCycleReviews(),
+    getCycleGoalOutcomes(),
   ]);
 
   return {
@@ -115,6 +123,8 @@ async function buildWeekFlowBackup(): Promise<WeekFlowBackup> {
       weeklyReviews,
       weeklyCommitments,
       weeklyTaskDecisions,
+      cycleReviews,
+      cycleGoalOutcomes,
     },
   };
 }
@@ -323,6 +333,8 @@ async function readDatabaseCounts(
     weeklyReviews,
     weeklyCommitments,
     weeklyTaskDecisions,
+    cycleReviews,
+    cycleGoalOutcomes,
   ] = await Promise.all([
     db.getFirstAsync<CountRow>(
       'SELECT COUNT(*) AS count FROM tasks;'
@@ -357,6 +369,12 @@ async function readDatabaseCounts(
     db.getFirstAsync<CountRow>(
       'SELECT COUNT(*) AS count FROM weekly_task_decisions;'
     ),
+    db.getFirstAsync<CountRow>(
+      'SELECT COUNT(*) AS count FROM cycle_reviews;'
+    ),
+    db.getFirstAsync<CountRow>(
+      'SELECT COUNT(*) AS count FROM cycle_goal_outcomes;'
+    ),
   ]);
 
   return {
@@ -373,6 +391,8 @@ async function readDatabaseCounts(
     weeklyReviews: weeklyReviews?.count ?? -1,
     weeklyCommitments: weeklyCommitments?.count ?? -1,
     weeklyTaskDecisions: weeklyTaskDecisions?.count ?? -1,
+    cycleReviews: cycleReviews?.count ?? -1,
+    cycleGoalOutcomes: cycleGoalOutcomes?.count ?? -1,
   };
 }
 
@@ -392,7 +412,9 @@ function countsMatch(
     expected.planningCycles === actual.planningCycles &&
     expected.weeklyReviews === actual.weeklyReviews &&
     expected.weeklyCommitments === actual.weeklyCommitments &&
-    expected.weeklyTaskDecisions === actual.weeklyTaskDecisions
+    expected.weeklyTaskDecisions === actual.weeklyTaskDecisions &&
+    expected.cycleReviews === actual.cycleReviews &&
+    expected.cycleGoalOutcomes === actual.cycleGoalOutcomes
   );
 }
 
@@ -420,6 +442,8 @@ export async function replaceWeekFlowData(
   await db.withTransactionAsync(
     async () => {
       await db.execAsync(`
+        DELETE FROM cycle_goal_outcomes;
+        DELETE FROM cycle_reviews;
         DELETE FROM tasks;
         DELETE FROM recurring_occurrence_exceptions;
         DELETE FROM recurring_rules;
@@ -708,6 +732,114 @@ export async function replaceWeekFlowData(
               : 0,
             brainDump.createdAt,
             brainDump.archivedAt,
+          ]
+        );
+      }
+
+      for (const review of validatedBackup.data.cycleReviews) {
+        await db.runAsync(
+          `
+          INSERT INTO cycle_reviews (
+            id,
+            cycle_id,
+            biggest_accomplishment,
+            biggest_challenge,
+            what_worked_well,
+            what_change_next_cycle,
+            what_stop_doing,
+            what_continue_doing,
+            what_learned,
+            snapshot_goal_total,
+            snapshot_goal_completed,
+            snapshot_task_completed,
+            snapshot_milestone_total,
+            snapshot_milestone_completed,
+            snapshot_weekly_reviews_completed,
+            snapshot_longest_streak,
+            snapshot_best_week_number,
+            snapshot_best_week_count,
+            snapshot_best_day,
+            snapshot_best_day_count,
+            snapshot_high_priority_completed,
+            snapshot_recurring_completed,
+            snapshot_rewards_unlocked,
+            snapshot_brain_dumps_archived,
+            next_cycle_name,
+            next_cycle_primary_focus,
+            next_cycle_theme,
+            next_cycle_start_date,
+            next_cycle_first_commitments,
+            next_cycle_id,
+            created_at,
+            updated_at,
+            finalized_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+          `,
+          [
+            review.id,
+            review.cycleId,
+            review.biggestAccomplishment,
+            review.biggestChallenge,
+            review.whatWorkedWell,
+            review.whatChangeNextCycle,
+            review.whatStopDoing,
+            review.whatContinueDoing,
+            review.whatLearned,
+            review.goalTotal,
+            review.goalCompleted,
+            review.taskCompleted,
+            review.milestoneTotal,
+            review.milestoneCompleted,
+            review.weeklyReviewsCompleted,
+            review.longestStreak,
+            review.bestWeekNumber,
+            review.bestWeekCount,
+            review.bestDay,
+            review.bestDayCount,
+            review.highPriorityCompleted,
+            review.recurringCompleted,
+            review.rewardsUnlocked,
+            review.brainDumpsArchived,
+            review.nextCycleName,
+            review.nextCyclePrimaryFocus,
+            review.nextCycleTheme,
+            review.nextCycleStartDate,
+            JSON.stringify(review.nextCycleFirstWeekCommitments),
+            review.nextCycleId,
+            review.createdAt,
+            review.updatedAt,
+            review.finalizedAt,
+          ]
+        );
+      }
+
+      for (const outcome of validatedBackup.data.cycleGoalOutcomes) {
+        await db.runAsync(
+          `
+          INSERT INTO cycle_goal_outcomes (
+            id,
+            cycle_review_id,
+            goal_id,
+            goal_title,
+            action,
+            replacement_title,
+            destination_goal_id,
+            created_at,
+            updated_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+          `,
+          [
+            outcome.id,
+            outcome.cycleReviewId,
+            outcome.goalId,
+            outcome.goalTitle,
+            outcome.action,
+            outcome.replacementTitle,
+            outcome.destinationGoalId,
+            outcome.createdAt,
+            outcome.updatedAt,
           ]
         );
       }

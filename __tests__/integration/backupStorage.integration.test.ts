@@ -162,6 +162,56 @@ function makeBackup(
           decidedAt: '2026-07-12T12:00:00.000Z',
         },
       ],
+      cycleReviews: [
+        {
+          id: 90,
+          cycleId: 40,
+          biggestAccomplishment: 'Finished the core local app.',
+          biggestChallenge: null,
+          whatWorkedWell: 'Weekly planning kept the work focused.',
+          whatChangeNextCycle: null,
+          whatStopDoing: null,
+          whatContinueDoing: 'Keep completing weekly reviews.',
+          whatLearned: 'Stable snapshots preserve historical truth.',
+          goalTotal: 1,
+          goalCompleted: 1,
+          taskCompleted: 1,
+          milestoneTotal: 1,
+          milestoneCompleted: 1,
+          weeklyReviewsCompleted: 1,
+          longestStreak: 3,
+          bestWeekNumber: 1,
+          bestWeekCount: 1,
+          bestDay: 'Monday',
+          bestDayCount: 1,
+          highPriorityCompleted: 0,
+          recurringCompleted: 0,
+          rewardsUnlocked: 1,
+          brainDumpsArchived: 0,
+          nextCycleName: 'Fall 2026',
+          nextCyclePrimaryFocus: 'Prepare for the capstone',
+          nextCycleTheme: 'Finish strong',
+          nextCycleStartDate: '2026-09-30',
+          nextCycleFirstWeekCommitments: ['Set up the first week'],
+          nextCycleId: null,
+          createdAt: '2026-09-23T12:00:00.000Z',
+          updatedAt: '2026-09-23T12:00:00.000Z',
+          finalizedAt: null,
+        },
+      ],
+      cycleGoalOutcomes: [
+        {
+          id: 100,
+          cycleReviewId: 90,
+          goalId: 1,
+          goalTitle: 'Restored goal',
+          action: 'archive',
+          replacementTitle: null,
+          destinationGoalId: null,
+          createdAt: '2026-09-23T12:00:00.000Z',
+          updatedAt: '2026-09-23T12:00:00.000Z',
+        },
+      ],
     },
   };
 }
@@ -192,6 +242,9 @@ describe('backup restore integration', () => {
     const weeklyReviewStorage = await import(
       '../../lib/weeklyReviewStorage'
     );
+    const cycleReviewStorage = await import(
+      '../../lib/cycleReviewStorage'
+    );
 
     await taskStorage.insertTask('Old task', 'Inbox');
     await goalStorage.insertGoal('Old goal');
@@ -211,6 +264,8 @@ describe('backup restore integration', () => {
       weeklyReviews: 1,
       weeklyCommitments: 1,
       weeklyTaskDecisions: 1,
+      cycleReviews: 1,
+      cycleGoalOutcomes: 1,
     });
 
     expect((await taskStorage.getTasks())[0].title).toBe(
@@ -268,6 +323,16 @@ describe('backup restore integration', () => {
     expect((await weeklyReviewStorage.getWeeklyTaskDecisions())[0]).toMatchObject({
       action: 'nextWeek',
       resolvedDueDate: '2026-07-13',
+    });
+    expect((await cycleReviewStorage.getCycleReviews())[0]).toMatchObject({
+      cycleId: 40,
+      biggestAccomplishment: 'Finished the core local app.',
+      nextCycleFirstWeekCommitments: ['Set up the first week'],
+    });
+    expect((await cycleReviewStorage.getCycleGoalOutcomes())[0]).toMatchObject({
+      cycleReviewId: 90,
+      goalId: 1,
+      action: 'archive',
     });
   });
 

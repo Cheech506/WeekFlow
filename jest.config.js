@@ -18,6 +18,8 @@ module.exports = {
     'lib/dateUtils.ts',
     'lib/cycleUtils.ts',
     'lib/cycleIdentityUtils.ts',
+    'lib/cycleReviewUtils.ts',
+    'lib/cycleReviewStorage.ts',
     'lib/cycleStorage.ts',
     'lib/progressStats.ts',
     'lib/weeklyReview.ts',

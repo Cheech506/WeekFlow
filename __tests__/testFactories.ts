@@ -1,5 +1,9 @@
 import type { StoredBrainDump } from '../lib/brainDumpStorage';
 import type { PlanningCycle } from '../lib/cycleStorage';
+import type {
+  StoredCycleGoalOutcome,
+  StoredCycleReview,
+} from '../lib/cycleReviewStorage';
 import type { GoalMilestone } from '../lib/goalMilestoneStorage';
 import type { StoredGoal } from '../lib/goalStorage';
 import type { RecurringRule } from '../lib/recurringStorage';
@@ -120,6 +124,68 @@ export function makePlanningCycle(
     active: true,
     createdAt: new Date(2026, 6, 1, 12).toISOString(),
     completedAt: null,
+    ...overrides,
+  };
+}
+
+export function makeCycleReview(
+  overrides: Partial<StoredCycleReview> = {}
+): StoredCycleReview {
+  const id = overrides.id ?? nextId++;
+
+  return {
+    id,
+    cycleId: 1,
+    biggestAccomplishment: null,
+    biggestChallenge: null,
+    whatWorkedWell: null,
+    whatChangeNextCycle: null,
+    whatStopDoing: null,
+    whatContinueDoing: null,
+    whatLearned: null,
+    goalTotal: 3,
+    goalCompleted: 2,
+    taskCompleted: 24,
+    milestoneTotal: 6,
+    milestoneCompleted: 5,
+    weeklyReviewsCompleted: 10,
+    longestStreak: 8,
+    bestWeekNumber: 7,
+    bestWeekCount: 6,
+    bestDay: 'Tuesday',
+    bestDayCount: 7,
+    highPriorityCompleted: 5,
+    recurringCompleted: 4,
+    rewardsUnlocked: 1,
+    brainDumpsArchived: 3,
+    nextCycleName: 'Next Cycle',
+    nextCyclePrimaryFocus: 'Keep building the foundation',
+    nextCycleTheme: 'Finish strong',
+    nextCycleStartDate: '2026-10-01',
+    nextCycleFirstWeekCommitments: ['Set up the first week'],
+    nextCycleId: null,
+    createdAt: localIso(2026, 9, 23),
+    updatedAt: localIso(2026, 9, 23),
+    finalizedAt: null,
+    ...overrides,
+  };
+}
+
+export function makeCycleGoalOutcome(
+  overrides: Partial<StoredCycleGoalOutcome> = {}
+): StoredCycleGoalOutcome {
+  const id = overrides.id ?? nextId++;
+
+  return {
+    id,
+    cycleReviewId: 1,
+    goalId: 1,
+    goalTitle: 'Unfinished goal',
+    action: 'carryForward',
+    replacementTitle: null,
+    destinationGoalId: null,
+    createdAt: localIso(2026, 9, 23),
+    updatedAt: localIso(2026, 9, 23),
     ...overrides,
   };
 }

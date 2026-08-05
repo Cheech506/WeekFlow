@@ -1,6 +1,17 @@
 import type { StoredBrainDump } from './brainDumpStorage';
 import type { PlanningCycle } from './cycleStorage';
 import {
+  CYCLE_GOAL_OUTCOME_ACTIONS,
+  MAX_CYCLE_REVIEW_RESPONSE_LENGTH,
+  MAX_FIRST_WEEK_COMMITMENT_LENGTH,
+  MAX_FIRST_WEEK_COMMITMENTS,
+  MAX_REPLACEMENT_GOAL_TITLE_LENGTH,
+} from './cycleReviewUtils';
+import type {
+  StoredCycleGoalOutcome,
+  StoredCycleReview,
+} from './cycleReviewStorage';
+import {
   MAX_CYCLE_NAME_LENGTH,
   MAX_CYCLE_PRIMARY_FOCUS_LENGTH,
   MAX_CYCLE_THEME_LENGTH,
@@ -40,7 +51,7 @@ import {
 } from './weeklyReviewStorage';
 
 export const BACKUP_FORMAT = 'weekflow-backup';
-export const BACKUP_VERSION = 11;
+export const BACKUP_VERSION = 12;
 export const BACKUP_DATA_MODEL_VERSION = 1;
 
 export type BackupCounts = {
@@ -55,6 +66,8 @@ export type BackupCounts = {
   weeklyReviews: number;
   weeklyCommitments: number;
   weeklyTaskDecisions: number;
+  cycleReviews: number;
+  cycleGoalOutcomes: number;
 };
 
 export type BackupRepairs = {
@@ -121,6 +134,8 @@ type BackupDataWithLegacyGoals = Omit<
   | 'weeklyReviews'
   | 'weeklyCommitments'
   | 'weeklyTaskDecisions'
+  | 'cycleReviews'
+  | 'cycleGoalOutcomes'
 > & {
   goals: LegacyStoredGoal[];
   goalMilestones?: GoalMilestone[];
@@ -212,7 +227,10 @@ type LegacyWeekFlowBackupV9 = {
   version: 9;
   exportedAt: string;
   metadata: BackupMetadata;
-  data: Omit<WeekFlowBackup['data'], 'weeklyCommitments'> & {
+  data: Omit<
+    WeekFlowBackup['data'],
+    'weeklyCommitments' | 'cycleReviews' | 'cycleGoalOutcomes'
+  > & {
     weeklyCommitments: LegacyWeeklyCommitmentV9[];
   };
 };
@@ -224,10 +242,23 @@ type LegacyWeekFlowBackupV10 = {
   metadata: BackupMetadata;
   data: Omit<
     WeekFlowBackup['data'],
-    'goals' | 'planningCycles'
+    'goals' | 'planningCycles' | 'cycleReviews' | 'cycleGoalOutcomes'
   > & {
     goals: LegacyStoredGoal[];
     planningCycles: LegacyPlanningCycle[];
+    cycleReviews?: StoredCycleReview[];
+    cycleGoalOutcomes?: StoredCycleGoalOutcome[];
+  };
+};
+
+type LegacyWeekFlowBackupV11 = {
+  format: typeof BACKUP_FORMAT;
+  version: 11;
+  exportedAt: string;
+  metadata: BackupMetadata;
+  data: Omit<WeekFlowBackup['data'], 'cycleReviews' | 'cycleGoalOutcomes'> & {
+    cycleReviews?: StoredCycleReview[];
+    cycleGoalOutcomes?: StoredCycleGoalOutcome[];
   };
 };
 
@@ -248,11 +279,13 @@ export type WeekFlowBackup = {
     weeklyReviews: StoredWeeklyReview[];
     weeklyCommitments: WeeklyCommitment[];
     weeklyTaskDecisions: WeeklyTaskDecision[];
+    cycleReviews: StoredCycleReview[];
+    cycleGoalOutcomes: StoredCycleGoalOutcome[];
   };
 };
 
 export type BackupPreview = {
-  sourceVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | typeof BACKUP_VERSION;
+  sourceVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | typeof BACKUP_VERSION;
   currentVersion: typeof BACKUP_VERSION;
   exportedAt: string;
   appVersion: string;
@@ -1162,6 +1195,231 @@ function validateWeeklyTaskDecision(
   }
 }
 
+function validateCycleReview(
+  value: unknown,
+  label: string
+): asserts value is StoredCycleReview {
+  if (!isRecord(value)) {
+    fail('INVALID_CYCLE_REVIEW', `${label} is not an object.`);
+  }
+
+  if (
+    !isPositiveInteger(value.id) ||
+    !isPositiveInteger(value.cycleId)
+  ) {
+    fail('INVALID_CYCLE_REVIEW', `${label} has an invalid ID or cycle link.`);
+  }
+
+  const responses = [
+    value.biggestAccomplishment,
+    value.biggestChallenge,
+    value.whatWorkedWell,
+    value.whatChangeNextCycle,
+    value.whatStopDoing,
+    value.whatContinueDoing,
+    value.whatLearned,
+  ];
+
+  if (
+    responses.some(
+      (response) =>
+        !isNullableString(response) ||
+        (typeof response === 'string' &&
+          response.length > MAX_CYCLE_REVIEW_RESPONSE_LENGTH)
+    )
+  ) {
+    fail('INVALID_CYCLE_REVIEW', `${label} has an invalid reflection response.`);
+  }
+
+  const counts = [
+    value.goalTotal,
+    value.goalCompleted,
+    value.taskCompleted,
+    value.milestoneTotal,
+    value.milestoneCompleted,
+    value.weeklyReviewsCompleted,
+    value.longestStreak,
+    value.bestWeekCount,
+    value.bestDayCount,
+    value.highPriorityCompleted,
+    value.recurringCompleted,
+    value.rewardsUnlocked,
+    value.brainDumpsArchived,
+  ];
+
+  if (
+    counts.some(
+      (count) =>
+        typeof count !== 'number' ||
+        !Number.isSafeInteger(count) ||
+        count < 0
+    )
+  ) {
+    fail('INVALID_CYCLE_REVIEW', `${label} has an invalid saved count.`);
+  }
+
+  const bestWeekNumber = value.bestWeekNumber;
+  if (
+    bestWeekNumber !== null &&
+    (typeof bestWeekNumber !== 'number' ||
+      !Number.isSafeInteger(bestWeekNumber) ||
+      bestWeekNumber < 1 ||
+      bestWeekNumber > 12)
+  ) {
+    fail('INVALID_CYCLE_REVIEW', `${label} has an invalid best week.`);
+  }
+
+  const goalTotal = value.goalTotal as number;
+  const goalCompleted = value.goalCompleted as number;
+  const taskCompleted = value.taskCompleted as number;
+  const milestoneTotal = value.milestoneTotal as number;
+  const milestoneCompleted = value.milestoneCompleted as number;
+  const highPriorityCompleted = value.highPriorityCompleted as number;
+  const recurringCompleted = value.recurringCompleted as number;
+  const rewardsUnlocked = value.rewardsUnlocked as number;
+  const bestWeekCount = value.bestWeekCount as number;
+  const bestDayCount = value.bestDayCount as number;
+
+  if (
+    !isNullableString(value.bestDay) ||
+    goalCompleted > goalTotal ||
+    milestoneCompleted > milestoneTotal ||
+    highPriorityCompleted > taskCompleted ||
+    recurringCompleted > taskCompleted ||
+    rewardsUnlocked > goalCompleted ||
+    bestWeekCount > taskCompleted ||
+    bestDayCount > taskCompleted
+  ) {
+    fail('INVALID_CYCLE_REVIEW', `${label} contains inconsistent saved analytics.`);
+  }
+
+  const nextCycleTexts = [
+    [value.nextCycleName, MAX_CYCLE_NAME_LENGTH],
+    [value.nextCyclePrimaryFocus, MAX_CYCLE_PRIMARY_FOCUS_LENGTH],
+    [value.nextCycleTheme, MAX_CYCLE_THEME_LENGTH],
+  ] as const;
+  if (
+    nextCycleTexts.some(
+      ([item, maxLength]) =>
+        !isNullableString(item) ||
+        (typeof item === 'string' && item.length > maxLength)
+    )
+  ) {
+    fail('INVALID_CYCLE_REVIEW', `${label} has invalid next-cycle details.`);
+  }
+
+  if (
+    !Array.isArray(value.nextCycleFirstWeekCommitments) ||
+    value.nextCycleFirstWeekCommitments.length > MAX_FIRST_WEEK_COMMITMENTS ||
+    value.nextCycleFirstWeekCommitments.some(
+      (commitment) =>
+        typeof commitment !== 'string' ||
+        commitment.trim().length === 0 ||
+        commitment.length > MAX_FIRST_WEEK_COMMITMENT_LENGTH
+    )
+  ) {
+    fail(
+      'INVALID_CYCLE_REVIEW',
+      `${label} has invalid first-week commitments.`
+    );
+  }
+
+  if (
+    new Set(
+      value.nextCycleFirstWeekCommitments.map((commitment) =>
+        commitment.trim().toLowerCase()
+      )
+    ).size !== value.nextCycleFirstWeekCommitments.length
+  ) {
+    fail(
+      'INVALID_CYCLE_REVIEW',
+      `${label} has duplicate first-week commitments.`
+    );
+  }
+
+  if (!isValidNullableDateKey(value.nextCycleStartDate)) {
+    fail('INVALID_CYCLE_REVIEW', `${label} has an invalid next-cycle start date.`);
+  }
+
+  if (value.nextCycleId !== null && !isPositiveInteger(value.nextCycleId)) {
+    fail('INVALID_CYCLE_REVIEW', `${label} has an invalid next-cycle link.`);
+  }
+
+  if (
+    !isIsoTimestamp(value.createdAt) ||
+    !isIsoTimestamp(value.updatedAt) ||
+    !isNullableIsoTimestamp(value.finalizedAt)
+  ) {
+    fail('INVALID_CYCLE_REVIEW', `${label} has invalid timestamps.`);
+  }
+
+  if (
+    value.finalizedAt !== null &&
+    value.nextCycleStartDate === null
+  ) {
+    fail(
+      'INVALID_CYCLE_REVIEW',
+      `${label} is finalized without a saved next-cycle plan.`
+    );
+  }
+}
+
+function validateCycleGoalOutcome(
+  value: unknown,
+  label: string
+): asserts value is StoredCycleGoalOutcome {
+  if (!isRecord(value)) {
+    fail('INVALID_CYCLE_GOAL_OUTCOME', `${label} is not an object.`);
+  }
+
+  if (
+    !isPositiveInteger(value.id) ||
+    !isPositiveInteger(value.cycleReviewId) ||
+    (value.goalId !== null && !isPositiveInteger(value.goalId)) ||
+    (value.destinationGoalId !== null &&
+      !isPositiveInteger(value.destinationGoalId))
+  ) {
+    fail('INVALID_CYCLE_GOAL_OUTCOME', `${label} has an invalid relationship.`);
+  }
+
+  if (
+    typeof value.goalTitle !== 'string' ||
+    value.goalTitle.trim().length === 0
+  ) {
+    fail('INVALID_CYCLE_GOAL_OUTCOME', `${label} has an invalid goal title.`);
+  }
+
+  if (
+    typeof value.action !== 'string' ||
+    !CYCLE_GOAL_OUTCOME_ACTIONS.includes(
+      value.action as (typeof CYCLE_GOAL_OUTCOME_ACTIONS)[number]
+    )
+  ) {
+    fail('INVALID_CYCLE_GOAL_OUTCOME', `${label} has an invalid action.`);
+  }
+
+  if (
+    !isNullableString(value.replacementTitle) ||
+    (typeof value.replacementTitle === 'string' &&
+      value.replacementTitle.length > MAX_REPLACEMENT_GOAL_TITLE_LENGTH)
+  ) {
+    fail('INVALID_CYCLE_GOAL_OUTCOME', `${label} has an invalid replacement title.`);
+  }
+
+  if (
+    (value.action === 'replace') !== (value.replacementTitle !== null)
+  ) {
+    fail(
+      'INVALID_CYCLE_GOAL_OUTCOME',
+      `${label} has replacement text that does not match its action.`
+    );
+  }
+
+  if (!isIsoTimestamp(value.createdAt) || !isIsoTimestamp(value.updatedAt)) {
+    fail('INVALID_CYCLE_GOAL_OUTCOME', `${label} has invalid timestamps.`);
+  }
+}
+
 function validateBrainDump(
   value: unknown,
   label: string
@@ -1560,6 +1818,12 @@ function repairOrphanedGoalLinks(
             ...rule,
             goalId: repairGoalId(rule.goalId),
           })),
+        cycleGoalOutcomes:
+          backup.data.cycleGoalOutcomes.map((outcome) => ({
+            ...outcome,
+            goalId: repairGoalId(outcome.goalId),
+            destinationGoalId: repairGoalId(outcome.destinationGoalId),
+          })),
       },
     },
     repairs: {
@@ -1734,6 +1998,48 @@ function validateRelationships(
       `The weekly commitment "${commitmentWithMissingCycle.title}" is linked to a planning cycle that is not included in the backup.`
     );
   }
+
+  const cycleReviewIds = new Set(
+    backup.data.cycleReviews.map((review) => review.id)
+  );
+
+  const cycleReviewWithMissingCycle = backup.data.cycleReviews.find(
+    (review) =>
+      !cycleIds.has(review.cycleId) ||
+      (review.nextCycleId !== null && !cycleIds.has(review.nextCycleId))
+  );
+
+  if (cycleReviewWithMissingCycle) {
+    fail(
+      'MISSING_CYCLE',
+      'A Week 13 review is linked to a planning cycle that is not included in the backup.'
+    );
+  }
+
+  const outcomeWithMissingReview = backup.data.cycleGoalOutcomes.find(
+    (outcome) => !cycleReviewIds.has(outcome.cycleReviewId)
+  );
+
+  if (outcomeWithMissingReview) {
+    fail(
+      'MISSING_CYCLE_REVIEW',
+      `The saved outcome for "${outcomeWithMissingReview.goalTitle}" is missing its cycle review.`
+    );
+  }
+
+  const outcomeWithMissingGoal = backup.data.cycleGoalOutcomes.find(
+    (outcome) =>
+      (outcome.goalId !== null && !goalIds.has(outcome.goalId)) ||
+      (outcome.destinationGoalId !== null &&
+        !goalIds.has(outcome.destinationGoalId))
+  );
+
+  if (outcomeWithMissingGoal) {
+    fail(
+      'MISSING_GOAL',
+      `The saved cycle outcome for "${outcomeWithMissingGoal.goalTitle}" is linked to a goal that is not included in the backup.`
+    );
+  }
 }
 
 function validateData(
@@ -1747,7 +2053,8 @@ function validateData(
   requireWeeklyReviewData: boolean = true,
   requireWeeklyCommitmentTaskLinks: boolean = true,
   requireCycleIdentity: boolean = true,
-  requireGoalCycleLinks: boolean = true
+  requireGoalCycleLinks: boolean = true,
+  requireCycleReviewData: boolean = false
 ): WeekFlowBackup['data'] {
   const requiredArrays = [
     'tasks',
@@ -1810,6 +2117,19 @@ function validateData(
     );
   }
 
+  if (
+    requireCycleReviewData &&
+    (
+      !Array.isArray(value.cycleReviews) ||
+      !Array.isArray(value.cycleGoalOutcomes)
+    )
+  ) {
+    fail(
+      'MISSING_SECTION',
+      'The backup is missing Week 13 cycle review data.'
+    );
+  }
+
   const tasks = value.tasks as unknown[];
   const goals = value.goals as unknown[];
   const goalMilestones = Array.isArray(value.goalMilestones)
@@ -1833,6 +2153,12 @@ function validateData(
     : [];
   const weeklyTaskDecisions = Array.isArray(value.weeklyTaskDecisions)
     ? (value.weeklyTaskDecisions as unknown[])
+    : [];
+  const cycleReviews = Array.isArray(value.cycleReviews)
+    ? (value.cycleReviews as unknown[])
+    : [];
+  const cycleGoalOutcomes = Array.isArray(value.cycleGoalOutcomes)
+    ? (value.cycleGoalOutcomes as unknown[])
     : [];
 
   tasks.forEach((task, index) =>
@@ -1915,6 +2241,14 @@ function validateData(
     )
   );
 
+  cycleReviews.forEach((review, index) =>
+    validateCycleReview(review, `Cycle review ${index + 1}`)
+  );
+
+  cycleGoalOutcomes.forEach((outcome, index) =>
+    validateCycleGoalOutcome(outcome, `Cycle goal outcome ${index + 1}`)
+  );
+
   return {
     tasks: tasks as Task[],
     goals: goals as StoredGoal[],
@@ -1929,6 +2263,9 @@ function validateData(
     weeklyCommitments: weeklyCommitments as WeeklyCommitment[],
     weeklyTaskDecisions:
       weeklyTaskDecisions as WeeklyTaskDecision[],
+    cycleReviews: cycleReviews as StoredCycleReview[],
+    cycleGoalOutcomes:
+      cycleGoalOutcomes as StoredCycleGoalOutcome[],
   };
 }
 
@@ -2084,6 +2421,8 @@ function normalizeLegacyBackupV1(
       weeklyReviews: [],
       weeklyCommitments: [],
       weeklyTaskDecisions: [],
+      cycleReviews: [],
+      cycleGoalOutcomes: [],
     },
   };
 }
@@ -2107,6 +2446,8 @@ function normalizeLegacyBackupV2(
       weeklyReviews: [],
       weeklyCommitments: [],
       weeklyTaskDecisions: [],
+      cycleReviews: [],
+      cycleGoalOutcomes: [],
     },
   };
 }
@@ -2126,6 +2467,8 @@ function normalizeLegacyBackupV3(
       weeklyReviews: [],
       weeklyCommitments: [],
       weeklyTaskDecisions: [],
+      cycleReviews: [],
+      cycleGoalOutcomes: [],
     },
   };
 }
@@ -2144,6 +2487,8 @@ function normalizeLegacyBackupV4(
       weeklyReviews: [],
       weeklyCommitments: [],
       weeklyTaskDecisions: [],
+      cycleReviews: [],
+      cycleGoalOutcomes: [],
     },
   };
 }
@@ -2166,6 +2511,8 @@ function normalizeLegacyBackupV5(
       weeklyReviews: [],
       weeklyCommitments: [],
       weeklyTaskDecisions: [],
+      cycleReviews: [],
+      cycleGoalOutcomes: [],
     },
   };
 }
@@ -2188,6 +2535,8 @@ function normalizeLegacyBackupV6(
       weeklyReviews: [],
       weeklyCommitments: [],
       weeklyTaskDecisions: [],
+      cycleReviews: [],
+      cycleGoalOutcomes: [],
     },
   };
 }
@@ -2210,6 +2559,8 @@ function normalizeLegacyBackupV7(
       weeklyReviews: [],
       weeklyCommitments: [],
       weeklyTaskDecisions: [],
+      cycleReviews: [],
+      cycleGoalOutcomes: [],
     },
   };
 }
@@ -2232,6 +2583,8 @@ function normalizeLegacyBackupV8(
       weeklyReviews: [],
       weeklyCommitments: [],
       weeklyTaskDecisions: [],
+      cycleReviews: [],
+      cycleGoalOutcomes: [],
     },
   };
 }
@@ -2256,6 +2609,8 @@ function normalizeLegacyBackupV9(
       weeklyCommitments: normalizeLegacyWeeklyCommitments(
         backup.data.weeklyCommitments
       ),
+      cycleReviews: [],
+      cycleGoalOutcomes: [],
     },
   };
 }
@@ -2274,6 +2629,22 @@ function normalizeLegacyBackupV10(
       ...backup.data,
       planningCycles,
       goals: normalizeLegacyGoals(backup.data.goals, planningCycles),
+      cycleReviews: [],
+      cycleGoalOutcomes: [],
+    },
+  };
+}
+
+function normalizeLegacyBackupV11(
+  backup: LegacyWeekFlowBackupV11
+): WeekFlowBackup {
+  return {
+    ...backup,
+    version: BACKUP_VERSION,
+    data: {
+      ...backup.data,
+      cycleReviews: [],
+      cycleGoalOutcomes: [],
     },
   };
 }
@@ -2306,6 +2677,31 @@ function validateNormalizedBackup(
     backup.data.weeklyTaskDecisions,
     'weekly task decision'
   );
+  assertUniqueIds(backup.data.cycleReviews, 'cycle review');
+  assertUniqueIds(
+    backup.data.cycleGoalOutcomes,
+    'cycle goal outcome'
+  );
+
+  const cycleReviewCycleIds = backup.data.cycleReviews.map(
+    (review) => review.cycleId
+  );
+  if (new Set(cycleReviewCycleIds).size !== cycleReviewCycleIds.length) {
+    fail(
+      'DUPLICATE_CYCLE_REVIEWS',
+      'The backup contains more than one Week 13 review for the same cycle.'
+    );
+  }
+
+  const cycleOutcomeKeys = backup.data.cycleGoalOutcomes
+    .filter((outcome) => outcome.goalId !== null)
+    .map((outcome) => `${outcome.cycleReviewId}:${outcome.goalId}`);
+  if (new Set(cycleOutcomeKeys).size !== cycleOutcomeKeys.length) {
+    fail(
+      'DUPLICATE_CYCLE_OUTCOMES',
+      'The backup contains more than one outcome for the same cycle goal.'
+    );
+  }
 
   const weeklyReviewWeeks = new Set<string>();
   for (const review of backup.data.weeklyReviews) {
@@ -2380,6 +2776,8 @@ export function getBackupCounts(
     weeklyReviews: backup.data.weeklyReviews.length,
     weeklyCommitments: backup.data.weeklyCommitments.length,
     weeklyTaskDecisions: backup.data.weeklyTaskDecisions.length,
+    cycleReviews: backup.data.cycleReviews.length,
+    cycleGoalOutcomes: backup.data.cycleGoalOutcomes.length,
   };
 }
 
@@ -2600,6 +2998,30 @@ export function inspectWeekFlowBackup(
       metadata: value.metadata,
       data,
     });
+  } else if (sourceVersion === 11) {
+    validateMetadata(value.metadata);
+    const data = validateData(
+      value.data,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false
+    );
+
+    backup = normalizeLegacyBackupV11({
+      format: BACKUP_FORMAT,
+      version: 11,
+      exportedAt: value.exportedAt,
+      metadata: value.metadata,
+      data,
+    });
   } else if (sourceVersion === BACKUP_VERSION) {
     validateMetadata(value.metadata);
 
@@ -2608,7 +3030,20 @@ export function inspectWeekFlowBackup(
       version: BACKUP_VERSION,
       exportedAt: value.exportedAt,
       metadata: value.metadata,
-      data: validateData(value.data),
+      data: validateData(
+        value.data,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ),
     };
   } else {
     fail(

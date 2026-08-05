@@ -159,6 +159,53 @@ async function repairOrphanedRelationships(
         WHERE tasks.id = weekly_task_decisions.task_id
       );
   `);
+
+  await db.runAsync(`
+    DELETE FROM cycle_reviews
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM planning_cycles
+      WHERE planning_cycles.id = cycle_reviews.cycle_id
+    );
+  `);
+
+  await db.runAsync(`
+    UPDATE cycle_reviews
+    SET next_cycle_id = NULL
+    WHERE next_cycle_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1
+        FROM planning_cycles
+        WHERE planning_cycles.id = cycle_reviews.next_cycle_id
+      );
+  `);
+
+  await db.runAsync(`
+    DELETE FROM cycle_goal_outcomes
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM cycle_reviews
+      WHERE cycle_reviews.id = cycle_goal_outcomes.cycle_review_id
+    );
+  `);
+
+  await db.runAsync(`
+    UPDATE cycle_goal_outcomes
+    SET goal_id = NULL
+    WHERE goal_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM goals WHERE goals.id = cycle_goal_outcomes.goal_id
+      );
+  `);
+
+  await db.runAsync(`
+    UPDATE cycle_goal_outcomes
+    SET destination_goal_id = NULL
+    WHERE destination_goal_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM goals WHERE goals.id = cycle_goal_outcomes.destination_goal_id
+      );
+  `);
 }
 
 /**
@@ -479,6 +526,101 @@ async function createRelationshipTriggers(
       SELECT RAISE(ABORT, 'Weekly task decision task does not exist.');
     END;
 
+    CREATE TRIGGER IF NOT EXISTS
+      trg_cycle_reviews_cycle_exists_insert
+    BEFORE INSERT ON cycle_reviews
+    WHEN NOT EXISTS (
+      SELECT 1 FROM planning_cycles WHERE id = NEW.cycle_id
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'Cycle review planning cycle does not exist.');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS
+      trg_cycle_reviews_cycle_exists_update
+    BEFORE UPDATE OF cycle_id ON cycle_reviews
+    WHEN NOT EXISTS (
+      SELECT 1 FROM planning_cycles WHERE id = NEW.cycle_id
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'Cycle review planning cycle does not exist.');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS
+      trg_cycle_reviews_next_cycle_exists_update
+    BEFORE UPDATE OF next_cycle_id ON cycle_reviews
+    WHEN NEW.next_cycle_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM planning_cycles WHERE id = NEW.next_cycle_id
+      )
+    BEGIN
+      SELECT RAISE(ABORT, 'Cycle review next cycle does not exist.');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS
+      trg_cycle_outcomes_review_exists_insert
+    BEFORE INSERT ON cycle_goal_outcomes
+    WHEN NOT EXISTS (
+      SELECT 1 FROM cycle_reviews WHERE id = NEW.cycle_review_id
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'Cycle goal outcome review does not exist.');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS
+      trg_cycle_outcomes_review_exists_update
+    BEFORE UPDATE OF cycle_review_id ON cycle_goal_outcomes
+    WHEN NOT EXISTS (
+      SELECT 1 FROM cycle_reviews WHERE id = NEW.cycle_review_id
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'Cycle goal outcome review does not exist.');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS
+      trg_cycle_outcomes_goal_exists_insert
+    BEFORE INSERT ON cycle_goal_outcomes
+    WHEN NEW.goal_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM goals WHERE id = NEW.goal_id
+      )
+    BEGIN
+      SELECT RAISE(ABORT, 'Cycle goal outcome goal does not exist.');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS
+      trg_cycle_outcomes_goal_exists_update
+    BEFORE UPDATE OF goal_id ON cycle_goal_outcomes
+    WHEN NEW.goal_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM goals WHERE id = NEW.goal_id
+      )
+    BEGIN
+      SELECT RAISE(ABORT, 'Cycle goal outcome goal does not exist.');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS
+      trg_cycle_outcomes_destination_exists_insert
+    BEFORE INSERT ON cycle_goal_outcomes
+    WHEN NEW.destination_goal_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM goals WHERE id = NEW.destination_goal_id
+      )
+    BEGIN
+      SELECT RAISE(ABORT, 'Cycle goal outcome destination goal does not exist.');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS
+      trg_cycle_outcomes_destination_exists_update
+    BEFORE UPDATE OF destination_goal_id ON cycle_goal_outcomes
+    WHEN NEW.destination_goal_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM goals WHERE id = NEW.destination_goal_id
+      )
+    BEGIN
+      SELECT RAISE(ABORT, 'Cycle goal outcome destination goal does not exist.');
+    END;
+
     /*
      * These cleanup triggers mirror the app's normal delete workflows. They
      * protect the database even when a row is removed outside those workflows.
@@ -517,6 +659,19 @@ async function createRelationshipTriggers(
     END;
 
     CREATE TRIGGER IF NOT EXISTS
+      trg_cycle_outcomes_cleanup_after_goal_delete
+    AFTER DELETE ON goals
+    BEGIN
+      UPDATE cycle_goal_outcomes
+      SET goal_id = NULL
+      WHERE goal_id = OLD.id;
+
+      UPDATE cycle_goal_outcomes
+      SET destination_goal_id = NULL
+      WHERE destination_goal_id = OLD.id;
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS
       trg_cycles_weekly_cleanup_after_delete
     AFTER DELETE ON planning_cycles
     BEGIN
@@ -541,6 +696,26 @@ async function createRelationshipTriggers(
       UPDATE goals
       SET cycle_id = NULL
       WHERE cycle_id = OLD.id;
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS
+      trg_cycle_outcomes_cleanup_after_review_delete
+    AFTER DELETE ON cycle_reviews
+    BEGIN
+      DELETE FROM cycle_goal_outcomes
+      WHERE cycle_review_id = OLD.id;
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS
+      trg_cycle_reviews_cleanup_after_cycle_delete
+    AFTER DELETE ON planning_cycles
+    BEGIN
+      DELETE FROM cycle_reviews
+      WHERE cycle_id = OLD.id;
+
+      UPDATE cycle_reviews
+      SET next_cycle_id = NULL
+      WHERE next_cycle_id = OLD.id;
     END;
 
     CREATE TRIGGER IF NOT EXISTS
@@ -874,6 +1049,54 @@ async function runMigrations() {
       decided_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS cycle_reviews (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      cycle_id INTEGER NOT NULL UNIQUE,
+      biggest_accomplishment TEXT,
+      biggest_challenge TEXT,
+      what_worked_well TEXT,
+      what_change_next_cycle TEXT,
+      what_stop_doing TEXT,
+      what_continue_doing TEXT,
+      what_learned TEXT,
+      snapshot_goal_total INTEGER NOT NULL DEFAULT 0,
+      snapshot_goal_completed INTEGER NOT NULL DEFAULT 0,
+      snapshot_task_completed INTEGER NOT NULL DEFAULT 0,
+      snapshot_milestone_total INTEGER NOT NULL DEFAULT 0,
+      snapshot_milestone_completed INTEGER NOT NULL DEFAULT 0,
+      snapshot_weekly_reviews_completed INTEGER NOT NULL DEFAULT 0,
+      snapshot_longest_streak INTEGER NOT NULL DEFAULT 0,
+      snapshot_best_week_number INTEGER,
+      snapshot_best_week_count INTEGER NOT NULL DEFAULT 0,
+      snapshot_best_day TEXT,
+      snapshot_best_day_count INTEGER NOT NULL DEFAULT 0,
+      snapshot_high_priority_completed INTEGER NOT NULL DEFAULT 0,
+      snapshot_recurring_completed INTEGER NOT NULL DEFAULT 0,
+      snapshot_rewards_unlocked INTEGER NOT NULL DEFAULT 0,
+      snapshot_brain_dumps_archived INTEGER NOT NULL DEFAULT 0,
+      next_cycle_name TEXT,
+      next_cycle_primary_focus TEXT,
+      next_cycle_theme TEXT,
+      next_cycle_start_date TEXT,
+      next_cycle_first_commitments TEXT NOT NULL DEFAULT '[]',
+      next_cycle_id INTEGER,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      finalized_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS cycle_goal_outcomes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      cycle_review_id INTEGER NOT NULL,
+      goal_id INTEGER,
+      goal_title TEXT NOT NULL,
+      action TEXT NOT NULL,
+      replacement_title TEXT,
+      destination_goal_id INTEGER,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS app_metadata (
       key TEXT PRIMARY KEY NOT NULL,
       value TEXT NOT NULL,
@@ -928,6 +1151,12 @@ async function runMigrations() {
   await ensureColumn(db, 'planning_cycles', 'name', 'TEXT');
   await ensureColumn(db, 'planning_cycles', 'primary_focus', 'TEXT');
   await ensureColumn(db, 'planning_cycles', 'theme', 'TEXT');
+  await ensureColumn(
+    db,
+    'cycle_reviews',
+    'next_cycle_first_commitments',
+    "TEXT NOT NULL DEFAULT '[]'"
+  );
 
   await ensureColumn(
     db,
@@ -1025,6 +1254,23 @@ async function runMigrations() {
       idx_weekly_task_decision_identity
     ON weekly_task_decisions (week_start, task_id, original_due_date)
     WHERE task_id IS NOT NULL;
+
+    CREATE INDEX IF NOT EXISTS
+      idx_cycle_reviews_next_cycle_id
+    ON cycle_reviews (next_cycle_id);
+
+    CREATE INDEX IF NOT EXISTS
+      idx_cycle_goal_outcomes_review_id
+    ON cycle_goal_outcomes (cycle_review_id, id);
+
+    CREATE UNIQUE INDEX IF NOT EXISTS
+      idx_cycle_goal_outcomes_goal_identity
+    ON cycle_goal_outcomes (cycle_review_id, goal_id)
+    WHERE goal_id IS NOT NULL;
+
+    CREATE INDEX IF NOT EXISTS
+      idx_cycle_goal_outcomes_destination_id
+    ON cycle_goal_outcomes (destination_goal_id);
 
     CREATE UNIQUE INDEX IF NOT EXISTS
       idx_planning_cycles_single_active
