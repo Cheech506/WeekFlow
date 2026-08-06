@@ -85,6 +85,19 @@ describe('active task filters', () => {
     ]);
   });
 
+  test('filters all goal-linked tasks', () => {
+    const filters = {
+      ...createDefaultActiveTaskFilters(),
+      goal: 'linked' as const,
+    };
+
+    expect(filterActiveTasks(tasks, filters, today).map((task) => task.id)).toEqual([
+      2,
+      3,
+      4,
+    ]);
+  });
+
   test('filters unlinked tasks', () => {
     const filters = {
       ...createDefaultActiveTaskFilters(),

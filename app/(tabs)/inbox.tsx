@@ -8,6 +8,7 @@ import {
 } from 'react-native';
 
 import { ActiveTaskFilters } from '@/components/ActiveTaskFilters';
+import InboxOverviewCard from '@/components/InboxOverviewCard';
 import { TaskDatePicker } from '@/components/TaskDatePicker';
 import { TaskWeeklyCommitmentButton } from '@/components/TaskWeeklyCommitmentButton';
 import { Text, View } from '@/components/Themed';
@@ -22,7 +23,14 @@ import {
 import {
   createDefaultActiveTaskFilters,
   filterActiveTasks,
+  type ActiveTaskFilterState,
 } from '@/lib/activeTaskFilters';
+import {
+  calculateInboxOverview,
+  createInboxQuickFilterState,
+  getSelectedInboxQuickFilter,
+  type InboxQuickFilter,
+} from '@/lib/inboxOverviewUtils';
 import {
   addDays,
   DAY_NAMES,
@@ -223,9 +231,10 @@ export default function InboxScreen() {
     useState<number | null>(null);
   const [isTaskTemplatesExpanded, setIsTaskTemplatesExpanded] =
     useState(false);
-  const [taskFilters, setTaskFilters] = useState(
-    createDefaultActiveTaskFilters()
-  );
+  const [taskFilters, setTaskFilters] = useState<ActiveTaskFilterState>(() => ({
+    ...createDefaultActiveTaskFilters(),
+    schedule: 'unscheduled' as const,
+  }));
   const [datePickerTask, setDatePickerTask] =
     useState<Task | null>(null);
 
@@ -315,7 +324,7 @@ export default function InboxScreen() {
     completeTask,
     deleteTask,
     scheduleTask,
-    getInboxTasks,
+    moveTaskToInbox,
   } = useTasks();
 
   const {
@@ -327,15 +336,35 @@ export default function InboxScreen() {
   } = useBrainDumps();
 
   const { goals } = useGoals();
-  const inboxTasks = getInboxTasks();
-  const filteredInboxTasks = useMemo(
-    () => filterActiveTasks(inboxTasks, taskFilters),
-    [inboxTasks, taskFilters]
+
+  /*
+   * Inbox defaults to unscheduled work, but WF-029 can temporarily show every
+   * active task when an overview metric or advanced schedule filter is chosen.
+   */
+  const activeTasks = useMemo(
+    () => tasks.filter((task) => !task.completed),
+    [tasks]
+  );
+  const filteredActiveTasks = useMemo(
+    () => filterActiveTasks(activeTasks, taskFilters),
+    [activeTasks, taskFilters]
+  );
+  const inboxOverview = useMemo(
+    () => calculateInboxOverview(tasks, recurringRules),
+    [recurringRules, tasks]
+  );
+  const selectedQuickFilter = useMemo(
+    () => getSelectedInboxQuickFilter(taskFilters),
+    [taskFilters]
   );
   const activeBrainDumps = getActiveBrainDumps();
   const scheduleOptions = getUpcomingDays(14);
   const todayKey = getLocalDateKey(new Date());
   const tomorrowKey = getLocalDateKey(addDays(new Date(), 1));
+
+  function handleSelectQuickFilter(filter: InboxQuickFilter) {
+    setTaskFilters(createInboxQuickFilterState(filter));
+  }
 
   function resetTaskForm() {
     setTaskText('');
@@ -918,23 +947,14 @@ export default function InboxScreen() {
         </Text>
       </View>
 
-      <View
-        style={[
-          styles.progressCard,
-          isDesktop && styles.fullWidthPanel,
-        ]}
-      >
-        <Text style={styles.progressTitle}>Inbox Overview</Text>
-        <Text style={styles.progressText}>
-          {inboxTasks.length} unscheduled task
-          {inboxTasks.length === 1 ? '' : 's'} •{' '}
-          {activeBrainDumps.length} brain dump note
-          {activeBrainDumps.length === 1 ? '' : 's'} •{' '}
-          {recurringRules.length} recurring schedule
-          {recurringRules.length === 1 ? '' : 's'} •{' '}
-          {taskTemplates.length} task template
-          {taskTemplates.length === 1 ? '' : 's'}
-        </Text>
+      <View style={isDesktop ? styles.fullWidthPanel : undefined}>
+        <InboxOverviewCard
+          snapshot={inboxOverview}
+          activeFilter={selectedQuickFilter}
+          brainDumpCount={activeBrainDumps.length}
+          templateCount={taskTemplates.length}
+          onSelectFilter={handleSelectQuickFilter}
+        />
       </View>
 
       <View
@@ -2296,21 +2316,22 @@ export default function InboxScreen() {
         ]}
       >
         <Text style={styles.sectionTitle}>
-          Unscheduled Tasks
+          Task Organizer
         </Text>
         <Text style={styles.sectionSubtitle}>
-          Pick a calendar date to move each task into Daily and
-          Weekly.
+          Review unscheduled, overdue, today, upcoming, recurring, or
+          goal-linked work from one place. Inbox remains the task creation and
+          scheduling center.
         </Text>
 
         <ActiveTaskFilters
           goals={goals}
           filters={taskFilters}
           onChange={setTaskFilters}
-          totalCount={inboxTasks.length}
-          resultCount={filteredInboxTasks.length}
-          scheduleChoices={['all', 'unscheduled']}
-          showDueDate={false}
+          totalCount={activeTasks.length}
+          resultCount={filteredActiveTasks.length}
+          scheduleChoices={['all', 'unscheduled', 'overdue', 'today', 'upcoming']}
+          showDueDate
         />
 
         <View
@@ -2319,7 +2340,7 @@ export default function InboxScreen() {
             isDesktop && styles.cardGrid,
           ]}
         >
-          {inboxTasks.length === 0 ? (
+          {activeTasks.length === 0 ? (
             <View style={styles.emptyCard}>
               <Text style={styles.emptyTitle}>
                 Inbox is clear ✅
@@ -2328,17 +2349,17 @@ export default function InboxScreen() {
                 Add a task when you need to capture something.
               </Text>
             </View>
-          ) : filteredInboxTasks.length === 0 ? (
+          ) : filteredActiveTasks.length === 0 ? (
             <View style={styles.emptyCard}>
               <Text style={styles.emptyTitle}>
                 No tasks match these filters
               </Text>
               <Text style={styles.emptyText}>
-                Clear or adjust Search & Filters to show more Inbox tasks.
+                Clear or adjust Search & Filters to show more active tasks.
               </Text>
             </View>
           ) : (
-            filteredInboxTasks.map((task) => {
+            filteredActiveTasks.map((task) => {
               const linkedGoal = goals.find(
                 (goal) => goal.id === task.goalId
               );
@@ -3118,7 +3139,9 @@ export default function InboxScreen() {
                       </View>
 
                       <Text style={styles.taskMeta}>
-                        Unscheduled
+                        {task.dueDate
+                          ? `Scheduled: ${formatDateKey(task.dueDate)}`
+                          : 'Unscheduled'}
                       </Text>
                       <Text style={styles.taskMeta}>
                         Priority:{' '}
@@ -3181,22 +3204,23 @@ export default function InboxScreen() {
                   </View>
 
                   <Text style={styles.pickerLabel}>
-                    Choose where this task goes:
+                    {task.dueDate ? 'Reschedule this task:' : 'Choose where this task goes:'}
                   </Text>
                   <View style={styles.rowWrap}>
                     <Pressable
                       style={[
                         styles.dateButton,
-                        styles.dateButtonSelected,
+                        task.dueDate === null && styles.dateButtonSelected,
                       ]}
-                      disabled
+                      disabled={task.dueDate === null}
+                      onPress={() => moveTaskToInbox(task.id)}
                       accessibilityRole="button"
-                      accessibilityState={{ disabled: true }}
+                      accessibilityState={{ selected: task.dueDate === null }}
                     >
                       <Text
                         style={[
                           styles.dateDay,
-                          styles.selectedText,
+                          task.dueDate === null && styles.selectedText,
                         ]}
                       >
                         Inbox
@@ -3204,7 +3228,7 @@ export default function InboxScreen() {
                       <Text
                         style={[
                           styles.dateDate,
-                          styles.selectedText,
+                          task.dueDate === null && styles.selectedText,
                         ]}
                       >
                         Unscheduled
@@ -3212,13 +3236,23 @@ export default function InboxScreen() {
                     </Pressable>
 
                     <Pressable
-                      style={styles.dateButton}
+                      style={[
+                        styles.dateButton,
+                        task.dueDate === todayKey && styles.dateButtonSelected,
+                      ]}
+                      disabled={task.dueDate === todayKey}
                       onPress={() =>
                         scheduleTaskForDate(task, todayKey)
                       }
                     >
-                      <Text style={styles.dateDay}>Today</Text>
-                      <Text style={styles.dateDate}>
+                      <Text style={[
+                        styles.dateDay,
+                        task.dueDate === todayKey && styles.selectedText,
+                      ]}>Today</Text>
+                      <Text style={[
+                        styles.dateDate,
+                        task.dueDate === todayKey && styles.selectedText,
+                      ]}>
                         {formatDateKey(todayKey, {
                           month: 'short',
                           day: 'numeric',
@@ -3227,13 +3261,23 @@ export default function InboxScreen() {
                     </Pressable>
 
                     <Pressable
-                      style={styles.dateButton}
+                      style={[
+                        styles.dateButton,
+                        task.dueDate === tomorrowKey && styles.dateButtonSelected,
+                      ]}
+                      disabled={task.dueDate === tomorrowKey}
                       onPress={() =>
                         scheduleTaskForDate(task, tomorrowKey)
                       }
                     >
-                      <Text style={styles.dateDay}>Tomorrow</Text>
-                      <Text style={styles.dateDate}>
+                      <Text style={[
+                        styles.dateDay,
+                        task.dueDate === tomorrowKey && styles.selectedText,
+                      ]}>Tomorrow</Text>
+                      <Text style={[
+                        styles.dateDate,
+                        task.dueDate === tomorrowKey && styles.selectedText,
+                      ]}>
                         {formatDateKey(tomorrowKey, {
                           month: 'short',
                           day: 'numeric',

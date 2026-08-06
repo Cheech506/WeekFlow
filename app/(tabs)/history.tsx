@@ -3,13 +3,27 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  TextInput,
 } from 'react-native';
 
+import HistoryFilters from '@/components/HistoryFilters';
+import PastCycleFolder from '@/components/PastCycleFolder';
 import { Text, View } from '@/components/Themed';
 import { useBrainDumps } from '@/context/BrainDumpContext';
+import { useCycle } from '@/context/CycleContext';
+import { useCycleReviews } from '@/context/CycleReviewContext';
 import { useGoals } from '@/context/GoalContext';
 import { useTasks } from '@/context/TaskContext';
+import { getPlanningCycleDisplayName } from '@/lib/cycleIdentityUtils';
+import {
+  brainDumpMatchesHistoryFilters,
+  createDefaultHistoryFilters,
+  getTaskHistoryCycleId,
+  goalMatchesHistoryFilters,
+  resolveHistoryDateRange,
+  taskMatchesHistoryFilters,
+  timestampMatchesHistoryRange,
+  type HistoryFilterState,
+} from '@/lib/historyFilters';
 import {
   formatDateKey,
   getLocalDateKey,
@@ -21,14 +35,6 @@ import {
   hasGoalCompletionReflection,
   resolveGoalCompletionSnapshot,
 } from '@/lib/goalReviewUtils';
-
-type ContentFilter =
-  | 'all'
-  | 'tasks'
-  | 'goals'
-  | 'brainDumps';
-type PriorityFilter = 'all' | 0 | 1 | 2;
-type GoalFilter = 'all' | 'none' | number;
 
 type HistoryGroupKey =
   | 'today'
@@ -250,223 +256,209 @@ function HistoryDetailField({
 }
 
 export default function HistoryScreen() {
-  const [searchText, setSearchText] = useState('');
-  const [contentFilter, setContentFilter] =
-    useState<ContentFilter>('all');
-  const [priorityFilter, setPriorityFilter] =
-    useState<PriorityFilter>('all');
-  const [goalFilter, setGoalFilter] =
-    useState<GoalFilter>('all');
+  const [filters, setFilters] = useState<HistoryFilterState>(
+    createDefaultHistoryFilters
+  );
   const [expandedGoalReviews, setExpandedGoalReviews] = useState<
     Record<number, boolean>
   >({});
 
-  const { tasks, refreshTasks } = useTasks();
-  const { goals, milestones, refreshGoals, reopenGoal } = useGoals();
+  const { tasks } = useTasks();
+  const { goals, milestones, reopenGoal } = useGoals();
+  const { cycles } = useCycle();
+  const { cycleReviews, goalOutcomes } = useCycleReviews();
 
   const {
     getArchivedBrainDumps,
     restoreBrainDump,
     deleteBrainDump,
-    refreshBrainDumps,
   } = useBrainDumps();
 
-  /*
-   * A map makes it easier to look up goal names while filtering
-   * and rendering task cards.
-   */
   const goalsById = useMemo(
     () => new Map(goals.map((goal) => [goal.id, goal])),
     [goals]
   );
 
-  const archivedBrainDumps = getArchivedBrainDumps();
+  const cycleLabelsById = useMemo(() => {
+    const labels = new Map<number, string>();
 
-  const allCompletedTasks = useMemo(() => {
-    return tasks
-      .filter((task) => task.completed)
-      .sort((firstTask, secondTask) => {
-        const firstTime = firstTask.completedAt
-          ? new Date(firstTask.completedAt).getTime()
-          : 0;
-
-        const secondTime = secondTask.completedAt
-          ? new Date(secondTask.completedAt).getTime()
-          : 0;
-
-        return secondTime - firstTime;
-      });
-  }, [tasks]);
-
-  const allCompletedGoals = useMemo(() => {
-    return goals
-      .filter((goal) => goal.completed)
-      .sort((firstGoal, secondGoal) => {
-        const firstTime = firstGoal.completedAt
-          ? new Date(firstGoal.completedAt).getTime()
-          : 0;
-
-        const secondTime = secondGoal.completedAt
-          ? new Date(secondGoal.completedAt).getTime()
-          : 0;
-
-        return secondTime - firstTime;
-      });
-  }, [goals]);
-
-  const sortedArchivedBrainDumps = useMemo(() => {
-    return [...archivedBrainDumps].sort(
-      (firstBrainDump, secondBrainDump) => {
-        const firstTime = firstBrainDump.archivedAt
-          ? new Date(firstBrainDump.archivedAt).getTime()
-          : 0;
-
-        const secondTime = secondBrainDump.archivedAt
-          ? new Date(secondBrainDump.archivedAt).getTime()
-          : 0;
-
-        return secondTime - firstTime;
-      }
-    );
-  }, [archivedBrainDumps]);
-
-  const normalizedSearch = searchText.trim().toLowerCase();
-
-  const filteredCompletedTasks = useMemo(() => {
-    if (
-      contentFilter === 'brainDumps' ||
-      contentFilter === 'goals'
-    ) {
-      return [];
-    }
-
-    return allCompletedTasks.filter((task) => {
-      const linkedGoal = task.goalId
-        ? goalsById.get(task.goalId)
-        : undefined;
-
-      /*
-       * Search checks the main pieces of task information instead
-       * of only checking the title.
-       */
-      const matchesSearch =
-        normalizedSearch.length === 0 ||
-        task.title.toLowerCase().includes(normalizedSearch) ||
-        (task.notes ?? '')
-          .toLowerCase()
-          .includes(normalizedSearch) ||
-        (linkedGoal?.title ?? '')
-          .toLowerCase()
-          .includes(normalizedSearch);
-
-      const matchesPriority =
-        priorityFilter === 'all' ||
-        task.priority === priorityFilter;
-
-      const matchesGoal =
-        goalFilter === 'all' ||
-        (goalFilter === 'none'
-          ? task.goalId === null
-          : task.goalId === goalFilter);
-
-      return matchesSearch && matchesPriority && matchesGoal;
-    });
-  }, [
-    allCompletedTasks,
-    contentFilter,
-    goalFilter,
-    goalsById,
-    normalizedSearch,
-    priorityFilter,
-  ]);
-
-  const filteredCompletedGoals = useMemo(() => {
-    if (
-      contentFilter === 'tasks' ||
-      contentFilter === 'brainDumps'
-    ) {
-      return [];
-    }
-
-    /*
-     * Priority and linked-goal filters apply to tasks only. A goal
-     * history search remains separate so the filters stay predictable.
-     */
-    if (
-      priorityFilter !== 'all' ||
-      goalFilter !== 'all'
-    ) {
-      return [];
-    }
-
-    return allCompletedGoals.filter((goal) => {
-      const goalMilestones = milestones.filter(
-        (milestone) => milestone.goalId === goal.id
+    cycles.forEach((cycle, index) => {
+      labels.set(
+        cycle.id,
+        getPlanningCycleDisplayName(
+          cycle.name,
+          Math.max(1, cycles.length - index)
+        )
       );
+    });
+
+    return labels;
+  }, [cycles]);
+
+  const archivedBrainDumps = getArchivedBrainDumps();
+  const dateRange = useMemo(
+    () => resolveHistoryDateRange(filters),
+    [filters.customEndDate, filters.customStartDate, filters.datePreset]
+  );
+
+  const historicalCycleReportCount = useMemo(
+    () =>
+      cycles.filter(
+        (cycle) =>
+          !cycle.active &&
+          cycleReviews.some((review) => review.cycleId === cycle.id)
+      ).length,
+    [cycleReviews, cycles]
+  );
+
+  const allCompletedTasks = useMemo(
+    () =>
+      tasks
+        .filter((task) => task.completed)
+        .sort(
+          (first, second) =>
+            new Date(second.completedAt ?? 0).getTime() -
+            new Date(first.completedAt ?? 0).getTime()
+        ),
+    [tasks]
+  );
+
+  const allCompletedGoals = useMemo(
+    () =>
+      goals
+        .filter((goal) => goal.completed)
+        .sort(
+          (first, second) =>
+            new Date(second.completedAt ?? 0).getTime() -
+            new Date(first.completedAt ?? 0).getTime()
+        ),
+    [goals]
+  );
+
+  const sortedArchivedBrainDumps = useMemo(
+    () =>
+      [...archivedBrainDumps].sort(
+        (first, second) =>
+          new Date(second.archivedAt ?? 0).getTime() -
+          new Date(first.archivedAt ?? 0).getTime()
+      ),
+    [archivedBrainDumps]
+  );
+
+  const filteredCompletedTasks = useMemo(
+    () =>
+      allCompletedTasks.filter((task) =>
+        taskMatchesHistoryFilters({
+          task,
+          filters,
+          goalsById,
+          cycles,
+          range: dateRange,
+        })
+      ),
+    [allCompletedTasks, cycles, dateRange, filters, goalsById]
+  );
+
+  const filteredCompletedGoals = useMemo(
+    () =>
+      allCompletedGoals.filter((goal) => {
+        const milestoneText = milestones
+          .filter((milestone) => milestone.goalId === goal.id)
+          .flatMap((milestone) => [milestone.title, milestone.notes])
+          .filter((value): value is string => Boolean(value))
+          .join(' ');
+
+        return goalMatchesHistoryFilters({
+          goal,
+          milestonesText: milestoneText,
+          filters,
+          range: dateRange,
+        });
+      }),
+    [allCompletedGoals, dateRange, filters, milestones]
+  );
+
+  const filteredBrainDumps = useMemo(
+    () =>
+      sortedArchivedBrainDumps.filter((brainDump) =>
+        brainDumpMatchesHistoryFilters({
+          brainDump,
+          filters,
+          range: dateRange,
+        })
+      ),
+    [dateRange, filters, sortedArchivedBrainDumps]
+  );
+
+  /*
+   * Cycle report search includes the cycle identity, Week 13 reflection, goal
+   * names, and carry-forward/replacement outcomes so the report is findable by
+   * what happened—not only by its title.
+   */
+  const filteredCycles = useMemo(() => {
+    if (filters.content !== 'all' && filters.content !== 'cycles') return [];
+    if (
+      filters.priority !== 'all' ||
+      filters.goal !== 'all' ||
+      filters.recurrence !== 'all'
+    ) {
+      return [];
+    }
+
+    const normalizedSearch = filters.searchText.trim().toLowerCase();
+
+    return cycles.filter((cycle) => {
+      if (cycle.active) return false;
+      if (filters.cycle === 'none') return false;
+      if (typeof filters.cycle === 'number' && cycle.id !== filters.cycle) {
+        return false;
+      }
+
+      const review = cycleReviews.find((item) => item.cycleId === cycle.id);
+      if (!review) return false;
+
+      const outcomes = review
+        ? goalOutcomes.filter((item) => item.cycleReviewId === review.id)
+        : [];
+      const cycleGoals = goals.filter((goal) => goal.cycleId === cycle.id);
       const searchableText = [
-        goal.title,
-        goal.reward,
-        goal.purpose,
-        goal.successDefinition,
-        goal.notes,
-        goal.completionWhatHelped,
-        goal.completionHardestPart,
-        goal.completionLearned,
-        goal.completionDoDifferently,
-        ...goalMilestones.flatMap((milestone) => [
-          milestone.title,
-          milestone.notes,
+        cycleLabelsById.get(cycle.id),
+        cycle.primaryFocus,
+        cycle.theme,
+        review?.biggestAccomplishment,
+        review?.biggestChallenge,
+        review?.whatWorkedWell,
+        review?.whatChangeNextCycle,
+        review?.whatStopDoing,
+        review?.whatContinueDoing,
+        review?.whatLearned,
+        ...cycleGoals.map((goal) => goal.title),
+        ...outcomes.flatMap((outcome) => [
+          outcome.goalTitle,
+          outcome.replacementTitle,
         ]),
       ]
         .filter((value): value is string => Boolean(value))
         .join(' ')
         .toLowerCase();
 
-      return (
-        normalizedSearch.length === 0 ||
-        searchableText.includes(normalizedSearch)
+      if (normalizedSearch && !searchableText.includes(normalizedSearch)) {
+        return false;
+      }
+
+      return timestampMatchesHistoryRange(
+        review?.finalizedAt ?? cycle.completedAt ?? cycle.endDate,
+        dateRange
       );
     });
   }, [
-    allCompletedGoals,
-    contentFilter,
-    goalFilter,
-    normalizedSearch,
-    priorityFilter,
-    milestones,
-  ]);
-
-  const filteredBrainDumps = useMemo(() => {
-    if (
-      contentFilter === 'tasks' ||
-      contentFilter === 'goals'
-    ) {
-      return [];
-    }
-
-    /*
-     * Priority and goal filters are task-specific. When one of
-     * those filters is active, History only displays task results.
-     */
-    if (
-      priorityFilter !== 'all' ||
-      goalFilter !== 'all'
-    ) {
-      return [];
-    }
-
-    return sortedArchivedBrainDumps.filter((brainDump) => {
-      return (
-        normalizedSearch.length === 0 ||
-        brainDump.body.toLowerCase().includes(normalizedSearch)
-      );
-    });
-  }, [
-    contentFilter,
-    goalFilter,
-    normalizedSearch,
-    priorityFilter,
-    sortedArchivedBrainDumps,
+    cycleLabelsById,
+    cycleReviews,
+    cycles,
+    dateRange,
+    filters,
+    goalOutcomes,
+    goals,
   ]);
 
   const groupedCompletedTasks = useMemo(
@@ -496,47 +488,15 @@ export default function HistoryScreen() {
     [filteredBrainDumps]
   );
 
-  const hasActiveFilters =
-    normalizedSearch.length > 0 ||
-    contentFilter !== 'all' ||
-    priorityFilter !== 'all' ||
-    goalFilter !== 'all';
-
-  function selectContentFilter(filter: ContentFilter) {
-    setContentFilter(filter);
-
-    /*
-     * Brain dumps do not have priority or goal values, so those
-     * filters are reset when Goals or Brain Dumps is selected.
-     */
-    if (filter === 'brainDumps' || filter === 'goals') {
-      setPriorityFilter('all');
-      setGoalFilter('all');
-    }
-  }
-
-  function selectPriorityFilter(filter: PriorityFilter) {
-    setPriorityFilter(filter);
-
-    if (filter !== 'all') {
-      setContentFilter('tasks');
-    }
-  }
-
-  function selectGoalFilter(filter: GoalFilter) {
-    setGoalFilter(filter);
-
-    if (filter !== 'all') {
-      setContentFilter('tasks');
-    }
-  }
-
-  function clearFilters() {
-    setSearchText('');
-    setContentFilter('all');
-    setPriorityFilter('all');
-    setGoalFilter('all');
-  }
+  const resultSummary = `Showing ${filteredCompletedTasks.length} task${
+    filteredCompletedTasks.length === 1 ? '' : 's'
+  }, ${filteredCompletedGoals.length} goal${
+    filteredCompletedGoals.length === 1 ? '' : 's'
+  }, ${filteredCycles.length} cycle report${
+    filteredCycles.length === 1 ? '' : 's'
+  }, and ${filteredBrainDumps.length} brain dump${
+    filteredBrainDumps.length === 1 ? '' : 's'
+  }`;
 
   function toggleGoalReview(goalId: number) {
     setExpandedGoalReviews((current) => ({
@@ -555,8 +515,8 @@ export default function HistoryScreen() {
         <Text style={styles.title}>History</Text>
 
         <Text style={styles.subtitle}>
-          Look back at completed tasks, finished goals, and thoughts
-          you cleared from your head.
+          Look back at completed tasks, finished goals, cycle reports,
+          reflections, and thoughts you cleared from your head.
         </Text>
       </View>
 
@@ -570,263 +530,23 @@ export default function HistoryScreen() {
           {allCompletedTasks.length === 1 ? '' : 's'} •{' '}
           {allCompletedGoals.length} completed goal
           {allCompletedGoals.length === 1 ? '' : 's'} •{' '}
+          {historicalCycleReportCount} cycle report
+          {historicalCycleReportCount === 1 ? '' : 's'} •{' '}
           {archivedBrainDumps.length} archived brain dump
           {archivedBrainDumps.length === 1 ? '' : 's'}
         </Text>
       </View>
 
-      <View style={styles.filterCard}>
-        <Text style={styles.filterTitle}>
-          Search and Filter
-        </Text>
+      <HistoryFilters
+        filters={filters}
+        goals={goals}
+        cycles={cycles}
+        resultSummary={resultSummary}
+        dateRangeError={dateRange.error}
+        onChange={setFilters}
+      />
 
-        <TextInput
-          style={styles.searchInput}
-          placeholder="Search tasks, completed goals, notes, or brain dumps..."
-          value={searchText}
-          onChangeText={setSearchText}
-          autoCapitalize="none"
-          autoCorrect={false}
-          returnKeyType="search"
-        />
-
-        <Text style={styles.filterLabel}>
-          Show:
-        </Text>
-
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.filterRow}
-        >
-          <Pressable
-            style={[
-              styles.filterButton,
-              contentFilter === 'all' &&
-                styles.filterButtonSelected,
-            ]}
-            onPress={() => selectContentFilter('all')}
-          >
-            <Text
-              style={[
-                styles.filterButtonText,
-                contentFilter === 'all' &&
-                  styles.filterButtonTextSelected,
-              ]}
-            >
-              All
-            </Text>
-          </Pressable>
-
-          <Pressable
-            style={[
-              styles.filterButton,
-              contentFilter === 'tasks' &&
-                styles.filterButtonSelected,
-            ]}
-            onPress={() => selectContentFilter('tasks')}
-          >
-            <Text
-              style={[
-                styles.filterButtonText,
-                contentFilter === 'tasks' &&
-                  styles.filterButtonTextSelected,
-              ]}
-            >
-              Tasks
-            </Text>
-          </Pressable>
-
-          <Pressable
-            style={[
-              styles.filterButton,
-              contentFilter === 'goals' &&
-                styles.filterButtonSelected,
-            ]}
-            onPress={() => selectContentFilter('goals')}
-          >
-            <Text
-              style={[
-                styles.filterButtonText,
-                contentFilter === 'goals' &&
-                  styles.filterButtonTextSelected,
-              ]}
-            >
-              Goals
-            </Text>
-          </Pressable>
-
-          <Pressable
-            style={[
-              styles.filterButton,
-              contentFilter === 'brainDumps' &&
-                styles.filterButtonSelected,
-            ]}
-            onPress={() =>
-              selectContentFilter('brainDumps')
-            }
-          >
-            <Text
-              style={[
-                styles.filterButtonText,
-                contentFilter === 'brainDumps' &&
-                  styles.filterButtonTextSelected,
-              ]}
-            >
-              Brain Dumps
-            </Text>
-          </Pressable>
-        </ScrollView>
-
-        <Text style={styles.filterLabel}>
-          Priority:
-        </Text>
-
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.filterRow}
-        >
-          <Pressable
-            style={[
-              styles.filterButton,
-              priorityFilter === 'all' &&
-                styles.priorityButtonSelected,
-            ]}
-            onPress={() => selectPriorityFilter('all')}
-          >
-            <Text
-              style={[
-                styles.filterButtonText,
-                priorityFilter === 'all' &&
-                  styles.filterButtonTextSelected,
-              ]}
-            >
-              All Priorities
-            </Text>
-          </Pressable>
-
-          {([0, 1, 2] as const).map((priority) => (
-            <Pressable
-              key={priority}
-              style={[
-                styles.filterButton,
-                priorityFilter === priority &&
-                  styles.priorityButtonSelected,
-              ]}
-              onPress={() =>
-                selectPriorityFilter(priority)
-              }
-            >
-              <Text
-                style={[
-                  styles.filterButtonText,
-                  priorityFilter === priority &&
-                    styles.filterButtonTextSelected,
-                ]}
-              >
-                {getPriorityLabel(priority)}
-              </Text>
-            </Pressable>
-          ))}
-        </ScrollView>
-
-        <Text style={styles.filterLabel}>
-          Goal:
-        </Text>
-
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.filterRow}
-        >
-          <Pressable
-            style={[
-              styles.filterButton,
-              goalFilter === 'all' &&
-                styles.goalButtonSelected,
-            ]}
-            onPress={() => selectGoalFilter('all')}
-          >
-            <Text
-              style={[
-                styles.filterButtonText,
-                goalFilter === 'all' &&
-                  styles.filterButtonTextSelected,
-              ]}
-            >
-              All Goals
-            </Text>
-          </Pressable>
-
-          <Pressable
-            style={[
-              styles.filterButton,
-              goalFilter === 'none' &&
-                styles.goalButtonSelected,
-            ]}
-            onPress={() => selectGoalFilter('none')}
-          >
-            <Text
-              style={[
-                styles.filterButtonText,
-                goalFilter === 'none' &&
-                  styles.filterButtonTextSelected,
-              ]}
-            >
-              No Goal
-            </Text>
-          </Pressable>
-
-          {goals.map((goal) => (
-            <Pressable
-              key={goal.id}
-              style={[
-                styles.filterButton,
-                goalFilter === goal.id &&
-                  styles.goalButtonSelected,
-              ]}
-              onPress={() => selectGoalFilter(goal.id)}
-            >
-              <Text
-                style={[
-                  styles.filterButtonText,
-                  goalFilter === goal.id &&
-                    styles.filterButtonTextSelected,
-                ]}
-                numberOfLines={1}
-              >
-                {goal.title}
-              </Text>
-            </Pressable>
-          ))}
-        </ScrollView>
-
-        <View style={styles.filterSummaryRow}>
-          <Text style={styles.filterSummaryText}>
-            Showing {filteredCompletedTasks.length} task
-            {filteredCompletedTasks.length === 1 ? '' : 's'},{' '}
-            {filteredCompletedGoals.length} goal
-            {filteredCompletedGoals.length === 1 ? '' : 's'}, and{' '}
-            {filteredBrainDumps.length} brain dump
-            {filteredBrainDumps.length === 1 ? '' : 's'}
-          </Text>
-
-          {hasActiveFilters ? (
-            <Pressable
-              style={styles.clearButton}
-              onPress={clearFilters}
-            >
-              <Text style={styles.clearButtonText}>
-                Clear
-              </Text>
-            </Pressable>
-          ) : null}
-        </View>
-      </View>
-
-      {contentFilter !== 'brainDumps' &&
-      contentFilter !== 'goals' ? (
+      {filters.content === 'all' || filters.content === 'tasks' ? (
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>
             Completed Tasks
@@ -900,6 +620,24 @@ export default function HistoryScreen() {
                               </Text>
                             ) : null}
 
+                            {(() => {
+                              const cycleId = getTaskHistoryCycleId(
+                                task,
+                                goalsById,
+                                cycles
+                              );
+                              const cycleLabel =
+                                cycleId === null
+                                  ? null
+                                  : cycleLabelsById.get(cycleId);
+
+                              return cycleLabel ? (
+                                <Text style={styles.taskMeta}>
+                                  Cycle: {cycleLabel}
+                                </Text>
+                              ) : null;
+                            })()}
+
                             {task.notes ? (
                               <Text style={styles.taskNotes}>
                                 {task.notes}
@@ -924,10 +662,7 @@ export default function HistoryScreen() {
         </View>
       ) : null}
 
-      {contentFilter !== 'tasks' &&
-      contentFilter !== 'brainDumps' &&
-      priorityFilter === 'all' &&
-      goalFilter === 'all' ? (
+      {filters.content === 'all' || filters.content === 'goals' ? (
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>
             Completed Goals
@@ -1030,6 +765,13 @@ export default function HistoryScreen() {
                                 <Text style={styles.completedMeta}>
                                   Completed: {formatCompletedDate(goal.completedAt)}
                                 </Text>
+
+                                {goal.cycleId !== null &&
+                                cycleLabelsById.get(goal.cycleId) ? (
+                                  <Text style={styles.taskMeta}>
+                                    Cycle: {cycleLabelsById.get(goal.cycleId)}
+                                  </Text>
+                                ) : null}
 
                                 {durationDays !== null ? (
                                   <Text style={styles.taskMeta}>
@@ -1236,10 +978,39 @@ export default function HistoryScreen() {
         </View>
       ) : null}
 
-      {contentFilter !== 'tasks' &&
-      contentFilter !== 'goals' &&
-      priorityFilter === 'all' &&
-      goalFilter === 'all' ? (
+      {filters.content === 'all' || filters.content === 'cycles' ? (
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Cycle Reports</Text>
+          <Text style={styles.sectionSubtitle}>
+            Open a completed cycle to review final results, goal outcomes,
+            reflection answers, and the next-cycle plan.
+          </Text>
+
+          {filteredCycles.length === 0 ? (
+            <View style={styles.emptyCard}>
+              <Text style={styles.emptyTitle}>No cycle reports found</Text>
+              <Text style={styles.emptyText}>
+                Try changing the filters or finalize a Week 13 review.
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.cycleReportList}>
+              {filteredCycles.map((cycle) => (
+                <PastCycleFolder
+                  key={cycle.id}
+                  cycle={cycle}
+                  cycleLabel={
+                    cycleLabelsById.get(cycle.id) ?? `Cycle ${cycle.id}`
+                  }
+                  goals={goals.filter((goal) => goal.cycleId === cycle.id)}
+                />
+              ))}
+            </View>
+          )}
+        </View>
+      ) : null}
+
+      {filters.content === 'all' || filters.content === 'brainDumps' ? (
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>
             Archived Brain Dumps
@@ -1779,6 +1550,10 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 
+  cycleReportList: {
+    gap: 14,
+    backgroundColor: 'transparent',
+  },
   emptyCard: {
     padding: 18,
     borderRadius: 14,

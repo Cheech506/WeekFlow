@@ -21,6 +21,8 @@ module.exports = {
     'lib/cycleReviewUtils.ts',
     'lib/cycleReviewStorage.ts',
     'lib/dashboardUtils.ts',
+    'lib/inboxOverviewUtils.ts',
+    'lib/historyFilters.ts',
     'lib/cycleStorage.ts',
     'lib/progressStats.ts',
     'lib/weeklyReview.ts',

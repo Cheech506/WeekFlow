@@ -171,6 +171,11 @@ export function ActiveTaskFilters({
                 onPress={() => updateFilters({ goal: 'all' })}
               />
               <FilterPill
+                label="Goal Linked"
+                selected={filters.goal === 'linked'}
+                onPress={() => updateFilters({ goal: 'linked' })}
+              />
+              <FilterPill
                 label="No Goal"
                 selected={filters.goal === 'unlinked'}
                 onPress={() => updateFilters({ goal: 'unlinked' })}

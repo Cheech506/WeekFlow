@@ -2,7 +2,11 @@ import { getLocalDateKey } from './dateUtils';
 import type { Task } from './taskStorage';
 
 export type ActiveTaskPriorityFilter = 'all' | 0 | 1 | 2;
-export type ActiveTaskGoalFilter = 'all' | 'unlinked' | `goal:${number}`;
+export type ActiveTaskGoalFilter =
+  | 'all'
+  | 'linked'
+  | 'unlinked'
+  | `goal:${number}`;
 export type ActiveTaskScheduleFilter =
   | 'all'
   | 'overdue'
@@ -71,6 +75,10 @@ export function filterActiveTasks(
       filters.priority !== 'all' &&
       task.priority !== filters.priority
     ) {
+      return false;
+    }
+
+    if (filters.goal === 'linked' && task.goalId === null) {
       return false;
     }
 
