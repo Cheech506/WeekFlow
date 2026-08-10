@@ -15,6 +15,7 @@ import {
   getBrainDumps,
   insertBrainDump,
   restoreBrainDumpById,
+  updateBrainDumpById,
   type StoredBrainDump,
 } from '@/lib/brainDumpStorage';
 
@@ -25,6 +26,7 @@ type BrainDumpContextValue = {
   isLoading: boolean;
   refreshBrainDumps: () => Promise<void>;
   addBrainDump: (body: string) => Promise<void>;
+  editBrainDump: (id: number, body: string) => Promise<void>;
   archiveBrainDump: (id: number) => Promise<void>;
   restoreBrainDump: (id: number) => Promise<void>;
   deleteBrainDump: (id: number) => Promise<void>;
@@ -75,6 +77,26 @@ export function BrainDumpProvider({
       console.error('Failed to add brain dump:', error);
     }
   }, []);
+
+  const editBrainDump = useCallback(
+    async (id: number, body: string) => {
+      try {
+        const cleanBody = await updateBrainDumpById(id, body);
+
+        setBrainDumps((currentBrainDumps) =>
+          currentBrainDumps.map((brainDump) =>
+            brainDump.id === id
+              ? { ...brainDump, body: cleanBody }
+              : brainDump
+          )
+        );
+      } catch (error) {
+        console.error('Failed to edit brain dump:', error);
+        throw error;
+      }
+    },
+    []
+  );
 
   const archiveBrainDump = useCallback(async (id: number) => {
     try {
@@ -159,6 +181,7 @@ export function BrainDumpProvider({
       isLoading,
       refreshBrainDumps,
       addBrainDump,
+      editBrainDump,
       archiveBrainDump,
       restoreBrainDump,
       deleteBrainDump,
@@ -171,6 +194,7 @@ export function BrainDumpProvider({
       isLoading,
       refreshBrainDumps,
       addBrainDump,
+      editBrainDump,
       archiveBrainDump,
       restoreBrainDump,
       deleteBrainDump,

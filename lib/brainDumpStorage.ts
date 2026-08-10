@@ -69,6 +69,40 @@ export async function insertBrainDump(
   };
 }
 
+/**
+ * Updates the text of an existing Brain Dump note without changing its
+ * original creation date or archive state. Keeping this as a focused UPDATE
+ * prevents an edit from behaving like a delete-and-recreate operation.
+ */
+export async function updateBrainDumpById(
+  id: number,
+  body: string
+): Promise<string> {
+  await migrateDb();
+
+  const db = await getDb();
+  const cleanBody = body.trim();
+
+  if (!cleanBody) {
+    throw new Error('A Brain Dump note cannot be empty.');
+  }
+
+  const result = await db.runAsync(
+    `
+    UPDATE brain_dumps
+    SET body = ?
+    WHERE id = ?;
+    `,
+    [cleanBody, id]
+  );
+
+  if (result.changes !== 1) {
+    throw new Error('The Brain Dump note could not be found.');
+  }
+
+  return cleanBody;
+}
+
 export async function archiveBrainDumpById(id: number): Promise<string> {
   await migrateDb();
 

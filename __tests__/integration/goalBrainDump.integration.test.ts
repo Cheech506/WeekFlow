@@ -378,9 +378,23 @@ describe('goal and brain dump storage integration', () => {
 
     expect(note.body).toBe('Remember this');
 
-    await brainStorage.archiveBrainDumpById(note.id);
+    const originalCreatedAt = note.createdAt;
+    const updatedBody = await brainStorage.updateBrainDumpById(
+      note.id,
+      '  Remember this instead  '
+    );
+
+    expect(updatedBody).toBe('Remember this instead');
 
     let notes = await brainStorage.getBrainDumps();
+
+    expect(notes[0].body).toBe('Remember this instead');
+    expect(notes[0].createdAt).toBe(originalCreatedAt);
+    expect(notes[0].archived).toBe(false);
+
+    await brainStorage.archiveBrainDumpById(note.id);
+
+    notes = await brainStorage.getBrainDumps();
 
     expect(notes[0].archived).toBe(true);
     expect(notes[0].archivedAt).not.toBeNull();
@@ -395,6 +409,25 @@ describe('goal and brain dump storage integration', () => {
     notes = await brainStorage.getBrainDumps();
 
     expect(notes).toEqual([]);
+  });
+
+  test('rejects an empty brain dump edit without changing the note', async () => {
+    const brainStorage = await import(
+      '../../lib/brainDumpStorage'
+    );
+
+    const note = await brainStorage.insertBrainDump(
+      'Keep this note'
+    );
+
+    await expect(
+      brainStorage.updateBrainDumpById(note.id, '   ')
+    ).rejects.toThrow('A Brain Dump note cannot be empty.');
+
+    const notes = await brainStorage.getBrainDumps();
+
+    expect(notes).toHaveLength(1);
+    expect(notes[0].body).toBe('Keep this note');
   });
 
   test('turns an active brain dump into one Inbox task atomically', async () => {

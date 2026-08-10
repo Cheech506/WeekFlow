@@ -12,7 +12,10 @@ import InboxOverviewCard from '@/components/InboxOverviewCard';
 import { TaskDatePicker } from '@/components/TaskDatePicker';
 import { TaskWeeklyCommitmentButton } from '@/components/TaskWeeklyCommitmentButton';
 import { Text, View } from '@/components/Themed';
-import { useBrainDumps } from '@/context/BrainDumpContext';
+import {
+  type BrainDump,
+  useBrainDumps,
+} from '@/context/BrainDumpContext';
 import { useGoals } from '@/context/GoalContext';
 import {
   type RecurrenceFrequency,
@@ -218,6 +221,10 @@ export default function InboxScreen() {
   const [selectedGoalId, setSelectedGoalId] =
     useState<number | null>(null);
   const [brainDumpText, setBrainDumpText] = useState('');
+  const [editingBrainDumpId, setEditingBrainDumpId] =
+    useState<number | null>(null);
+  const [editBrainDumpText, setEditBrainDumpText] = useState('');
+  const [editBrainDumpError, setEditBrainDumpError] = useState('');
   const [templateMessage, setTemplateMessage] = useState('');
   const [editingTemplateId, setEditingTemplateId] =
     useState<number | null>(null);
@@ -329,6 +336,7 @@ export default function InboxScreen() {
 
   const {
     addBrainDump,
+    editBrainDump,
     archiveBrainDump,
     deleteBrainDump,
     turnBrainDumpIntoTask,
@@ -615,6 +623,44 @@ export default function InboxScreen() {
 
   async function handleTurnBrainDumpIntoTask(id: number) {
     await turnBrainDumpIntoTask(id);
+  }
+
+  function startEditingBrainDump(brainDump: BrainDump) {
+    setEditingBrainDumpId(brainDump.id);
+    setEditBrainDumpText(brainDump.body);
+    setEditBrainDumpError('');
+  }
+
+  function cancelEditingBrainDump() {
+    setEditingBrainDumpId(null);
+    setEditBrainDumpText('');
+    setEditBrainDumpError('');
+  }
+
+  async function handleSaveEditedBrainDump() {
+    if (editingBrainDumpId === null) return;
+
+    if (!editBrainDumpText.trim()) {
+      setEditBrainDumpError(
+        'Enter some text before saving the Brain Dump note.'
+      );
+      return;
+    }
+
+    try {
+      setEditBrainDumpError('');
+      await editBrainDump(
+        editingBrainDumpId,
+        editBrainDumpText
+      );
+      cancelEditingBrainDump();
+    } catch (error) {
+      setEditBrainDumpError(
+        error instanceof Error
+          ? error.message
+          : 'The Brain Dump note could not be updated.'
+      );
+    }
   }
 
   function startEditingTask(task: Task) {
@@ -2240,71 +2286,153 @@ export default function InboxScreen() {
               </Text>
             </View>
           ) : (
-            activeBrainDumps.map((brainDump) => (
-              <View
-                key={brainDump.id}
-                style={[
-                  styles.horizontalCard,
-                  isDesktop && styles.halfWidthCard,
-                ]}
-              >
-                <View style={styles.flex}>
-                  <Text style={styles.brainDumpBody}>
-                    {brainDump.body}
-                  </Text>
-                  <Text style={styles.taskMeta}>
-                    Saved:{' '}
-                    {formatCreatedDate(
-                      brainDump.createdAt
-                    )}
-                  </Text>
-                </View>
+            activeBrainDumps.map((brainDump) => {
+              const isEditingBrainDump =
+                editingBrainDumpId === brainDump.id;
 
-                <View style={styles.actionColumn}>
-                  <Pressable
-                    style={[
-                      styles.smallButton,
-                      styles.editButton,
-                    ]}
-                    onPress={() =>
-                      handleTurnBrainDumpIntoTask(
-                        brainDump.id
-                      )
-                    }
-                  >
-                    <Text style={styles.buttonText}>
-                      Turn Into Task
-                    </Text>
-                  </Pressable>
-                  <Pressable
-                    style={[
-                      styles.smallButton,
-                      styles.archiveButton,
-                    ]}
-                    onPress={() =>
-                      archiveBrainDump(brainDump.id)
-                    }
-                  >
-                    <Text style={styles.buttonText}>
-                      Archive
-                    </Text>
-                  </Pressable>
-                  <Pressable
-                    style={[
-                      styles.smallButton,
-                      styles.deleteButton,
-                    ]}
-                    onPress={() =>
-                      deleteBrainDump(brainDump.id)
-                    }
-                  >
-                    <Text style={styles.buttonText}>
-                      Delete
-                    </Text>
-                  </Pressable>
+              return (
+                <View
+                  key={brainDump.id}
+                  style={[
+                    styles.horizontalCard,
+                    isEditingBrainDump &&
+                      styles.brainDumpEditingCard,
+                    isDesktop && styles.halfWidthCard,
+                  ]}
+                >
+                  {isEditingBrainDump ? (
+                    <>
+                      <View style={styles.flex}>
+                        <Text style={styles.editTitle}>
+                          Edit Brain Dump
+                        </Text>
+                        <TextInput
+                          style={[
+                            styles.input,
+                            styles.brainDumpEditInput,
+                          ]}
+                          value={editBrainDumpText}
+                          onChangeText={(value) => {
+                            setEditBrainDumpText(value);
+                            setEditBrainDumpError('');
+                          }}
+                          placeholder="Update this note..."
+                          multiline
+                          autoFocus
+                        />
+                        {editBrainDumpError ? (
+                          <Text style={styles.errorText}>
+                            {editBrainDumpError}
+                          </Text>
+                        ) : null}
+                        <Text style={styles.taskMeta}>
+                          Originally saved:{' '}
+                          {formatCreatedDate(
+                            brainDump.createdAt
+                          )}
+                        </Text>
+                      </View>
+
+                      <View style={styles.editActionRow}>
+                        <Pressable
+                          style={[
+                            styles.flexButton,
+                            styles.editButton,
+                          ]}
+                          onPress={handleSaveEditedBrainDump}
+                        >
+                          <Text style={styles.buttonText}>
+                            Save
+                          </Text>
+                        </Pressable>
+                        <Pressable
+                          style={[
+                            styles.flexButton,
+                            styles.cancelButton,
+                          ]}
+                          onPress={cancelEditingBrainDump}
+                        >
+                          <Text style={styles.buttonText}>
+                            Cancel
+                          </Text>
+                        </Pressable>
+                      </View>
+                    </>
+                  ) : (
+                    <>
+                      <View style={styles.flex}>
+                        <Text style={styles.brainDumpBody}>
+                          {brainDump.body}
+                        </Text>
+                        <Text style={styles.taskMeta}>
+                          Saved:{' '}
+                          {formatCreatedDate(
+                            brainDump.createdAt
+                          )}
+                        </Text>
+                      </View>
+
+                      <View style={styles.actionColumn}>
+                        <Pressable
+                          style={[
+                            styles.smallButton,
+                            styles.editButton,
+                          ]}
+                          onPress={() =>
+                            startEditingBrainDump(brainDump)
+                          }
+                        >
+                          <Text style={styles.buttonText}>
+                            Edit
+                          </Text>
+                        </Pressable>
+                        <Pressable
+                          style={[
+                            styles.smallButton,
+                            styles.editButton,
+                          ]}
+                          onPress={() =>
+                            handleTurnBrainDumpIntoTask(
+                              brainDump.id
+                            )
+                          }
+                        >
+                          <Text style={styles.buttonText}>
+                            Turn Into Task
+                          </Text>
+                        </Pressable>
+                        <Pressable
+                          style={[
+                            styles.smallButton,
+                            styles.archiveButton,
+                          ]}
+                          onPress={() =>
+                            archiveBrainDump(brainDump.id)
+                          }
+                        >
+                          <Text style={styles.buttonText}>
+                            Archive
+                          </Text>
+                        </Pressable>
+                        <Pressable
+                          style={[
+                            styles.smallButton,
+                            styles.deleteButton,
+                          ]}
+                          onPress={() =>
+                            deleteBrainDump(brainDump.id)
+                          }
+                        >
+                          <Text style={styles.buttonText}>
+                            Delete
+                          </Text>
+                        </Pressable>
+                      </View>
+                    </>
+                  )}
                 </View>
-              </View>
-            ))
+              );
+            })
           )}
         </View>
       </View>
@@ -3385,6 +3513,11 @@ const styles = StyleSheet.create({
     minHeight: 110,
     textAlignVertical: 'top',
   },
+  brainDumpEditInput: {
+    minHeight: 100,
+    marginTop: 10,
+    textAlignVertical: 'top',
+  },
   pickerLabel: {
     fontSize: 13,
     color: '#6b7280',
@@ -3642,6 +3775,14 @@ const styles = StyleSheet.create({
   horizontalCardInner: {
     flexDirection: 'row',
     gap: 12,
+    backgroundColor: 'transparent',
+  },
+  brainDumpEditingCard: {
+    flexDirection: 'column',
+  },
+  editActionRow: {
+    flexDirection: 'row',
+    gap: 10,
     backgroundColor: 'transparent',
   },
   flex: { flex: 1, backgroundColor: 'transparent' },
