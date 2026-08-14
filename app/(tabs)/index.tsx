@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 
 import CycleIdentityFields from '@/components/CycleIdentityFields';
+import FirstCycleOnboarding from '@/components/FirstCycleOnboarding';
 import CycleReviewPanel from '@/components/CycleReviewPanel';
 import GoalAnalyticsCard from '@/components/GoalAnalyticsCard';
 import GoalCompletionPanel from '@/components/GoalCompletionPanel';
@@ -744,84 +745,114 @@ export default function TwelveWeekGoalsScreen() {
             Loading your 12-week cycle...
           </Text>
         ) : !currentCycle || !cycleProgress ? (
-          <>
-            <Text style={styles.cycleTitle}>
-              Start Your 12-Week Cycle
-            </Text>
-
-            <Text style={styles.cycleSubtitle}>
-              Name the 12-week folder, describe its focus, and choose the
-              first day. The name, focus, and theme are all optional.
-            </Text>
-
-            <CycleIdentityFields
-              name={cycleName}
-              primaryFocus={cyclePrimaryFocus}
-              theme={cycleTheme}
-              onNameChange={(value) => {
+          cycles.length === 0 ? (
+            <FirstCycleOnboarding
+              cycleName={cycleName}
+              cyclePrimaryFocus={cyclePrimaryFocus}
+              cycleTheme={cycleTheme}
+              cycleStartDate={cycleStartDate}
+              cycleEndDate={cycleRangePreview?.endDate ?? null}
+              waitingGoalCount={activeGoalsForDisplay.length}
+              message={cycleMessage}
+              dateError={cycleDateError}
+              onCycleNameChange={(value) => {
                 setCycleName(value);
                 setCycleMessage('');
               }}
-              onPrimaryFocusChange={(value) => {
+              onCyclePrimaryFocusChange={(value) => {
                 setCyclePrimaryFocus(value);
                 setCycleMessage('');
               }}
-              onThemeChange={(value) => {
+              onCycleThemeChange={(value) => {
                 setCycleTheme(value);
                 setCycleMessage('');
               }}
+              onCycleStartDateChange={(value) => {
+                setCycleStartDate(value);
+                setCycleMessage('');
+              }}
+              onStartCycle={handleStartPlanningCycle}
             />
+          ) : (
+            <>
+              <Text style={styles.cycleTitle}>
+                Start a New 12-Week Cycle
+              </Text>
 
-            <View style={styles.cycleForm}>
-              <View style={styles.cycleDateField}>
-                <Text style={styles.dateInputLabel}>
-                  Cycle start date
-                </Text>
-                <TextInput
-                  style={styles.dateInput}
-                  value={cycleStartDate}
-                  onChangeText={(value) => {
-                    setCycleStartDate(value);
-                    setCycleMessage('');
-                  }}
-                  placeholder="YYYY-MM-DD"
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                />
+              <Text style={styles.cycleSubtitle}>
+                Choose the next 12-week folder and start date. Existing
+                historical cycle folders stay unchanged.
+              </Text>
+
+              <CycleIdentityFields
+                name={cycleName}
+                primaryFocus={cyclePrimaryFocus}
+                theme={cycleTheme}
+                onNameChange={(value) => {
+                  setCycleName(value);
+                  setCycleMessage('');
+                }}
+                onPrimaryFocusChange={(value) => {
+                  setCyclePrimaryFocus(value);
+                  setCycleMessage('');
+                }}
+                onThemeChange={(value) => {
+                  setCycleTheme(value);
+                  setCycleMessage('');
+                }}
+              />
+
+              <View style={styles.cycleForm}>
+                <View style={styles.cycleDateField}>
+                  <Text style={styles.dateInputLabel}>
+                    Cycle start date
+                  </Text>
+                  <TextInput
+                    style={styles.dateInput}
+                    value={cycleStartDate}
+                    onChangeText={(value) => {
+                      setCycleStartDate(value);
+                      setCycleMessage('');
+                    }}
+                    placeholder="YYYY-MM-DD"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                  />
+                </View>
+
+                <View style={styles.cycleDatePreview}>
+                  <Text style={styles.cycleDatePreviewLabel}>
+                    Calculated end date
+                  </Text>
+                  <Text style={styles.cycleDatePreviewValue}>
+                    {cycleRangePreview
+                      ? formatDateKey(cycleRangePreview.endDate)
+                      : 'Enter a valid start date'}
+                  </Text>
+                </View>
               </View>
 
-              <View style={styles.cycleDatePreview}>
-                <Text style={styles.cycleDatePreviewLabel}>
-                  Calculated end date
+              {cycleMessage || cycleDateError ? (
+                <Text style={styles.dateErrorText}>
+                  {cycleMessage || cycleDateError}
                 </Text>
-                <Text style={styles.cycleDatePreviewValue}>
-                  {cycleRangePreview
-                    ? formatDateKey(cycleRangePreview.endDate)
-                    : 'Enter a valid start date'}
+              ) : (
+                <Text style={styles.cycleHelpText}>
+                  The cycle end date is fixed automatically at twelve full
+                  weeks.
                 </Text>
-              </View>
-            </View>
+              )}
 
-            {cycleMessage || cycleDateError ? (
-              <Text style={styles.dateErrorText}>
-                {cycleMessage || cycleDateError}
-              </Text>
-            ) : (
-              <Text style={styles.cycleHelpText}>
-                The cycle end date is fixed automatically at twelve
-                full weeks.
-              </Text>
-            )}
-
-            <Pressable
-              style={styles.startCycleButton}
-              onPress={handleStartPlanningCycle}
-            >
-              <Text style={styles.startCycleButtonText}>
-                Start 12-Week Cycle
-              </Text>
-            </Pressable>
-          </>
+              <Pressable
+                style={styles.startCycleButton}
+                onPress={handleStartPlanningCycle}
+              >
+                <Text style={styles.startCycleButtonText}>
+                  Start 12-Week Cycle
+                </Text>
+              </Pressable>
+            </>
+          )
         ) : (
           <>
             <View style={styles.cycleHeaderRow}>
