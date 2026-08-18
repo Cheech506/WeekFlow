@@ -910,6 +910,7 @@ const styles = StyleSheet.create({
   },
   daySection: {
     minHeight: 220,
+    alignSelf: 'flex-start',
     backgroundColor: 'white',
     padding: 12,
     borderRadius: 14,
@@ -972,7 +973,6 @@ const styles = StyleSheet.create({
     color: '#4b5563',
   },
   emptyDayCard: {
-    flex: 1,
     minHeight: 100,
     alignItems: 'center',
     justifyContent: 'center',

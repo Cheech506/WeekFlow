@@ -9,6 +9,7 @@ import {
 } from 'react';
 
 import { useBrainDumps } from '@/context/BrainDumpContext';
+import { useCelebrations } from '@/context/CelebrationContext';
 import { useCycle } from '@/context/CycleContext';
 import { useGoals } from '@/context/GoalContext';
 import { useTasks } from '@/context/TaskContext';
@@ -75,6 +76,7 @@ export function CycleReviewProvider({
     StoredCycleGoalOutcome[]
   >([]);
   const [isLoading, setIsLoading] = useState(true);
+  const { celebrate } = useCelebrations();
 
   const { cycles, refreshCycles } = useCycle();
   const { goals, milestones, refreshGoals } = useGoals();
@@ -148,6 +150,8 @@ export function CycleReviewProvider({
       nextCycle: NextCyclePlanInput;
       outcomes: CycleGoalOutcomeInput[];
     }) => {
+      const completedCycle = cycles.find((cycle) => cycle.id === input.cycleId);
+
       await finalizeCycleReviewAndStartNextCycle({
         ...input,
         snapshot: buildSnapshot(input.cycleId),
@@ -159,8 +163,12 @@ export function CycleReviewProvider({
         refreshCycleReviews(),
         refreshWeeklyReviews(),
       ]);
+
+      celebrate('cycle', completedCycle?.name ?? '12-Week Cycle');
     }, [
       buildSnapshot,
+      celebrate,
+      cycles,
       refreshCycleReviews,
       refreshCycles,
       refreshGoals,

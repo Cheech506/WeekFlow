@@ -11,6 +11,21 @@ describe('app metadata storage integration', () => {
     jest.resetModules();
   });
 
+  test('stores completion celebration preferences separately from backup activity', async () => {
+    const {
+      getCompletionCelebrationsEnabled,
+      setCompletionCelebrationsEnabled,
+    } = await import('../../lib/appMetadataStorage');
+
+    await expect(getCompletionCelebrationsEnabled()).resolves.toBe(true);
+
+    await setCompletionCelebrationsEnabled(false);
+    await expect(getCompletionCelebrationsEnabled()).resolves.toBe(false);
+
+    await setCompletionCelebrationsEnabled(true);
+    await expect(getCompletionCelebrationsEnabled()).resolves.toBe(true);
+  });
+
   test('records and updates successful backup activity for this device', async () => {
     const {
       getBackupActivity,

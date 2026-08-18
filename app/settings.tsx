@@ -6,10 +6,12 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
 } from 'react-native';
 
 import { Text, View } from '@/components/Themed';
 import { useBrainDumps } from '@/context/BrainDumpContext';
+import { useCelebrations } from '@/context/CelebrationContext';
 import { useCycle } from '@/context/CycleContext';
 import { useCycleReviews } from '@/context/CycleReviewContext';
 import { useGoals } from '@/context/GoalContext';
@@ -82,6 +84,16 @@ export default function SettingsScreen() {
     useState<PickedWeekFlowBackup | null>(null);
   const [backupActivity, setBackupActivity] =
     useState<BackupActivity>(EMPTY_BACKUP_ACTIVITY);
+  const [isSavingCelebrationPreference, setIsSavingCelebrationPreference] =
+    useState(false);
+  const [celebrationPreferenceMessage, setCelebrationPreferenceMessage] =
+    useState<BackupMessage | null>(null);
+
+  const {
+    celebrationsEnabled,
+    isLoadingCelebrationPreference,
+    setCelebrationsEnabled,
+  } = useCelebrations();
 
   const {
     tasks,
@@ -243,6 +255,30 @@ export default function SettingsScreen() {
     cycleReviews,
     goalOutcomes,
   ]);
+
+  async function handleCelebrationToggle(enabled: boolean) {
+    if (isSavingCelebrationPreference) return;
+
+    setIsSavingCelebrationPreference(true);
+    setCelebrationPreferenceMessage(null);
+
+    try {
+      await setCelebrationsEnabled(enabled);
+      setCelebrationPreferenceMessage({
+        tone: 'success',
+        text: enabled
+          ? 'Completion celebrations are on.'
+          : 'Completion celebrations are off.',
+      });
+    } catch {
+      setCelebrationPreferenceMessage({
+        tone: 'error',
+        text: 'WeekFlow could not save that completion-feedback setting.',
+      });
+    } finally {
+      setIsSavingCelebrationPreference(false);
+    }
+  }
 
   async function handleExportBackup() {
     setIsExporting(true);
@@ -406,6 +442,48 @@ export default function SettingsScreen() {
             </View>
           ))}
         </View>
+      </View>
+
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Completion Feedback</Text>
+        <Text style={styles.sectionSubtitle}>
+          Keep finishing work satisfying without turning WeekFlow into a game.
+        </Text>
+
+        <View style={styles.preferenceCard}>
+          <View style={styles.preferenceCopy}>
+            <Text style={styles.preferenceTitle}>Completion Celebrations</Text>
+            <Text style={styles.preferenceText}>
+              Show a short success banner after completing tasks and goals, with
+              a larger moment when a 12-week cycle is finalized. WeekFlow also
+              follows your device's Reduce Motion preference.
+            </Text>
+          </View>
+
+          <Switch
+            accessibilityLabel="Completion celebrations"
+            value={celebrationsEnabled}
+            disabled={
+              isLoadingCelebrationPreference || isSavingCelebrationPreference
+            }
+            onValueChange={(enabled) => {
+              void handleCelebrationToggle(enabled);
+            }}
+          />
+        </View>
+
+        {celebrationPreferenceMessage ? (
+          <Text
+            style={[
+              styles.preferenceMessage,
+              celebrationPreferenceMessage.tone === 'error'
+                ? styles.backupMessageError
+                : styles.backupMessageSuccess,
+            ]}
+          >
+            {celebrationPreferenceMessage.text}
+          </Text>
+        ) : null}
       </View>
 
       <View style={styles.section}>
@@ -725,6 +803,36 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#64748b',
     lineHeight: 17,
+  },
+  preferenceCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+    padding: 16,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    backgroundColor: 'white',
+  },
+  preferenceCopy: {
+    flex: 1,
+    backgroundColor: 'transparent',
+  },
+  preferenceTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#111827',
+    marginBottom: 4,
+  },
+  preferenceText: {
+    fontSize: 13,
+    color: '#6b7280',
+    lineHeight: 19,
+  },
+  preferenceMessage: {
+    marginTop: 10,
+    fontSize: 13,
+    fontWeight: '700',
   },
   activityGrid: {
     flexDirection: 'row',

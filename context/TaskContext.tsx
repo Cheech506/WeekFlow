@@ -8,6 +8,7 @@ import {
   useState,
 } from 'react';
 
+import { useCelebrations } from '@/context/CelebrationContext';
 import { getLocalDateKey } from '@/lib/dateUtils';
 import {
   deleteTaskTemplateById,
@@ -136,6 +137,7 @@ export function TaskProvider({ children }: { children: ReactNode }) {
     TaskTemplate[]
   >([]);
   const [isLoading, setIsLoading] = useState(true);
+  const { celebrate } = useCelebrations();
 
   /*
    * Expo SQLite on web uses a worker. Serializing refresh requests prevents
@@ -325,8 +327,16 @@ export function TaskProvider({ children }: { children: ReactNode }) {
   }
 
   async function completeTask(id: number) {
+    const task = tasks.find((item) => item.id === id);
+
     await completeTaskById(id);
     await loadTasks();
+
+    // Celebrate only an actual incomplete -> complete transition. This avoids
+    // replaying feedback if a stale screen somehow submits the same task twice.
+    if (task && !task.completed) {
+      celebrate('task', task.title);
+    }
   }
 
   async function deleteTask(id: number) {

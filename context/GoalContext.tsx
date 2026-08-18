@@ -7,6 +7,7 @@ import React, {
   useState,
 } from 'react';
 
+import { useCelebrations } from '@/context/CelebrationContext';
 import { useTasks } from '@/context/TaskContext';
 import {
   deleteGoalMilestoneById,
@@ -83,6 +84,7 @@ export function GoalProvider({ children }: { children: React.ReactNode }) {
   const [milestones, setMilestones] = useState<GoalMilestone[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const { tasks, refreshTasks } = useTasks();
+  const { celebrate } = useCelebrations();
 
   const refreshGoals = useCallback(async () => {
     setIsLoading(true);
@@ -202,12 +204,13 @@ export function GoalProvider({ children }: { children: React.ReactNode }) {
           createGoalCompletionSnapshot(analytics)
         );
         await refreshGoals();
+        celebrate('goal', goal.title);
       } catch (error) {
         console.error('Failed to complete goal:', error);
         throw error;
       }
     },
-    [goals, milestones, refreshGoals, tasks]
+    [celebrate, goals, milestones, refreshGoals, tasks]
   );
 
   const reopenGoal = useCallback(

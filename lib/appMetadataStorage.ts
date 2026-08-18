@@ -4,6 +4,7 @@ const LAST_EXPORT_AT_KEY = 'last_backup_export_at';
 const LAST_EXPORT_FILE_KEY = 'last_backup_export_file';
 const LAST_IMPORT_AT_KEY = 'last_backup_import_at';
 const LAST_IMPORT_FILE_KEY = 'last_backup_import_file';
+const COMPLETION_CELEBRATIONS_ENABLED_KEY = 'completion_celebrations_enabled';
 
 export type BackupActivity = {
   lastExportAt: string | null;
@@ -114,4 +115,45 @@ export async function recordBackupImport(
       importedAt
     );
   });
+}
+
+
+/**
+ * Completion feedback is a device preference, not productivity data. Keeping
+ * it in app_metadata means backup restores do not unexpectedly change how a
+ * specific device feels when tasks, goals, or cycles are completed.
+ */
+export async function getCompletionCelebrationsEnabled(): Promise<boolean> {
+  await migrateDb();
+  const db = await getDb();
+
+  const row = await db.getFirstAsync<MetadataRow>(
+    `
+    SELECT key, value
+    FROM app_metadata
+    WHERE key = ?
+    LIMIT 1;
+    `,
+    [COMPLETION_CELEBRATIONS_ENABLED_KEY]
+  );
+
+  if (!row) return true;
+  if (row.value === '0') return false;
+  if (row.value === '1') return true;
+
+  // Unknown older values fall back to the safe default instead of disabling UI.
+  return true;
+}
+
+export async function setCompletionCelebrationsEnabled(enabled: boolean) {
+  await migrateDb();
+  const db = await getDb();
+  const updatedAt = new Date().toISOString();
+
+  await setMetadataValue(
+    db,
+    COMPLETION_CELEBRATIONS_ENABLED_KEY,
+    enabled ? '1' : '0',
+    updatedAt
+  );
 }

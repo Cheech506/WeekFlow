@@ -6,8 +6,10 @@ import { useEffect } from 'react';
 import { Pressable, Text } from 'react-native';
 import 'react-native-reanimated';
 
+import { CompletionCelebration } from '@/components/CompletionCelebration';
 import { useColorScheme } from '@/components/useColorScheme';
 import { BrainDumpProvider } from '@/context/BrainDumpContext';
+import { CelebrationProvider } from '@/context/CelebrationContext';
 import { CycleProvider } from '@/context/CycleContext';
 import { CycleReviewProvider } from '@/context/CycleReviewContext';
 import { GoalProvider } from '@/context/GoalContext';
@@ -59,68 +61,71 @@ function RootLayoutNav() {
        * Providers live above the Stack so both the main tabs and secondary
        * screens such as Settings share one in-memory view of the SQLite data.
        */}
-      <TaskProvider>
-        <CycleProvider>
-          <GoalProvider>
-            <BrainDumpProvider>
-              <WeeklyReviewProvider>
-                <CycleReviewProvider>
-                  <Stack>
-                    <Stack.Screen
-                      name="(tabs)"
-                      options={{ headerShown: false }}
-                    />
-                    <Stack.Screen
-                      name="settings"
-                      options={({ navigation }) => ({
-                        title: 'Settings',
-                        headerBackVisible: false,
-                        headerLeft: ({ tintColor }) => (
-                          <Pressable
-                            accessibilityRole="button"
-                            accessibilityLabel="Return to WeekFlow"
-                            hitSlop={10}
-                            onPress={() => {
-                              /*
-                               * Fast refresh or opening /settings directly can leave
-                               * the stack without a previous screen. Fall back to the
-                               * Goals tab instead of dispatching an invalid GO_BACK.
-                               */
-                              if (navigation.canGoBack()) {
-                                navigation.goBack();
-                              } else {
-                                router.replace('/' as Href);
-                              }
-                            }}
-                            style={({ pressed }) => ({
-                              paddingHorizontal: 4,
-                              opacity: pressed ? 0.5 : 1,
-                            })}
-                          >
-                            <Text
-                              style={{
-                                color: tintColor,
-                                fontSize: 16,
-                                fontWeight: '600',
+      <CelebrationProvider>
+        <TaskProvider>
+          <CycleProvider>
+            <GoalProvider>
+              <BrainDumpProvider>
+                <WeeklyReviewProvider>
+                  <CycleReviewProvider>
+                    <Stack>
+                      <Stack.Screen
+                        name="(tabs)"
+                        options={{ headerShown: false }}
+                      />
+                      <Stack.Screen
+                        name="settings"
+                        options={({ navigation }) => ({
+                          title: 'Settings',
+                          headerBackVisible: false,
+                          headerLeft: ({ tintColor }) => (
+                            <Pressable
+                              accessibilityRole="button"
+                              accessibilityLabel="Return to WeekFlow"
+                              hitSlop={10}
+                              onPress={() => {
+                                /*
+                                 * Fast refresh or opening /settings directly can leave
+                                 * the stack without a previous screen. Fall back to the
+                                 * Goals tab instead of dispatching an invalid GO_BACK.
+                                 */
+                                if (navigation.canGoBack()) {
+                                  navigation.goBack();
+                                } else {
+                                  router.replace('/' as Href);
+                                }
                               }}
+                              style={({ pressed }) => ({
+                                paddingHorizontal: 4,
+                                opacity: pressed ? 0.5 : 1,
+                              })}
                             >
-                              ‹ Back
-                            </Text>
-                          </Pressable>
-                        ),
-                      })}
-                    />
-                    <Stack.Screen
-                      name="modal"
-                      options={{ presentation: 'modal' }}
-                    />
-                  </Stack>
-                </CycleReviewProvider>
-              </WeeklyReviewProvider>
-            </BrainDumpProvider>
-          </GoalProvider>
-        </CycleProvider>
-      </TaskProvider>
+                              <Text
+                                style={{
+                                  color: tintColor,
+                                  fontSize: 16,
+                                  fontWeight: '600',
+                                }}
+                              >
+                                ‹ Back
+                              </Text>
+                            </Pressable>
+                          ),
+                        })}
+                      />
+                      <Stack.Screen
+                        name="modal"
+                        options={{ presentation: 'modal' }}
+                      />
+                    </Stack>
+                  </CycleReviewProvider>
+                </WeeklyReviewProvider>
+              </BrainDumpProvider>
+            </GoalProvider>
+          </CycleProvider>
+        </TaskProvider>
+        <CompletionCelebration />
+      </CelebrationProvider>
     </ThemeProvider>
   );
 }
