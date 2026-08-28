@@ -14,6 +14,15 @@ export default function TabLayout() {
     <Tabs
       screenOptions={{
         tabBarActiveTintColor: Colors[colorScheme].tint,
+        tabBarHideOnKeyboard: true,
+        tabBarLabelStyle: { fontSize: 11, fontWeight: '700' },
+
+        // The in-page heading names the current workflow. Keeping the native
+        // navigation title branded as WeekFlow avoids repeating "Weekly",
+        // "Inbox", etc. twice on small screens.
+        headerTitle: 'WeekFlow',
+        headerTitleStyle: { fontWeight: '800' },
+        headerShadowVisible: false,
 
         // Keeps the header stable on web.
         headerShown: useClientOnlyValue(false, true),

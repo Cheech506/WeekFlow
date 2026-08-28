@@ -76,7 +76,9 @@ function RootLayoutNav() {
                       <Stack.Screen
                         name="settings"
                         options={({ navigation }) => ({
-                          title: 'Settings',
+                          title: 'WeekFlow',
+                          headerTitleStyle: { fontWeight: '800' },
+                          headerShadowVisible: false,
                           headerBackVisible: false,
                           headerLeft: ({ tintColor }) => (
                             <Pressable

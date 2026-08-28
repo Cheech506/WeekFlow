@@ -11,6 +11,8 @@ import { ActiveTaskFilters } from '@/components/ActiveTaskFilters';
 import InboxOverviewCard from '@/components/InboxOverviewCard';
 import { TaskDatePicker } from '@/components/TaskDatePicker';
 import { TaskWeeklyCommitmentButton } from '@/components/TaskWeeklyCommitmentButton';
+import { EmptyStateCard } from '@/components/EmptyStateCard';
+import { ScreenIntro } from '@/components/ScreenIntro';
 import { Text, View } from '@/components/Themed';
 import {
   type BrainDump,
@@ -979,19 +981,14 @@ export default function InboxScreen() {
           isDesktop && styles.contentDesktop,
         ]}
         keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        showsVerticalScrollIndicator={false}
       >
-      <View
-        style={[
-          styles.header,
-          isDesktop && styles.fullWidthPanel,
-        ]}
-      >
-        <Text style={styles.title}>Inbox</Text>
-        <Text style={styles.subtitle}>
-          Capture tasks, reminders, and random thoughts before
-          they get lost.
-        </Text>
-      </View>
+      <ScreenIntro
+        title="Inbox"
+        subtitle="Capture tasks, reminders, and random thoughts before they get lost."
+        style={isDesktop ? styles.fullWidthPanel : undefined}
+      />
 
       <View style={isDesktop ? styles.fullWidthPanel : undefined}>
         <InboxOverviewCard
@@ -1446,14 +1443,11 @@ export default function InboxScreen() {
         ) : null}
 
         {taskTemplates.length === 0 ? (
-          <View style={styles.emptyCard}>
-            <Text style={styles.emptyTitle}>
-              No task templates yet
-            </Text>
-            <Text style={styles.emptyText}>
-              Fill out Quick Task, then choose Save Details as Template.
-            </Text>
-          </View>
+          <EmptyStateCard
+            icon="copy-outline"
+            title="No task templates yet"
+            description="Fill out Quick Task, then choose Save Details as Template."
+          />
         ) : (
           <View style={styles.cardGrid}>
             {taskTemplates.map((template) => {
@@ -1720,14 +1714,11 @@ export default function InboxScreen() {
         {isRecurringManagerExpanded ? (
           <View style={styles.list}>
             {recurringRules.length === 0 ? (
-              <View style={styles.emptyCard}>
-                <Text style={styles.emptyTitle}>
-                  No recurring tasks yet
-                </Text>
-                <Text style={styles.emptyText}>
-                  Pick a repeat option in Quick Task.
-                </Text>
-              </View>
+              <EmptyStateCard
+                icon="repeat-outline"
+                title="No recurring tasks yet"
+                description="Pick a repeat option in Quick Task."
+              />
             ) : (
               recurringRules.map((rule) => {
                 const nextTask = tasks
@@ -2276,15 +2267,11 @@ export default function InboxScreen() {
           ]}
         >
           {activeBrainDumps.length === 0 ? (
-            <View style={styles.emptyCard}>
-              <Text style={styles.emptyTitle}>
-                No brain dumps yet
-              </Text>
-              <Text style={styles.emptyText}>
-                Use this area for thoughts that are not really
-                tasks yet.
-              </Text>
-            </View>
+            <EmptyStateCard
+              icon="bulb-outline"
+              title="No brain dumps yet"
+              description="Use this area for thoughts that are not really tasks yet."
+            />
           ) : (
             activeBrainDumps.map((brainDump) => {
               const isEditingBrainDump =
@@ -2469,23 +2456,17 @@ export default function InboxScreen() {
           ]}
         >
           {activeTasks.length === 0 ? (
-            <View style={styles.emptyCard}>
-              <Text style={styles.emptyTitle}>
-                Inbox is clear ✅
-              </Text>
-              <Text style={styles.emptyText}>
-                Add a task when you need to capture something.
-              </Text>
-            </View>
+            <EmptyStateCard
+              icon="checkmark-circle-outline"
+              title="Inbox is clear"
+              description="Add a task when you need to capture something."
+            />
           ) : filteredActiveTasks.length === 0 ? (
-            <View style={styles.emptyCard}>
-              <Text style={styles.emptyTitle}>
-                No tasks match these filters
-              </Text>
-              <Text style={styles.emptyText}>
-                Clear or adjust Search & Filters to show more active tasks.
-              </Text>
-            </View>
+            <EmptyStateCard
+              icon="filter-outline"
+              title="No tasks match these filters"
+              description="Clear or adjust Search & Filters to show more active tasks."
+            />
           ) : (
             filteredActiveTasks.map((task) => {
               const linkedGoal = goals.find(
@@ -3434,7 +3415,13 @@ export default function InboxScreen() {
 
 const styles = StyleSheet.create({
   page: { flex: 1 },
-  content: { padding: 20, paddingBottom: 40 },
+  content: {
+    width: '100%',
+    maxWidth: 1440,
+    alignSelf: 'center',
+    padding: 20,
+    paddingBottom: 40,
+  },
   contentDesktop: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -3451,17 +3438,6 @@ const styles = StyleSheet.create({
     columnGap: 14,
   },
   halfWidthCard: { width: '49%' },
-  header: { marginBottom: 20 },
-  title: {
-    fontSize: 34,
-    fontWeight: '800',
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 16,
-    opacity: 0.7,
-    lineHeight: 22,
-  },
   progressCard: {
     padding: 18,
     borderRadius: 16,
@@ -3859,22 +3835,4 @@ const styles = StyleSheet.create({
   stopOnlyButton: { backgroundColor: '#7c3aed' },
   confirmDeleteButton: { backgroundColor: '#991b1b' },
   cancelButton: { backgroundColor: '#6b7280' },
-  emptyCard: {
-    padding: 18,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    backgroundColor: 'white',
-  },
-  emptyTitle: {
-    fontSize: 18,
-    fontWeight: '800',
-    marginBottom: 4,
-    color: '#111827',
-  },
-  emptyText: {
-    fontSize: 14,
-    color: '#6b7280',
-    lineHeight: 20,
-  },
 });

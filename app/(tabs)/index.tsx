@@ -16,6 +16,8 @@ import GoalCompletionPanel from '@/components/GoalCompletionPanel';
 import GoalDashboardOverview from '@/components/GoalDashboardOverview';
 import GoalMilestoneManager from '@/components/GoalMilestoneManager';
 import PastCycleFolder from '@/components/PastCycleFolder';
+import { EmptyStateCard } from '@/components/EmptyStateCard';
+import { ScreenIntro } from '@/components/ScreenIntro';
 import { Text, View } from '@/components/Themed';
 import { useCycle } from '@/context/CycleContext';
 import { useGoals } from '@/context/GoalContext';
@@ -720,19 +722,15 @@ export default function TwelveWeekGoalsScreen() {
         styles.content,
         isDesktop && styles.contentDesktop,
       ]}
+      keyboardShouldPersistTaps="handled"
+      keyboardDismissMode="on-drag"
+      showsVerticalScrollIndicator={false}
     >
-      <View
-        style={[
-          styles.header,
-          isDesktop && styles.fullWidthPanel,
-        ]}
-      >
-        <Text style={styles.title}>WeekFlow Dashboard</Text>
-
-        <Text style={styles.subtitle}>
-          See where your cycle, today, weekly commitments, and goals stand.
-        </Text>
-      </View>
+      <ScreenIntro
+        title="WeekFlow Dashboard"
+        subtitle="See where your cycle, today, weekly commitments, and goals stand."
+        style={isDesktop ? styles.fullWidthPanel : undefined}
+      />
 
       <View
         style={[
@@ -1315,21 +1313,16 @@ export default function TwelveWeekGoalsScreen() {
         ]}
       >
         {isLoading ? (
-          <View style={styles.emptyCard}>
-            <Text style={styles.emptyTitle}>
-              Loading goals...
-            </Text>
-          </View>
+          <EmptyStateCard
+            icon="hourglass-outline"
+            title="Loading goals..."
+          />
         ) : activeGoalsForDisplay.length === 0 ? (
-          <View style={styles.emptyCard}>
-            <Text style={styles.emptyTitle}>
-              No active goals
-            </Text>
-
-            <Text style={styles.emptyText}>
-              Add a goal or reopen a completed goal from History.
-            </Text>
-          </View>
+          <EmptyStateCard
+            icon="flag-outline"
+            title="No active goals"
+            description="Add a goal or reopen a completed goal from History."
+          />
         ) : (
           activeGoalsForDisplay.map((goal) => {
             /*
@@ -1757,6 +1750,9 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   content: {
+    width: '100%',
+    maxWidth: 1440,
+    alignSelf: 'center',
     padding: 20,
     paddingBottom: 40,
   },
@@ -2124,19 +2120,6 @@ const styles = StyleSheet.create({
   addCardDesktop: {
     width: '100%',
     alignSelf: 'stretch',
-  },
-  header: {
-    marginBottom: 20,
-  },
-  title: {
-    fontSize: 34,
-    fontWeight: '800',
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 16,
-    opacity: 0.7,
-    lineHeight: 22,
   },
   overviewCard: {
     padding: 18,
@@ -2749,22 +2732,5 @@ const styles = StyleSheet.create({
   deleteButtonText: {
     color: 'white',
     fontWeight: '700',
-  },
-  emptyCard: {
-    padding: 18,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    backgroundColor: 'white',
-  },
-  emptyTitle: {
-    fontSize: 18,
-    fontWeight: '800',
-    marginBottom: 4,
-    color: '#111827',
-  },
-  emptyText: {
-    fontSize: 14,
-    color: '#6b7280',
   },
 });

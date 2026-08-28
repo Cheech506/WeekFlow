@@ -9,6 +9,7 @@ import {
   Switch,
 } from 'react-native';
 
+import { ScreenIntro } from '@/components/ScreenIntro';
 import { Text, View } from '@/components/Themed';
 import { useBrainDumps } from '@/context/BrainDumpContext';
 import { useCelebrations } from '@/context/CelebrationContext';
@@ -392,21 +393,20 @@ export default function SettingsScreen() {
   }
 
   const appVersion = Constants.expoConfig?.version ?? '1.0.0';
-  const expoSdk = Constants.expoConfig?.sdkVersion ?? '55';
+  const expoSdk = Constants.expoConfig?.sdkVersion ?? '54';
 
   return (
     <ScrollView
       style={styles.page}
       contentContainerStyle={styles.content}
       keyboardShouldPersistTaps="handled"
+      keyboardDismissMode="on-drag"
+      showsVerticalScrollIndicator={false}
     >
-      <View style={styles.header}>
-        <Text style={styles.title}>Settings</Text>
-        <Text style={styles.subtitle}>
-          Manage WeekFlow data, backups, and development information in one
-          place.
-        </Text>
-      </View>
+      <ScreenIntro
+        title="Settings"
+        subtitle="Manage WeekFlow data, backups, and development information in one place."
+      />
 
       <View style={styles.section}>
         <View style={styles.sectionHeaderRow}>
@@ -717,20 +717,6 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     padding: 20,
     paddingBottom: 48,
-  },
-  header: {
-    marginBottom: 24,
-    backgroundColor: 'transparent',
-  },
-  title: {
-    fontSize: 34,
-    fontWeight: '800',
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 16,
-    opacity: 0.7,
-    lineHeight: 22,
   },
   section: {
     marginBottom: 28,

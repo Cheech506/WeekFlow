@@ -9,6 +9,8 @@ import {
 import { ActiveTaskFilters } from '@/components/ActiveTaskFilters';
 import { TaskCardActionsMenu } from '@/components/TaskCardActionsMenu';
 import { TaskDatePicker } from '@/components/TaskDatePicker';
+import { EmptyStateCard } from '@/components/EmptyStateCard';
+import { ScreenIntro } from '@/components/ScreenIntro';
 import { Text, View } from '@/components/Themed';
 import { useBrainDumps } from '@/context/BrainDumpContext';
 import { useGoals } from '@/context/GoalContext';
@@ -120,19 +122,15 @@ export default function DailyScreen() {
           styles.content,
           isDesktop && styles.contentDesktop,
         ]}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        showsVerticalScrollIndicator={false}
       >
-      <View
-        style={[
-          styles.header,
-          isDesktop && styles.fullWidthPanel,
-        ]}
-      >
-        <Text style={styles.title}>Daily Tasks</Text>
-
-        <Text style={styles.subtitle}>
-          Today is {todayLabel}. Review what needs attention today.
-        </Text>
-      </View>
+      <ScreenIntro
+        title="Daily Tasks"
+        subtitle={`Today is ${todayLabel}. Review what needs attention today.`}
+        style={isDesktop ? styles.fullWidthPanel : undefined}
+      />
 
       <View
         style={[
@@ -436,26 +434,17 @@ export default function DailyScreen() {
 
         <View style={styles.taskList}>
           {activeTasks.length === 0 ? (
-            <View style={styles.emptyCard}>
-              <Text style={styles.emptyTitle}>
-                Nothing for today 🎉
-              </Text>
-
-              <Text style={styles.emptyText}>
-                Schedule a task from Inbox for today's date when
-                something needs to be done.
-              </Text>
-            </View>
+            <EmptyStateCard
+              icon="checkmark-circle-outline"
+              title="Nothing for today"
+              description="Schedule a task from Inbox for today's date when something needs to be done."
+            />
           ) : filteredActiveTasks.length === 0 ? (
-            <View style={styles.emptyCard}>
-              <Text style={styles.emptyTitle}>
-                No today tasks match these filters
-              </Text>
-
-              <Text style={styles.emptyText}>
-                Clear or adjust Search & Filters to show more tasks.
-              </Text>
-            </View>
+            <EmptyStateCard
+              icon="filter-outline"
+              title="No today tasks match these filters"
+              description="Clear or adjust Search & Filters to show more tasks."
+            />
           ) : (
             filteredActiveTasks.map((task) => {
               const linkedGoal = goals.find(
@@ -520,16 +509,11 @@ export default function DailyScreen() {
 
         <View style={styles.brainDumpList}>
           {activeBrainDumps.length === 0 ? (
-            <View style={styles.emptyCard}>
-              <Text style={styles.emptyTitle}>
-                No active brain dumps
-              </Text>
-
-              <Text style={styles.emptyText}>
-                Add brain dump notes from Inbox and they will
-                show here too.
-              </Text>
-            </View>
+            <EmptyStateCard
+              icon="bulb-outline"
+              title="No active brain dumps"
+              description="Add brain dump notes from Inbox and they will show here too."
+            />
           ) : (
             activeBrainDumps.map((brainDump) => (
               <View key={brainDump.id} style={styles.brainDumpCard}>
@@ -561,7 +545,13 @@ export default function DailyScreen() {
 
 const styles = StyleSheet.create({
   page: { flex: 1 },
-  content: { padding: 20, paddingBottom: 40 },
+  content: {
+    width: '100%',
+    maxWidth: 1440,
+    alignSelf: 'center',
+    padding: 20,
+    paddingBottom: 40,
+  },
   contentDesktop: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -581,9 +571,6 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
   },
   halfWidthCard: { width: '49%' },
-  header: { marginBottom: 20 },
-  title: { fontSize: 34, fontWeight: '800', marginBottom: 8 },
-  subtitle: { fontSize: 16, opacity: 0.7, lineHeight: 22 },
   progressCard: {
     padding: 18,
     borderRadius: 16,
@@ -859,18 +846,4 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
   },
   archiveButtonText: { color: 'white', fontWeight: '700' },
-  emptyCard: {
-    padding: 18,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    backgroundColor: 'white',
-  },
-  emptyTitle: {
-    fontSize: 18,
-    fontWeight: '800',
-    marginBottom: 4,
-    color: '#111827',
-  },
-  emptyText: { fontSize: 14, color: '#6b7280' },
 });

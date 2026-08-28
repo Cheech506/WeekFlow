@@ -13,6 +13,7 @@ import { TaskCardActionsMenu } from '@/components/TaskCardActionsMenu';
 import { TaskDatePicker } from '@/components/TaskDatePicker';
 import { UnfinishedTaskDecisionsCard } from '@/components/UnfinishedTaskDecisionsCard';
 import { WeeklyCommitmentsCard } from '@/components/WeeklyCommitmentsCard';
+import { ScreenIntro } from '@/components/ScreenIntro';
 import { Text, View } from '@/components/Themed';
 import { useBrainDumps } from '@/context/BrainDumpContext';
 import { useCycle } from '@/context/CycleContext';
@@ -332,13 +333,14 @@ export default function WeeklyScreen() {
           styles.content,
           width < 700 && styles.contentNarrow,
         ]}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        showsVerticalScrollIndicator={false}
       >
-      <View style={styles.header}>
-        <Text style={styles.title}>Weekly Tasks</Text>
-        <Text style={styles.subtitle}>
-          View scheduled tasks by their real calendar dates.
-        </Text>
-      </View>
+      <ScreenIntro
+        title="Weekly Tasks"
+        subtitle="View scheduled tasks by their real calendar dates."
+      />
 
       <View style={styles.weekNavigationCard}>
         <Text style={styles.weekLabel}>{weekLabel}</Text>
@@ -735,13 +737,16 @@ export default function WeeklyScreen() {
 
 const styles = StyleSheet.create({
   page: { flex: 1 },
-  content: { padding: 20, paddingBottom: 40 },
+  content: {
+    width: '100%',
+    maxWidth: 1440,
+    alignSelf: 'center',
+    padding: 20,
+    paddingBottom: 40,
+  },
   contentNarrow: {
     paddingHorizontal: 12,
   },
-  header: { marginBottom: 18 },
-  title: { fontSize: 34, fontWeight: '800', marginBottom: 8 },
-  subtitle: { fontSize: 16, opacity: 0.7, lineHeight: 22 },
   weekNavigationCard: {
     padding: 16,
     borderRadius: 14,

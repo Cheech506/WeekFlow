@@ -7,6 +7,8 @@ import {
 
 import HistoryFilters from '@/components/HistoryFilters';
 import PastCycleFolder from '@/components/PastCycleFolder';
+import { EmptyStateCard } from '@/components/EmptyStateCard';
+import { ScreenIntro } from '@/components/ScreenIntro';
 import { Text, View } from '@/components/Themed';
 import { useBrainDumps } from '@/context/BrainDumpContext';
 import { useCycle } from '@/context/CycleContext';
@@ -510,15 +512,13 @@ export default function HistoryScreen() {
       style={styles.page}
       contentContainerStyle={styles.content}
       keyboardShouldPersistTaps="handled"
+      keyboardDismissMode="on-drag"
+      showsVerticalScrollIndicator={false}
     >
-      <View style={styles.header}>
-        <Text style={styles.title}>History</Text>
-
-        <Text style={styles.subtitle}>
-          Look back at completed tasks, finished goals, cycle reports,
-          reflections, and thoughts you cleared from your head.
-        </Text>
-      </View>
+      <ScreenIntro
+        title="History"
+        subtitle="Look back at completed tasks, finished goals, cycle reports, reflections, and thoughts you cleared from your head."
+      />
 
       <View style={styles.progressCard}>
         <Text style={styles.progressTitle}>
@@ -553,15 +553,11 @@ export default function HistoryScreen() {
           </Text>
 
           {filteredCompletedTasks.length === 0 ? (
-            <View style={styles.emptyCard}>
-              <Text style={styles.emptyTitle}>
-                No completed tasks found
-              </Text>
-
-              <Text style={styles.emptyText}>
-                Try changing the search or filters.
-              </Text>
-            </View>
+            <EmptyStateCard
+              icon="checkmark-done-outline"
+              title="No completed tasks found"
+              description="Try changing the search or filters."
+            />
           ) : (
             <View style={styles.groupList}>
               {historyGroups.map((group) => {
@@ -674,16 +670,11 @@ export default function HistoryScreen() {
           </Text>
 
           {filteredCompletedGoals.length === 0 ? (
-            <View style={styles.emptyCard}>
-              <Text style={styles.emptyTitle}>
-                No completed goals found
-              </Text>
-
-              <Text style={styles.emptyText}>
-                Try changing the search or complete a goal from the
-                Goals screen.
-              </Text>
-            </View>
+            <EmptyStateCard
+              icon="flag-outline"
+              title="No completed goals found"
+              description="Try changing the search or complete a goal from the Goals screen."
+            />
           ) : (
             <View style={styles.groupList}>
               {historyGroups.map((group) => {
@@ -987,12 +978,11 @@ export default function HistoryScreen() {
           </Text>
 
           {filteredCycles.length === 0 ? (
-            <View style={styles.emptyCard}>
-              <Text style={styles.emptyTitle}>No cycle reports found</Text>
-              <Text style={styles.emptyText}>
-                Try changing the filters or finalize a Week 13 review.
-              </Text>
-            </View>
+            <EmptyStateCard
+              icon="calendar-outline"
+              title="No cycle reports found"
+              description="Try changing the filters or finalize a Week 13 review."
+            />
           ) : (
             <View style={styles.cycleReportList}>
               {filteredCycles.map((cycle) => (
@@ -1022,16 +1012,11 @@ export default function HistoryScreen() {
           </Text>
 
           {filteredBrainDumps.length === 0 ? (
-            <View style={styles.emptyCard}>
-              <Text style={styles.emptyTitle}>
-                No archived brain dumps found
-              </Text>
-
-              <Text style={styles.emptyText}>
-                Try changing the search or archive a brain dump
-                from Inbox.
-              </Text>
-            </View>
+            <EmptyStateCard
+              icon="archive-outline"
+              title="No archived brain dumps found"
+              description="Try changing the search or archive a brain dump from Inbox."
+            />
           ) : (
             <View style={styles.groupList}>
               {historyGroups.map((group) => {
@@ -1138,21 +1123,11 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   content: {
+    width: '100%',
+    maxWidth: 1200,
+    alignSelf: 'center',
     padding: 20,
     paddingBottom: 40,
-  },
-  header: {
-    marginBottom: 20,
-  },
-  title: {
-    fontSize: 34,
-    fontWeight: '800',
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 16,
-    opacity: 0.7,
-    lineHeight: 22,
   },
   progressCard: {
     padding: 18,
@@ -1553,23 +1528,5 @@ const styles = StyleSheet.create({
   cycleReportList: {
     gap: 14,
     backgroundColor: 'transparent',
-  },
-  emptyCard: {
-    padding: 18,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    backgroundColor: 'white',
-  },
-  emptyTitle: {
-    fontSize: 18,
-    fontWeight: '800',
-    marginBottom: 4,
-    color: '#111827',
-  },
-  emptyText: {
-    fontSize: 14,
-    color: '#6b7280',
-    lineHeight: 20,
   },
 });
