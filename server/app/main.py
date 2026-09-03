@@ -19,3 +19,18 @@ def root():
         "apiVersion": API_VERSION,
         "message": "WeekFlow API is running",
     }
+
+@app.get("/health")
+def health_check():
+    return {
+        "status": "ok",
+        "service": APP_NAME,
+    }
+
+@app.get("/api/v1/info")
+def api_info():
+    return {
+        "name": APP_NAME,
+        "version": APP_VERSION,
+        "apiVersion": API_VERSION,
+    }
