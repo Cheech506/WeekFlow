@@ -42,12 +42,10 @@ yarn-error.*
 
 # Python virtual environments
 .venv/
-server/.venv/
-
-# Python virtual environments
-.venv/
-server/.venv/
 
 # Python cache files
 __pycache__/
 *.py[cod]
+
+# Pytest cache
+.pytest_cache/

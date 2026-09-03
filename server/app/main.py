@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 
-from app.config import API_VERSION, APP_NAME, APP_VERSION
+from app.config import API_PREFIX, API_VERSION, APP_NAME, APP_VERSION
 
 
 app = FastAPI(
@@ -27,7 +27,7 @@ def health_check():
         "service": APP_NAME,
     }
 
-@app.get("/api/v1/info")
+@app.get(f"{API_PREFIX}/info")
 def api_info():
     return {
         "name": APP_NAME,
