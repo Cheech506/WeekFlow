@@ -1,6 +1,6 @@
-import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import { useFonts } from 'expo-font';
 import { router, Stack, type Href } from 'expo-router';
+import { DarkTheme, DefaultTheme, ThemeProvider } from 'expo-router/react-navigation';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
 import { Pressable, Text } from 'react-native';
@@ -18,7 +18,7 @@ import { WeeklyReviewProvider } from '@/context/WeeklyReviewContext';
 
 export {
   // Catch any errors thrown by the Layout component.
-  ErrorBoundary,
+  ErrorBoundary
 } from 'expo-router';
 
 export const unstable_settings = {

@@ -168,7 +168,7 @@ export function CompletionCelebration() {
 
 const styles = StyleSheet.create({
   overlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     zIndex: 1000,
     alignItems: 'center',
     justifyContent: 'flex-start',

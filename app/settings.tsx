@@ -1,5 +1,5 @@
-import { useFocusEffect } from '@react-navigation/native';
 import Constants from 'expo-constants';
+import { useFocusEffect } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import {
   Platform,
