@@ -1,7 +1,14 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, status
+from sqlalchemy.exc import SQLAlchemyError
 
-from app.config import API_PREFIX, API_VERSION, APP_NAME, APP_VERSION
-
+from app.config import (
+    API_PREFIX,
+    API_VERSION,
+    APP_NAME,
+    APP_VERSION,
+    POSTGRES_DB,
+)
+from app.database import check_database_connection
 
 app = FastAPI(
     title=APP_NAME,
@@ -22,9 +29,30 @@ def root():
 
 @app.get("/health")
 def health_check():
+    """Confirm that the WeekFlow API process is running."""
+
     return {
         "status": "ok",
         "service": APP_NAME,
+    }
+
+@app.get(f"{API_PREFIX}/database/health")
+def database_health():
+    """Confirm that the API can communicate with PostgreSQL."""
+
+    try:
+        check_database_connection()
+    except SQLAlchemyError as error:
+        # 503 means the API is running but a required service is unavailable.
+        # We return a safe message instead of exposing database error details.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database is unavailable",
+        ) from error
+
+    return {
+        "status": "ok",
+        "database": POSTGRES_DB,
     }
 
 @app.get(f"{API_PREFIX}/info")
