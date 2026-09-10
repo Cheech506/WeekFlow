@@ -1,8 +1,16 @@
 """API routes for WeekFlow tasks."""
+# UTC gives timestamps an explicit universal timezone.
+# datetime creates the exact time when a task is completed.
+from datetime import UTC, datetime
 
 # FastAPI tools used by these task routes.
-from fastapi import APIRouter, Depends, HTTPException, status
-
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Response,
+    status,
+)
 # select builds SELECT queries in Python.
 from sqlalchemy import select
 
@@ -12,7 +20,7 @@ from sqlalchemy.orm import Session
 from app.config import API_PREFIX
 from app.database import get_db
 from app.models import Task
-from app.schemas import TaskCreate, TaskRead
+from app.schemas import TaskCreate, TaskRead, TaskUpdate
 
 # Every endpoint in this router will begin with /api/v1/tasks.
 #
@@ -117,3 +125,119 @@ def read_task(
         )
 
     return task
+
+@router.patch(
+    "/{task_id}",
+    response_model=TaskRead,
+)
+def update_task(
+    task_id: int,
+    task_data: TaskUpdate,
+    db: Session = Depends(get_db),
+) -> Task:
+    """
+    Change only the supplied fields on one existing task.
+
+    PATCH is a partial update. Fields missing from the request keep
+    their current PostgreSQL values.
+    """
+
+    # First, retrieve the existing task using its primary-key ID.
+    task = db.get(Task, task_id)
+
+    # We cannot update a task that does not exist.
+    if task is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found",
+        )
+
+    # Convert TaskUpdate into a dictionary containing only fields
+    # that the client actually included in the PATCH request.
+    #
+    # Example:
+    # {"priority": 2}
+    #
+    # Without exclude_unset=True, omitted fields would appear as None
+    # and could accidentally erase existing values.
+    changes = task_data.model_dump(
+        exclude_unset=True,
+    )
+
+    # WeekFlow derives day from due_date, so they must change together.
+    if "due_date" in changes:
+        due_date = changes["due_date"]
+
+        changes["day"] = (
+            due_date.strftime("%A")
+            if due_date is not None
+            else "Inbox"
+        )
+
+    # Keep completed and completed_at synchronized.
+    if "completed" in changes:
+        completed = changes["completed"]
+
+        # Set the completion time only when an incomplete task becomes complete.
+        if completed and not task.completed:
+            changes["completed_at"] = datetime.now(UTC)
+
+        # Reopening a task removes its old completion time.
+        elif not completed:
+            changes["completed_at"] = None
+
+    # Apply every supplied change to the SQLAlchemy Task object.
+    #
+    # setattr(task, "priority", 2) is the dynamic equivalent of:
+    # task.priority = 2
+    for field_name, value in changes.items():
+        setattr(
+            task,
+            field_name,
+            value,
+        )
+
+    # Permanently save the UPDATE in PostgreSQL.
+    db.commit()
+
+    # Reload the saved row before constructing the API response.
+    db.refresh(task)
+
+    # TaskRead converts the SQLAlchemy object into response JSON.
+    return task
+
+@router.delete(
+    "/{task_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_task(
+    task_id: int,
+    db: Session = Depends(get_db),
+) -> Response:
+    """Permanently remove one task from PostgreSQL."""
+
+    # Find the task before attempting to delete it.
+    task = db.get(Task, task_id)
+
+    # We cannot delete a task that does not exist.
+    if task is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found",
+        )
+
+    # Mark this SQLAlchemy Task object for deletion.
+    #
+    # This has not permanently changed PostgreSQL yet.
+    db.delete(task)
+
+    # Send the DELETE operation to PostgreSQL permanently.
+    db.commit()
+
+    # HTTP 204 means:
+    # "The operation succeeded, but there is no response body."
+    #
+    # There is no task JSON to return because the task no longer exists.
+    return Response(
+        status_code=status.HTTP_204_NO_CONTENT,
+    )

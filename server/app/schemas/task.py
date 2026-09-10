@@ -6,8 +6,12 @@ from datetime import date, datetime
 # BaseModel turns a Python class into a Pydantic validation schema.
 # ConfigDict changes how a schema behaves.
 # Field lets us add validation rules to individual values.
-from pydantic import BaseModel, ConfigDict, Field
-
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+)
 
 class TaskCreate(BaseModel):
     """
@@ -50,6 +54,61 @@ class TaskCreate(BaseModel):
         le=2,
     )
 
+class TaskUpdate(BaseModel):
+    """
+    Validate changes sent for an existing task.
+
+    Every field can be omitted because PATCH only changes the fields
+    included in the request. The route will leave all other fields alone.
+    """
+
+    # Clean extra spaces from incoming strings just like TaskCreate does.
+    model_config = ConfigDict(
+        str_strip_whitespace=True,
+    )
+
+    # These fields may be omitted from the PATCH request.
+    #
+    # If title is provided, it must still contain at least one character.
+    title: str | None = Field(
+        default=None,
+        min_length=1,
+    )
+
+    # Sending due_date=null moves the task back to Inbox.
+    # Leaving due_date out means "do not change its current date."
+    due_date: date | None = None
+
+    # Sending notes=null intentionally clears the task's notes.
+    notes: str | None = None
+
+    # Priority can be omitted, but a supplied value must remain 0, 1, or 2.
+    priority: int | None = Field(
+        default=None,
+        ge=0,
+        le=2,
+    )
+
+    # The client may complete or reopen the task.
+    completed: bool | None = None
+
+    @field_validator(
+        "title",
+        "priority",
+        "completed",
+    )
+    @classmethod
+    def reject_null_for_required_database_fields(cls, value):
+        """
+        Allow these fields to be omitted, but not explicitly erased.
+
+        PostgreSQL requires title, priority, and completed to contain values.
+        """
+
+        if value is None:
+            raise ValueError("value cannot be null")
+
+        return value
 
 class TaskRead(BaseModel):
     """

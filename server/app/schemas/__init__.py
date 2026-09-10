@@ -1,5 +1,9 @@
 """Pydantic schemas for the WeekFlow API."""
 
-from app.schemas.task import TaskCreate, TaskRead
+from app.schemas.task import TaskCreate, TaskRead, TaskUpdate
 
-__all__ = ["TaskCreate", "TaskRead"]
+__all__ = [
+    "TaskCreate",
+    "TaskRead",
+    "TaskUpdate",
+]

@@ -5,7 +5,7 @@ from datetime import date
 import pytest
 from pydantic import ValidationError
 
-from app.schemas import TaskCreate
+from app.schemas import TaskCreate, TaskUpdate
 
 
 def test_task_create_cleans_input_and_applies_defaults():
@@ -54,3 +54,60 @@ def test_task_create_rejects_invalid_input():
         "title",
         "priority",
     }
+
+def test_task_update_keeps_only_supplied_fields():
+    """Include only fields that the client actually wants to change."""
+
+    update = TaskUpdate(
+        priority=2,
+    )
+
+    # exclude_unset removes fields that were not included in the request.
+    changes = update.model_dump(
+        exclude_unset=True,
+    )
+
+    assert changes == {
+        "priority": 2,
+    }
+
+
+def test_task_update_allows_nullable_fields_to_be_cleared():
+    """Keep explicit null values when the client wants to clear a field."""
+
+    update = TaskUpdate(
+        due_date=None,
+        notes=None,
+    )
+
+    changes = update.model_dump(
+        exclude_unset=True,
+    )
+
+    # These values remain in the dictionary because the client
+    # explicitly supplied them, even though their values are None.
+    assert changes == {
+        "due_date": None,
+        "notes": None,
+    }
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    [
+        "title",
+        "priority",
+        "completed",
+    ],
+)
+def test_task_update_rejects_null_for_required_database_fields(
+    field_name: str,
+):
+    """Do not allow required PostgreSQL values to be erased."""
+
+    with pytest.raises(ValidationError):
+        TaskUpdate.model_validate(
+            {
+                field_name: None,
+            }
+        )
