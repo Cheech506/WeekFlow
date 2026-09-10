@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException, status
 from sqlalchemy.exc import SQLAlchemyError
+from app.routers.tasks import router as tasks_router
 
 from app.config import (
     API_PREFIX,
@@ -15,6 +16,9 @@ app = FastAPI(
     version=APP_VERSION,
     description="Self-hosted API backend for WeekFlow.",
 )
+
+# Attach the task endpoints to the main FastAPI application.
+app.include_router(tasks_router)
 
 
 @app.get("/")
