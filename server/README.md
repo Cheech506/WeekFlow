@@ -1,19 +1,17 @@
 # WeekFlow API
 
-WeekFlow’s backend uses Python, FastAPI, SQLAlchemy, Psycopg, PostgreSQL,
-and Docker Compose.
+WeekFlow’s backend uses Python, FastAPI, SQLAlchemy, Alembic, Psycopg, PostgreSQL, and Docker Compose.
 
-The backend currently provides service information, health checks, and
-a tested PostgreSQL connection. The mobile application still stores its
-data locally in SQLite and is not connected to this backend yet.
+The backend provides health checks and a PostgreSQL-backed Task API. Tasks can be created, read, partially updated, completed, reopened, and deleted.
+
+The mobile app still stores its data locally in SQLite. It is **not connected to this API yet**, and no mobile data has been moved to PostgreSQL.
 
 ## Requirements
 
 - Python 3.12
-- Docker Desktop
-- Docker Compose
+- Docker Desktop with Docker Compose
 
-## First-time Python setup
+## First-time setup
 
 From the WeekFlow repository root:
 
@@ -24,91 +22,100 @@ source .venv/bin/activate
 python -m pip install -r requirements.txt
 ```
 
-## First-time database setup
-
-Create the private environment file from the provided example:
+Create `server/.env` from the example if you do not already have one:
 
 ```bash
-cd server
-cp .env.example .env
+cp -n .env.example .env
 ```
 
-Open `.env` and replace the placeholder password with a private local password.
+Open `.env` and replace the placeholder password with a private local password. Do not commit `.env`.
 
-The real `.env` file is ignored by Git. Do not commit it.
+All commands below run from the `server` directory.
 
-Start PostgreSQL:
+## Start PostgreSQL and apply migrations
+
+Start the database:
 
 ```bash
 docker compose up --detach --wait db
 ```
 
-Confirm that the container is healthy:
+Create or update its tables using Alembic:
 
 ```bash
-docker compose ps
+python -m alembic upgrade head
 ```
 
-Test PostgreSQL directly:
+Check which migration the database is using:
 
 ```bash
-docker compose exec db \
-  psql -U weekflow -d weekflow \
-  -c "SELECT current_database(), current_user;"
+python -m alembic current
 ```
 
-## Start the development server
-
-PostgreSQL must be running before testing database-backed routes.
-
-From the WeekFlow repository root:
+Check that the SQLAlchemy models and PostgreSQL table structure agree:
 
 ```bash
-cd server
+python -m alembic check
+```
+
+When they agree, Alembic reports `No new upgrade operations detected.` Alembic manages **table structure**; it does not carry normal task requests between the API and PostgreSQL.
+
+## Start the API
+
+```bash
 source .venv/bin/activate
 python -m uvicorn app.main:app --reload
 ```
 
-Keep this terminal open while using the API.
-Press Control+C to stop the API server.
+The API runs at `http://127.0.0.1:8000`. Open `http://127.0.0.1:8000/docs` to try the endpoints in Swagger. Keep the terminal open while using the API; press Control+C to stop it.
 
-The `--reload` option restarts the development server when its source files change.
+Docker Compose starts PostgreSQL, but it does **not** start the FastAPI server.
 
 ## Available endpoints
 
-| Address | Purpose |
-|---|---|
-| http://127.0.0.1:8000/ | Basic service information |
-| http://127.0.0.1:8000/health | Check that the API process is running |
-| http://127.0.0.1:8000/api/v1/info | Application and API versions |
-| http://127.0.0.1:8000/api/v1/database/health | Check the PostgreSQL connection |
-| http://127.0.0.1:8000/docs | Interactive API documentation |
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/` | Basic service information |
+| `GET` | `/health` | Check that the API process is running |
+| `GET` | `/api/v1/info` | Application and API versions |
+| `GET` | `/api/v1/database/health` | Check the PostgreSQL connection |
+| `POST` | `/api/v1/tasks` | Create a task |
+| `GET` | `/api/v1/tasks` | Read all tasks, newest first |
+| `GET` | `/api/v1/tasks/{task_id}` | Read one task |
+| `PATCH` | `/api/v1/tasks/{task_id}` | Change only the supplied fields |
+| `DELETE` | `/api/v1/tasks/{task_id}` | Permanently delete a task |
+| `GET` | `/docs` | Interactive API documentation |
+
+Creating a task returns `201 Created`. Successful reads and updates return `200 OK`. Deleting a task returns `204 No Content`, so there is no response body. A missing task returns `404 Not Found`; invalid request data returns `422`.
+
+## How task data moves
+
+For a create request, the flow is:
+
+`JSON request → TaskCreate validation → FastAPI route → SQLAlchemy Task → PostgreSQL → TaskRead → JSON response`
+
+For a PATCH request, `TaskUpdate` validates the supplied fields. Fields left out of the request keep their existing database values. For example, `{"priority": 2}` changes only the priority.
+
+The server calculates `day` from `due_date`; a task without a due date belongs in `Inbox`. It also manages IDs and timestamps. The client does not send those generated values when creating a task.
 
 ## Run backend tests
 
-Ensure PostgreSQL is running:
+Start PostgreSQL if needed:
 
 ```bash
-cd server
 docker compose up --detach --wait db
 ```
 
-Activate the Python environment and run the tests:
+Then run:
 
 ```bash
 source .venv/bin/activate
 python -m pytest
 ```
 
-The current suite contains five tests covering:
+The current suite contains **28 tests** covering API and database health, the Task model, request validation, create/read/update/delete behavior, completion timestamps, missing tasks, and invalid requests. The tests include checks that unknown fields are rejected rather than silently ignored.
 
-- API process health
-- API version information
-- Direct Python-to-PostgreSQL communication
-- Successful database-health responses
-- Safe `503` responses when the database is unavailable
-
-The FastAPI development server does not need to be running during pytest.
+The FastAPI development server does not need to be running during pytest. A known FastAPI/Starlette deprecation warning may appear even when all tests pass.
 
 ## Stop and restart PostgreSQL
 
@@ -124,51 +131,18 @@ Start it again:
 docker compose start db
 ```
 
-Remove the container and network while preserving the database volume:
+`docker compose down` removes the container and network but preserves the named database volume. **Do not use `docker compose down -v` unless you intentionally want to delete the stored PostgreSQL data.**
 
-```bash
-docker compose down
-```
+## Configuration and database code
 
-Running `docker compose up --detach --wait db` again recreates the container
-and reconnects the existing database volume.
+`app/config.py` defines the application name, version, and API prefix. It also loads the `POSTGRES_*` settings from `server/.env`.
 
-## Configuration
+`app/database.py` provides the SQLAlchemy engine, session factory, shared model base, FastAPI database-session dependency, and database connection check.
 
-Application and database settings are loaded in `app/config.py`.
-
-Application configuration includes:
-
-- `APP_NAME`
-- `APP_VERSION`
-- `API_VERSION`
-- `API_PREFIX`
-
-Database configuration includes:
-
-- `POSTGRES_DB`
-- `POSTGRES_USER`
-- `POSTGRES_PASSWORD`
-- `POSTGRES_HOST`
-- `POSTGRES_PORT`
-
-The committed `.env.example` file documents the required database settings.
-The ignored `.env` file contains the private local values.
-
-## Database connection layer
-
-`app/database.py` provides:
-
-- A SQLAlchemy database URL
-- A shared SQLAlchemy engine
-- A database session factory
-- A declarative base for future models
-- A reusable FastAPI database-session dependency
-- A PostgreSQL connection check
+`app/models/task.py` defines the PostgreSQL `tasks` table. `app/schemas/task.py` defines what the API accepts and returns. `app/routers/tasks.py` contains the task endpoints. Alembic migration files in `alembic/versions/` define changes to database structure.
 
 ## Current scope
 
-The PostgreSQL container and Python connection foundation are working.
+The PostgreSQL database, Alembic migration, SQLAlchemy Task model, request validation, and complete Task CRUD API are working.
 
-Database tables, Alembic migrations, authentication, task API endpoints,
-and mobile-to-server communication will be added during later capstone work.
+The mobile application still uses its existing local SQLite database. Authentication, additional backend models, and mobile-to-server synchronization are future work.

@@ -111,3 +111,37 @@ def test_task_update_rejects_null_for_required_database_fields(
                 field_name: None,
             }
         )
+
+def test_task_create_rejects_unknown_fields():
+    """Catch misspelled creation fields instead of silently ignoring them."""
+
+    with pytest.raises(ValidationError) as error_info:
+        TaskCreate.model_validate(
+            {
+                "title": "Finish homework",
+                # This is intentionally misspelled.
+                "priorty": 2,
+            }
+        )
+
+    error = error_info.value.errors()[0]
+
+    assert error["loc"] == ("priorty",)
+    assert error["type"] == "extra_forbidden"
+
+
+def test_task_update_rejects_unknown_fields():
+    """Catch misspelled update fields before they reach the route."""
+
+    with pytest.raises(ValidationError) as error_info:
+        TaskUpdate.model_validate(
+            {
+                # The real field is named completed.
+                "complete": True,
+            }
+        )
+
+    error = error_info.value.errors()[0]
+
+    assert error["loc"] == ("complete",)
+    assert error["type"] == "extra_forbidden"

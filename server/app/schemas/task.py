@@ -27,6 +27,7 @@ class TaskCreate(BaseModel):
     # "  Finish homework  " becomes "Finish homework".
     model_config = ConfigDict(
         str_strip_whitespace=True,
+        extra="forbid"
     )
 
     # Every new task must have a title containing at least one character.
@@ -65,6 +66,7 @@ class TaskUpdate(BaseModel):
     # Clean extra spaces from incoming strings just like TaskCreate does.
     model_config = ConfigDict(
         str_strip_whitespace=True,
+        extra="forbid"
     )
 
     # These fields may be omitted from the PATCH request.

@@ -367,3 +367,62 @@ def test_delete_task_removes_task(
     assert second_delete_response.json() == {
         "detail": "Task not found",
     }
+
+def test_create_task_rejects_unknown_fields(
+    isolated_client: TestClient,
+):
+    """Reject a misspelled creation field at the API boundary."""
+
+    response = isolated_client.post(
+        "/api/v1/tasks",
+        json={
+            "title": "Finish homework",
+            # This typo should not be silently ignored.
+            "priorty": 2,
+        },
+    )
+
+    assert response.status_code == 422
+
+    error = response.json()["detail"][0]
+
+    assert error["loc"][-1] == "priorty"
+    assert error["type"] == "extra_forbidden"
+
+def test_update_task_rejects_unknown_fields(
+    isolated_client: TestClient,
+):
+    """Reject a misspelled update without changing the saved task."""
+
+    create_response = isolated_client.post(
+        "/api/v1/tasks",
+        json={
+            "title": "Do not complete this task",
+        },
+    )
+
+    task_id = create_response.json()["id"]
+
+    update_response = isolated_client.patch(
+        f"/api/v1/tasks/{task_id}",
+        json={
+            # The correct field name is completed.
+            "complete": True,
+        },
+    )
+
+    assert update_response.status_code == 422
+
+    error = update_response.json()["detail"][0]
+
+    assert error["loc"][-1] == "complete"
+    assert error["type"] == "extra_forbidden"
+
+    # Read the task again to prove the rejected request changed nothing.
+    read_response = isolated_client.get(
+        f"/api/v1/tasks/{task_id}"
+    )
+
+    assert read_response.status_code == 200
+    assert read_response.json()["completed"] is False
+    assert read_response.json()["completed_at"] is None
