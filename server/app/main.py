@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException, status
 from sqlalchemy.exc import SQLAlchemyError
 from app.routers.tasks import router as tasks_router
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import (
     API_PREFIX,
@@ -15,6 +16,15 @@ app = FastAPI(
     title=APP_NAME,
     version=APP_VERSION,
     description="Self-hosted API backend for WeekFlow.",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:8081",
+        "http://127.0.0.1:8081",
+    ],
+    allow_methods=["GET"],
 )
 
 # Attach the task endpoints to the main FastAPI application.

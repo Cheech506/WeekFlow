@@ -1,5 +1,5 @@
 import Constants from 'expo-constants';
-import { useFocusEffect } from 'expo-router';
+import { router, useFocusEffect, type Href } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import {
   Platform,
@@ -407,6 +407,21 @@ export default function SettingsScreen() {
         title="Settings"
         subtitle="Manage WeekFlow data, backups, and development information in one place."
       />
+
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Task API connection</Text>
+        <Text style={styles.sectionSubtitle}>
+          Check which tasks the server returns.
+        </Text>
+
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => router.push('/server-tasks' as Href)}
+          style={styles.refreshButton}
+        >
+          <Text style={styles.refreshButtonText}>Check server tasks</Text>
+        </Pressable>
+      </View>
 
       <View style={styles.section}>
         <View style={styles.sectionHeaderRow}>
