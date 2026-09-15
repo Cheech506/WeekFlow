@@ -32,6 +32,7 @@ import {
   type PickedWeekFlowBackup,
 } from '@/lib/backupStorage';
 import { BACKUP_VERSION } from '@/lib/backupValidation';
+import { getTaskMigrationInventory } from '@/lib/taskMigrationInventory';
 
 type BackupMessage = {
   tone: 'success' | 'error';
@@ -96,20 +97,17 @@ export default function SettingsScreen() {
     setCelebrationsEnabled,
   } = useCelebrations();
 
-  const {
-    tasks,
-    recurringRules,
-    taskTemplates,
-    refreshTasks,
-  } = useTasks();
+  const { tasks, recurringRules, taskTemplates, refreshTasks } = useTasks();
   const { goals, milestones, refreshGoals } = useGoals();
   const { cycles, refreshCycles } = useCycle();
   const { brainDumps, refreshBrainDumps } = useBrainDumps();
+
   const {
     reviews: weeklyReviews,
     commitments: weeklyCommitments,
     refreshWeeklyReviews,
   } = useWeeklyReviews();
+
   const {
     cycleReviews,
     goalOutcomes,
@@ -174,15 +172,19 @@ export default function SettingsScreen() {
   const metrics = useMemo<DataMetric[]>(() => {
     const completedTasks = tasks.filter((task) => task.completed).length;
     const completedGoals = goals.filter((goal) => goal.completed).length;
+
     const completedMilestones = milestones.filter(
       (milestone) => milestone.completed
     ).length;
+
     const archivedBrainDumps = brainDumps.filter(
       (brainDump) => brainDump.archived
     ).length;
+
     const activeRecurringRules = recurringRules.filter(
       (rule) => rule.active
     ).length;
+
     const activeCycles = cycles.filter((cycle) => cycle.active).length;
 
     return [
@@ -257,6 +259,44 @@ export default function SettingsScreen() {
     goalOutcomes,
   ]);
 
+  /*
+   * Tuesday's migration inventory.
+   *
+   * This reads the tasks already loaded from SQLite and sends them to the
+   * counting helper. It does not edit, delete, or migrate any tasks.
+   */
+  const taskMigrationMetrics = useMemo<DataMetric[]>(() => {
+    const inventory = getTaskMigrationInventory(tasks);
+
+    return [
+      {
+        label: 'All SQLite Tasks',
+        value: inventory.total,
+        detail: 'Task rows to assess',
+      },
+      {
+        label: 'Plain Tasks',
+        value: inventory.plain,
+        detail: 'No goal or recurring link',
+      },
+      {
+        label: 'Goal-linked',
+        value: inventory.goalLinked,
+        detail: 'Need server goal support',
+      },
+      {
+        label: 'Recurring',
+        value: inventory.recurring,
+        detail: 'Need server recurrence support',
+      },
+      {
+        label: 'Completed',
+        value: inventory.completed,
+        detail: 'Completion history to preserve',
+      },
+    ];
+  }, [tasks]);
+
   async function handleCelebrationToggle(enabled: boolean) {
     if (isSavingCelebrationPreference) return;
 
@@ -265,6 +305,7 @@ export default function SettingsScreen() {
 
     try {
       await setCelebrationsEnabled(enabled);
+
       setCelebrationPreferenceMessage({
         tone: 'success',
         text: enabled
@@ -293,16 +334,14 @@ export default function SettingsScreen() {
        * export into a reported failure if only the timestamp cannot be saved.
        */
       try {
-        await recordBackupExport(
-          result.fileName,
-          result.preview.exportedAt
-        );
+        await recordBackupExport(result.fileName, result.preview.exportedAt);
         await loadBackupActivity();
       } catch {
         // The exported backup remains valid even if device metadata fails.
       }
 
       const counts = result.preview.counts;
+
       setBackupMessage({
         tone: 'success',
         text:
@@ -334,6 +373,7 @@ export default function SettingsScreen() {
       }
     } catch (error) {
       setPendingImport(null);
+
       setBackupMessage({
         tone: 'error',
         text: getBackupErrorMessage(error, 'choose'),
@@ -381,6 +421,7 @@ export default function SettingsScreen() {
           `${counts.weeklyTaskDecisions} unfinished-task decisions, ${counts.cycleReviews} cycle reports, and ` +
           `${counts.cycleGoalOutcomes} saved goal outcomes.`,
       });
+
       setPendingImport(null);
     } catch (error) {
       setBackupMessage({
@@ -410,6 +451,7 @@ export default function SettingsScreen() {
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Task API connection</Text>
+
         <Text style={styles.sectionSubtitle}>
           Check which tasks the server returns.
         </Text>
@@ -427,6 +469,7 @@ export default function SettingsScreen() {
         <View style={styles.sectionHeaderRow}>
           <View style={styles.sectionHeaderText}>
             <Text style={styles.sectionTitle}>Data at a Glance</Text>
+
             <Text style={styles.sectionSubtitle}>
               A quick inventory of what is stored in this WeekFlow database.
             </Text>
@@ -459,19 +502,52 @@ export default function SettingsScreen() {
         </View>
       </View>
 
+      {/*
+       * Tuesday's new visible Settings section.
+       *
+       * Each inventory item is converted into a metric card using map().
+       */}
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Task Migration Inventory</Text>
+
+        <Text style={styles.sectionSubtitle}>
+          Read-only counts from this device&apos;s SQLite tasks before any data
+          is moved to PostgreSQL.
+        </Text>
+
+        <View style={styles.metricGrid}>
+          {taskMigrationMetrics.map((metric) => (
+            <View key={metric.label} style={styles.metricCard}>
+              <Text style={styles.metricLabel}>{metric.label}</Text>
+              <Text style={styles.metricValue}>{metric.value}</Text>
+              <Text style={styles.metricDetail}>{metric.detail}</Text>
+            </View>
+          ))}
+        </View>
+
+        <Text style={styles.migrationNote}>
+          Goal-linked, recurring, and completed counts can overlap. These
+          counts are an inventory, not an import action.
+        </Text>
+      </View>
+
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Completion Feedback</Text>
+
         <Text style={styles.sectionSubtitle}>
           Keep finishing work satisfying without turning WeekFlow into a game.
         </Text>
 
         <View style={styles.preferenceCard}>
           <View style={styles.preferenceCopy}>
-            <Text style={styles.preferenceTitle}>Completion Celebrations</Text>
+            <Text style={styles.preferenceTitle}>
+              Completion Celebrations
+            </Text>
+
             <Text style={styles.preferenceText}>
               Show a short success banner after completing tasks and goals, with
               a larger moment when a 12-week cycle is finalized. WeekFlow also
-              follows your device's Reduce Motion preference.
+              follows your device&apos;s Reduce Motion preference.
             </Text>
           </View>
 
@@ -479,7 +555,8 @@ export default function SettingsScreen() {
             accessibilityLabel="Completion celebrations"
             value={celebrationsEnabled}
             disabled={
-              isLoadingCelebrationPreference || isSavingCelebrationPreference
+              isLoadingCelebrationPreference ||
+              isSavingCelebrationPreference
             }
             onValueChange={(enabled) => {
               void handleCelebrationToggle(enabled);
@@ -503,6 +580,7 @@ export default function SettingsScreen() {
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Backup Activity</Text>
+
         <Text style={styles.sectionSubtitle}>
           These timestamps belong to this device and are not copied into backup
           files.
@@ -511,9 +589,11 @@ export default function SettingsScreen() {
         <View style={styles.activityGrid}>
           <View style={styles.activityCard}>
             <Text style={styles.activityLabel}>Last successful export</Text>
+
             <Text style={styles.activityValue}>
               {formatDateTime(backupActivity.lastExportAt)}
             </Text>
+
             {backupActivity.lastExportFileName ? (
               <Text style={styles.activityFile} numberOfLines={2}>
                 {backupActivity.lastExportFileName}
@@ -523,9 +603,11 @@ export default function SettingsScreen() {
 
           <View style={styles.activityCard}>
             <Text style={styles.activityLabel}>Last successful import</Text>
+
             <Text style={styles.activityValue}>
               {formatDateTime(backupActivity.lastImportAt)}
             </Text>
+
             {backupActivity.lastImportFileName ? (
               <Text style={styles.activityFile} numberOfLines={2}>
                 {backupActivity.lastImportFileName}
@@ -537,6 +619,7 @@ export default function SettingsScreen() {
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Backup and Transfer</Text>
+
         <Text style={styles.sectionSubtitle}>
           Export everything in WeekFlow to one JSON file or restore a validated
           WeekFlow backup.
@@ -544,6 +627,7 @@ export default function SettingsScreen() {
 
         <View style={styles.backupCard}>
           <Text style={styles.backupTitle}>Export Backup</Text>
+
           <Text style={styles.backupText}>
             {Platform.OS === 'web'
               ? 'The web version downloads the backup file to your computer.'
@@ -567,6 +651,7 @@ export default function SettingsScreen() {
 
         <View style={styles.dangerCard}>
           <Text style={styles.dangerTitle}>Replace Data from Backup</Text>
+
           <Text style={styles.dangerText}>
             Import replaces the current tasks, goals, templates, recurring
             schedules, brain dumps, planning cycles, weekly reviews,
@@ -593,10 +678,12 @@ export default function SettingsScreen() {
               <Text style={styles.importFileName}>
                 {pendingImport.fileName}
               </Text>
+
               <Text style={styles.importMetadata}>
                 Exported {formatDateTime(pendingImport.preview.exportedAt)} •
                 WeekFlow {pendingImport.preview.appVersion}
               </Text>
+
               <Text style={styles.importCounts}>
                 {pendingImport.preview.counts.tasks} tasks •{' '}
                 {pendingImport.preview.counts.goals} goals •{' '}
@@ -604,6 +691,7 @@ export default function SettingsScreen() {
                 {pendingImport.preview.counts.brainDumps} brain dumps •{' '}
                 {pendingImport.preview.counts.taskTemplates} templates
               </Text>
+
               <Text style={styles.importCounts}>
                 {pendingImport.preview.counts.recurringRules} recurring
                 schedules •{' '}
@@ -611,13 +699,15 @@ export default function SettingsScreen() {
                 occurrences •{' '}
                 {pendingImport.preview.counts.planningCycles} planning cycles
               </Text>
+
               <Text style={styles.importCounts}>
                 {pendingImport.preview.counts.weeklyReviews} weekly reviews •{' '}
                 {pendingImport.preview.counts.weeklyCommitments} commitments •{' '}
                 {pendingImport.preview.counts.weeklyTaskDecisions}{' '}
                 unfinished-task decisions •{' '}
                 {pendingImport.preview.counts.cycleReviews} cycle reports •{' '}
-                {pendingImport.preview.counts.cycleGoalOutcomes} saved goal outcomes
+                {pendingImport.preview.counts.cycleGoalOutcomes} saved goal
+                outcomes
               </Text>
 
               {pendingImport.preview.sourceVersion <
@@ -695,18 +785,24 @@ export default function SettingsScreen() {
             <Text style={styles.infoLabel}>App version</Text>
             <Text style={styles.infoValue}>{appVersion}</Text>
           </View>
+
           <View style={styles.infoRow}>
             <Text style={styles.infoLabel}>Expo SDK</Text>
             <Text style={styles.infoValue}>{expoSdk}</Text>
           </View>
+
           <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Development Node baseline</Text>
+            <Text style={styles.infoLabel}>
+              Development Node baseline
+            </Text>
             <Text style={styles.infoValue}>22</Text>
           </View>
+
           <View style={styles.infoRow}>
             <Text style={styles.infoLabel}>Backup format</Text>
             <Text style={styles.infoValue}>v{BACKUP_VERSION}</Text>
           </View>
+
           <View style={[styles.infoRow, styles.lastInfoRow]}>
             <Text style={styles.infoLabel}>Primary storage</Text>
             <Text style={styles.infoValue}>Local SQLite</Text>
@@ -722,6 +818,12 @@ export default function SettingsScreen() {
   );
 }
 
+/*
+ * StyleSheet.create starts here.
+ *
+ * Each named style is used above through expressions such as
+ * style={styles.section} or style={styles.migrationNote}.
+ */
 const styles = StyleSheet.create({
   page: {
     flex: 1,
@@ -804,6 +906,18 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#64748b',
     lineHeight: 17,
+  },
+
+  /*
+   * Tuesday's new style.
+   *
+   * It controls the explanatory note under the migration inventory cards.
+   */
+  migrationNote: {
+    marginTop: 12,
+    color: '#64748b',
+    fontSize: 13,
+    lineHeight: 19,
   },
   preferenceCard: {
     flexDirection: 'row',
