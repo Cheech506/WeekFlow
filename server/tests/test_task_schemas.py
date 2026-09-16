@@ -1,11 +1,11 @@
 """Tests for task request validation."""
 
-from datetime import date
+from datetime import UTC, date, datetime
 
 import pytest
 from pydantic import ValidationError
 
-from app.schemas import TaskCreate, TaskUpdate
+from app.schemas import TaskCreate, TaskRead, TaskUpdate
 
 
 def test_task_create_cleans_input_and_applies_defaults():
@@ -145,3 +145,53 @@ def test_task_update_rejects_unknown_fields():
 
     assert error["loc"] == ("complete",)
     assert error["type"] == "extra_forbidden"
+
+def test_task_read_preserves_sqlite_migration_metadata():
+    """Preserve the original SQLite identity and relationship values."""
+
+    created_at = datetime(
+        2026,
+        6,
+        11,
+        18,
+        58,
+        40,
+        tzinfo=UTC,
+    )
+    completed_at = datetime(
+        2026,
+        9,
+        16,
+        14,
+        30,
+        tzinfo=UTC,
+    )
+
+    task = TaskRead.model_validate(
+        {
+            # This is the new PostgreSQL ID.
+            "id": 7,
+            "title": "Imported recurring task",
+            "day": "Wednesday",
+            "due_date": "2026-09-16",
+            "notes": None,
+            "priority": 1,
+            "completed": True,
+            "created_at": created_at,
+            "completed_at": completed_at,
+
+            # These values preserve the original SQLite relationships.
+            "source_task_id": 1_781_204_320_207,
+            "source_goal_id": 1_782_503_210_780,
+            "source_recurring_rule_id": 1_781_999_999_999,
+            "recurrence_occurrence_date": "2026-09-16",
+        }
+    )
+
+    assert task.id == 7
+    assert task.source_task_id == 1_781_204_320_207
+    assert task.source_goal_id == 1_782_503_210_780
+    assert task.source_recurring_rule_id == 1_781_999_999_999
+    assert task.recurrence_occurrence_date == date(2026, 9, 16)
+    assert task.created_at == created_at
+    assert task.completed_at == completed_at

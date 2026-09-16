@@ -3,6 +3,7 @@
 from datetime import date, datetime
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     CheckConstraint,
     Date,
@@ -11,6 +12,7 @@ from sqlalchemy import (
     SmallInteger,
     String,
     Text,
+    UniqueConstraint,
     false,
     func,
 )
@@ -28,12 +30,52 @@ class Task(Base):
             "priority BETWEEN 0 AND 2",
             name="ck_tasks_priority_range",
         ),
+        CheckConstraint(
+            """
+            (
+                source_recurring_rule_id IS NULL
+                AND recurrence_occurrence_date IS NULL
+            )
+            OR
+            (
+                source_recurring_rule_id IS NOT NULL
+                AND recurrence_occurrence_date IS NOT NULL
+            )
+            """,
+            name="ck_tasks_recurring_source_pair",
+        ),
+        UniqueConstraint(
+            "source_task_id",
+            name="uq_tasks_source_task_id",
+        ),
     )
 
     id: Mapped[int] = mapped_column(
         Integer,
         primary_key=True,
     )
+
+    # Original SQLite identity used to detect and map imported tasks.
+    #
+    # SQLite IDs in the real backup are too large for a normal PostgreSQL
+    # INTEGER, so migration identifiers use BIGINT.
+    source_task_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        nullable=True,
+    )
+    source_goal_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        nullable=True,
+    )
+    source_recurring_rule_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        nullable=True,
+    )
+    recurrence_occurrence_date: Mapped[date | None] = mapped_column(
+        Date,
+        nullable=True,
+    )
+
     title: Mapped[str] = mapped_column(
         Text,
         nullable=False,

@@ -148,3 +148,11 @@ class TaskRead(BaseModel):
 
     # This remains None until the task is completed.
     completed_at: datetime | None
+
+    # Preserve identifiers from the original SQLite task during migration.
+    source_task_id: int | None = None
+    source_goal_id: int | None = None
+    source_recurring_rule_id: int | None = None
+
+    # A generated recurring task is identified by its rule and original date.
+    recurrence_occurrence_date: date | None = None

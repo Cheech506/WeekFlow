@@ -98,6 +98,21 @@ For a PATCH request, `TaskUpdate` validates the supplied fields. Fields left out
 
 The server calculates `day` from `due_date`; a task without a due date belongs in `Inbox`. It also manages IDs and timestamps. The client does not send those generated values when creating a task.
 
+## SQLite migration preparation
+
+The PostgreSQL `tasks` table includes nullable migration metadata for existing SQLite tasks:
+
+- `source_task_id`
+- `source_goal_id`
+- `source_recurring_rule_id`
+- `recurrence_occurrence_date`
+
+PostgreSQL continues generating its own permanent task `id`. The source fields preserve the original SQLite identities so a future migration can reconnect goals, recurring schedules, commitments, and other related records.
+
+SQLite source identifiers use `BIGINT` because existing WeekFlow IDs may exceed PostgreSQL’s regular `INTEGER` range. Normal task creation and update requests cannot set these migration-only fields. A future dedicated migration flow will validate and write them.
+
+No SQLite task data has been imported into PostgreSQL yet.
+
 ## Run backend tests
 
 Start PostgreSQL if needed:
@@ -113,7 +128,7 @@ source .venv/bin/activate
 python -m pytest
 ```
 
-The current suite contains **28 tests** covering API and database health, the Task model, request validation, create/read/update/delete behavior, completion timestamps, missing tasks, and invalid requests. The tests include checks that unknown fields are rejected rather than silently ignored.
+The current suite contains **32 tests** covering API and database health, the Task model, request validation, create/read/update/delete behavior, completion timestamps, missing tasks, invalid requests, migration metadata, source-ID uniqueness, and recurring-source integrity. The tests include checks that unknown fields are rejected rather than silently ignored.
 
 The FastAPI development server does not need to be running during pytest. A known FastAPI/Starlette deprecation warning may appear even when all tests pass.
 

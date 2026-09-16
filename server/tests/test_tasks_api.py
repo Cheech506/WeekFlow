@@ -70,6 +70,11 @@ def test_create_and_read_task(isolated_client: TestClient):
     assert created_task["completed"] is False
     assert created_task["created_at"] is not None
     assert created_task["completed_at"] is None
+    # Ordinary server-created tasks do not come from SQLite.
+    assert created_task["source_task_id"] is None
+    assert created_task["source_goal_id"] is None
+    assert created_task["source_recurring_rule_id"] is None
+    assert created_task["recurrence_occurrence_date"] is None
 
     # Retrieve the same task using its generated ID.
     task_response = isolated_client.get(
@@ -109,6 +114,36 @@ def test_create_task_rejects_invalid_input(
     assert invalid_fields == {
         "title",
         "priority",
+    }
+
+def test_create_task_rejects_migration_metadata(
+    isolated_client: TestClient,
+):
+    """Keep SQLite migration metadata out of the normal create endpoint."""
+
+    response = isolated_client.post(
+        "/api/v1/tasks",
+        json={
+            "title": "Attempt to forge migration metadata",
+            "source_task_id": 1_781_204_320_207,
+            "source_goal_id": 1_782_503_210_780,
+            "source_recurring_rule_id": 1_781_999_999_999,
+            "recurrence_occurrence_date": "2026-09-16",
+        },
+    )
+
+    assert response.status_code == 422
+
+    invalid_fields = {
+        error["loc"][-1]
+        for error in response.json()["detail"]
+    }
+
+    assert invalid_fields == {
+        "source_task_id",
+        "source_goal_id",
+        "source_recurring_rule_id",
+        "recurrence_occurrence_date",
     }
 
 
