@@ -79,6 +79,7 @@ def test_tasks_table_matches_model():
     }
 
     assert "uq_tasks_source_task_id" in unique_names
+    assert "uq_tasks_source_recurring_occurrence" in unique_names
 
     indexes = {
         index["name"]: index["column_names"]

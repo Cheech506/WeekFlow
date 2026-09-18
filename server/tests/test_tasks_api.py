@@ -1,6 +1,7 @@
 """API tests for WeekFlow task endpoints."""
 
 from collections.abc import Generator
+from datetime import UTC, datetime
 
 import pytest
 from fastapi.testclient import TestClient
@@ -461,3 +462,330 @@ def test_update_task_rejects_unknown_fields(
     assert read_response.status_code == 200
     assert read_response.json()["completed"] is False
     assert read_response.json()["completed_at"] is None
+
+def make_import_api_task(
+    task_id: int = 8_900_000_000_000_001,
+    **changes,
+) -> dict[str, object]:
+    """Build one synthetic task using the SQLite backup format."""
+
+    task: dict[str, object] = {
+        "id": task_id,
+        "title": "Synthetic imported task",
+        "day": "Wednesday",
+        "dueDate": "2026-09-16",
+        "notes": "Preserve these synthetic notes",
+        "priority": 1,
+        "goalId": None,
+        "completed": False,
+        "createdAt": "2026-06-11T18:58:40.207Z",
+        "completedAt": None,
+        "recurringRuleId": None,
+        "recurrenceOccurrenceDate": None,
+    }
+
+    task.update(changes)
+
+    return task
+
+
+def test_import_tasks_preserves_plain_and_recurring_tasks(
+    isolated_client: TestClient,
+):
+    """Import synthetic tasks while preserving their SQLite values."""
+
+    plain_task = make_import_api_task(
+        task_id=8_900_000_000_000_001,
+        title="Synthetic plain task",
+    )
+    recurring_task = make_import_api_task(
+        task_id=8_900_000_000_000_002,
+        title="Synthetic recurring task",
+        day="Friday",
+        dueDate="2026-09-18",
+        goalId=8_900_000_000_000_102,
+        completed=True,
+        completedAt="2026-09-18T15:45:00.000Z",
+        recurringRuleId=8_900_000_000_000_202,
+        recurrenceOccurrenceDate="2026-09-18",
+    )
+
+    response = isolated_client.post(
+        "/api/v1/tasks/import",
+        json={
+            "tasks": [
+                plain_task,
+                recurring_task,
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+
+    result = response.json()
+
+    assert result["received_count"] == 2
+    assert result["created_count"] == 2
+    assert result["unchanged_count"] == 0
+
+    mappings = {
+        mapping["source_task_id"]: mapping
+        for mapping in result["mappings"]
+    }
+
+    assert set(mappings) == {
+        plain_task["id"],
+        recurring_task["id"],
+    }
+    assert mappings[plain_task["id"]]["status"] == "created"
+    assert mappings[recurring_task["id"]]["status"] == "created"
+
+    plain_response = isolated_client.get(
+        f"/api/v1/tasks/{mappings[plain_task['id']]['task_id']}"
+    )
+    recurring_response = isolated_client.get(
+        f"/api/v1/tasks/{mappings[recurring_task['id']]['task_id']}"
+    )
+
+    assert plain_response.status_code == 200
+    assert recurring_response.status_code == 200
+
+    saved_plain_task = plain_response.json()
+    saved_recurring_task = recurring_response.json()
+
+    assert saved_plain_task["source_task_id"] == plain_task["id"]
+    assert saved_plain_task["title"] == "Synthetic plain task"
+    assert saved_plain_task["day"] == "Wednesday"
+    assert saved_plain_task["due_date"] == "2026-09-16"
+    assert saved_plain_task["notes"] == "Preserve these synthetic notes"
+    assert saved_plain_task["priority"] == 1
+    assert saved_plain_task["source_goal_id"] is None
+    assert saved_plain_task["completed"] is False
+    assert saved_plain_task["completed_at"] is None
+    assert saved_plain_task["source_recurring_rule_id"] is None
+    assert saved_plain_task["recurrence_occurrence_date"] is None
+
+    assert datetime.fromisoformat(
+        saved_plain_task["created_at"]
+    ) == datetime(
+        2026,
+        6,
+        11,
+        18,
+        58,
+        40,
+        207_000,
+        tzinfo=UTC,
+    )
+
+    assert (
+        saved_recurring_task["source_task_id"]
+        == recurring_task["id"]
+    )
+    assert (
+        saved_recurring_task["source_goal_id"]
+        == recurring_task["goalId"]
+    )
+    assert (
+        saved_recurring_task["source_recurring_rule_id"]
+        == recurring_task["recurringRuleId"]
+    )
+    assert (
+        saved_recurring_task["recurrence_occurrence_date"]
+        == "2026-09-18"
+    )
+    assert saved_recurring_task["completed"] is True
+
+    assert datetime.fromisoformat(
+        saved_recurring_task["completed_at"]
+    ) == datetime(
+        2026,
+        9,
+        18,
+        15,
+        45,
+        tzinfo=UTC,
+    )
+
+
+def test_import_tasks_accepts_identical_retry(
+    isolated_client: TestClient,
+):
+    """Return unchanged without creating a duplicate task."""
+
+    task = make_import_api_task(
+        task_id=8_900_000_000_000_011,
+    )
+    request_body = {
+        "tasks": [task],
+    }
+
+    first_response = isolated_client.post(
+        "/api/v1/tasks/import",
+        json=request_body,
+    )
+    second_response = isolated_client.post(
+        "/api/v1/tasks/import",
+        json=request_body,
+    )
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+
+    first_result = first_response.json()
+    second_result = second_response.json()
+
+    assert first_result["created_count"] == 1
+    assert first_result["unchanged_count"] == 0
+    assert first_result["mappings"][0]["status"] == "created"
+
+    assert second_result["created_count"] == 0
+    assert second_result["unchanged_count"] == 1
+    assert second_result["mappings"][0]["status"] == "unchanged"
+
+    assert (
+        second_result["mappings"][0]["task_id"]
+        == first_result["mappings"][0]["task_id"]
+    )
+
+    list_response = isolated_client.get(
+        "/api/v1/tasks"
+    )
+
+    matching_tasks = [
+        saved_task
+        for saved_task in list_response.json()
+        if saved_task["source_task_id"] == task["id"]
+    ]
+
+    assert len(matching_tasks) == 1
+
+
+def test_import_tasks_rolls_back_batch_when_retry_conflicts(
+    isolated_client: TestClient,
+):
+    """Reject changed data and remove new rows from the same batch."""
+
+    existing_task_id = 8_900_000_000_000_021
+    new_task_id = 8_900_000_000_000_022
+
+    original_task = make_import_api_task(
+        task_id=existing_task_id,
+        title="Keep this original title",
+    )
+
+    first_response = isolated_client.post(
+        "/api/v1/tasks/import",
+        json={
+            "tasks": [original_task],
+        },
+    )
+
+    assert first_response.status_code == 200
+
+    conflicting_task = make_import_api_task(
+        task_id=existing_task_id,
+        title="Attempted changed title",
+    )
+    new_task = make_import_api_task(
+        task_id=new_task_id,
+        title="This task must be rolled back",
+    )
+
+    conflict_response = isolated_client.post(
+        "/api/v1/tasks/import",
+        json={
+            "tasks": [
+                conflicting_task,
+                new_task,
+            ]
+        },
+    )
+
+    assert conflict_response.status_code == 409
+    assert (
+        conflict_response.json()["detail"]["source_task_ids"]
+        == [existing_task_id]
+    )
+
+    list_response = isolated_client.get(
+        "/api/v1/tasks"
+    )
+
+    matching_tasks = [
+        saved_task
+        for saved_task in list_response.json()
+        if saved_task["source_task_id"]
+        in {
+            existing_task_id,
+            new_task_id,
+        }
+    ]
+
+    # The original remains unchanged, while the new task was rolled back.
+    assert len(matching_tasks) == 1
+    assert matching_tasks[0]["source_task_id"] == existing_task_id
+    assert (
+        matching_tasks[0]["title"]
+        == "Keep this original title"
+    )
+
+
+def test_import_tasks_rejects_duplicate_recurring_identity(
+    isolated_client: TestClient,
+):
+    """Prevent two source tasks from owning one recurring occurrence."""
+
+    recurring_rule_id = 8_900_000_000_000_232
+
+    first_task = make_import_api_task(
+        task_id=8_900_000_000_000_031,
+        recurringRuleId=recurring_rule_id,
+        recurrenceOccurrenceDate="2026-09-16",
+    )
+
+    second_task = make_import_api_task(
+        task_id=8_900_000_000_000_032,
+        recurringRuleId=recurring_rule_id,
+        recurrenceOccurrenceDate="2026-09-16",
+    )
+
+    first_response = isolated_client.post(
+        "/api/v1/tasks/import",
+        json={
+            "tasks": [first_task],
+        },
+    )
+    conflict_response = isolated_client.post(
+        "/api/v1/tasks/import",
+        json={
+            "tasks": [second_task],
+        },
+    )
+
+    assert first_response.status_code == 200
+    assert conflict_response.status_code == 409
+    assert (
+        conflict_response.json()["detail"]["source_task_ids"]
+        == [second_task["id"]]
+    )
+
+    list_response = isolated_client.get(
+        "/api/v1/tasks"
+    )
+
+    matching_tasks = [
+        saved_task
+        for saved_task in list_response.json()
+        if saved_task["source_task_id"]
+        in {
+            first_task["id"],
+            second_task["id"],
+        }
+    ]
+
+    assert len(matching_tasks) == 1
+    assert (
+        matching_tasks[0]["source_task_id"]
+        == first_task["id"]
+    )

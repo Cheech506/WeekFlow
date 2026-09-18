@@ -48,6 +48,11 @@ class Task(Base):
             "source_task_id",
             name="uq_tasks_source_task_id",
         ),
+        UniqueConstraint(
+            "source_recurring_rule_id",
+            "recurrence_occurrence_date",
+            name="uq_tasks_source_recurring_occurrence",
+        ),
     )
 
     id: Mapped[int] = mapped_column(

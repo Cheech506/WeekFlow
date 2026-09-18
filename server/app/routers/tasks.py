@@ -20,7 +20,17 @@ from sqlalchemy.orm import Session
 from app.config import API_PREFIX
 from app.database import get_db
 from app.models import Task
-from app.schemas import TaskCreate, TaskRead, TaskUpdate
+from app.schemas import (
+    TaskCreate,
+    TaskImportRequest,
+    TaskImportResult,
+    TaskRead,
+    TaskUpdate,
+)
+from app.services import (
+    TaskImportConflictError,
+    import_tasks,
+)
 
 # Every endpoint in this router will begin with /api/v1/tasks.
 #
@@ -103,6 +113,38 @@ def read_tasks(
     # FastAPI converts each object through TaskRead.
     return list(db.scalars(statement).all())
 
+@router.post(
+    "/import",
+    response_model=TaskImportResult,
+)
+def import_task_batch(
+    task_data: TaskImportRequest,
+    db: Session = Depends(get_db),
+) -> TaskImportResult:
+    """
+    Import one validated batch of SQLite tasks into PostgreSQL.
+
+    An identical retry is safe and returns unchanged mappings.
+    Changed data using an existing source ID returns HTTP 409.
+    """
+
+    try:
+        return import_tasks(
+            task_data=task_data,
+            db=db,
+        )
+
+    except TaskImportConflictError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": (
+                    "One or more source task IDs already exist "
+                    "with different data."
+                ),
+                "source_task_ids": error.source_task_ids,
+            },
+        ) from error
 
 @router.get(
     "/{task_id}",
