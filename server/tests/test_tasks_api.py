@@ -789,3 +789,203 @@ def test_import_tasks_rejects_duplicate_recurring_identity(
         matching_tasks[0]["source_task_id"]
         == first_task["id"]
     )
+
+
+def test_preview_reports_fresh_tasks_without_writing(
+    isolated_client: TestClient,
+):
+    """Describe new tasks while leaving PostgreSQL unchanged."""
+
+    before_response = isolated_client.get(
+        "/api/v1/tasks"
+    )
+
+    assert before_response.status_code == 200
+
+    tasks_before = before_response.json()
+
+    plain_task = make_import_api_task(
+        task_id=8_900_000_000_000_041,
+        title="Fresh preview task",
+    )
+    recurring_task = make_import_api_task(
+        task_id=8_900_000_000_000_042,
+        title="Fresh recurring preview task",
+        goalId=8_900_000_000_000_142,
+        completed=True,
+        completedAt="2026-09-18T15:45:00.000Z",
+        recurringRuleId=8_900_000_000_000_242,
+        recurrenceOccurrenceDate="2026-09-16",
+    )
+
+    preview_response = isolated_client.post(
+        "/api/v1/tasks/import/preview",
+        json={
+            "tasks": [
+                plain_task,
+                recurring_task,
+            ]
+        },
+    )
+
+    assert preview_response.status_code == 200
+    assert preview_response.json() == {
+        "received_count": 2,
+        "would_create_count": 2,
+        "already_imported_count": 0,
+        "conflict_count": 0,
+        "conflict_source_task_ids": [],
+        "goal_linked_count": 1,
+        "recurring_count": 1,
+        "completed_count": 1,
+        "can_import": True,
+        "database_changed": False,
+    }
+
+    after_response = isolated_client.get(
+        "/api/v1/tasks"
+    )
+
+    assert after_response.status_code == 200
+    assert after_response.json() == tasks_before
+
+
+def test_preview_classifies_existing_conflicting_and_new_tasks(
+    isolated_client: TestClient,
+):
+    """Classify a mixed preview without changing saved tasks."""
+
+    unchanged_task = make_import_api_task(
+        task_id=8_900_000_000_000_051,
+        title="Already imported task",
+    )
+    stored_conflict_task = make_import_api_task(
+        task_id=8_900_000_000_000_052,
+        title="Original stored title",
+    )
+
+    import_response = isolated_client.post(
+        "/api/v1/tasks/import",
+        json={
+            "tasks": [
+                unchanged_task,
+                stored_conflict_task,
+            ]
+        },
+    )
+
+    assert import_response.status_code == 200
+
+    before_response = isolated_client.get(
+        "/api/v1/tasks"
+    )
+    tasks_before = before_response.json()
+
+    changed_retry = make_import_api_task(
+        task_id=8_900_000_000_000_052,
+        title="Changed retry title",
+    )
+    new_task = make_import_api_task(
+        task_id=8_900_000_000_000_053,
+        title="New preview task",
+    )
+
+    preview_response = isolated_client.post(
+        "/api/v1/tasks/import/preview",
+        json={
+            "tasks": [
+                unchanged_task,
+                changed_retry,
+                new_task,
+            ]
+        },
+    )
+
+    assert preview_response.status_code == 200
+    assert preview_response.json() == {
+        "received_count": 3,
+        "would_create_count": 1,
+        "already_imported_count": 1,
+        "conflict_count": 1,
+        "conflict_source_task_ids": [
+            stored_conflict_task["id"],
+        ],
+        "goal_linked_count": 0,
+        "recurring_count": 0,
+        "completed_count": 0,
+        "can_import": False,
+        "database_changed": False,
+    }
+
+    after_response = isolated_client.get(
+        "/api/v1/tasks"
+    )
+
+    assert after_response.status_code == 200
+    assert after_response.json() == tasks_before
+
+
+def test_preview_detects_recurring_identity_conflict_without_writing(
+    isolated_client: TestClient,
+):
+    """Detect a recurring rule/date collision using a different source ID."""
+
+    recurring_rule_id = 8_900_000_000_000_262
+
+    existing_task = make_import_api_task(
+        task_id=8_900_000_000_000_061,
+        title="Existing recurring task",
+        recurringRuleId=recurring_rule_id,
+        recurrenceOccurrenceDate="2026-09-16",
+    )
+
+    import_response = isolated_client.post(
+        "/api/v1/tasks/import",
+        json={
+            "tasks": [existing_task],
+        },
+    )
+
+    assert import_response.status_code == 200
+
+    before_response = isolated_client.get(
+        "/api/v1/tasks"
+    )
+    tasks_before = before_response.json()
+
+    conflicting_task = make_import_api_task(
+        task_id=8_900_000_000_000_062,
+        title="Conflicting recurring task",
+        recurringRuleId=recurring_rule_id,
+        recurrenceOccurrenceDate="2026-09-16",
+    )
+
+    preview_response = isolated_client.post(
+        "/api/v1/tasks/import/preview",
+        json={
+            "tasks": [conflicting_task],
+        },
+    )
+
+    assert preview_response.status_code == 200
+    assert preview_response.json() == {
+        "received_count": 1,
+        "would_create_count": 0,
+        "already_imported_count": 0,
+        "conflict_count": 1,
+        "conflict_source_task_ids": [
+            conflicting_task["id"],
+        ],
+        "goal_linked_count": 0,
+        "recurring_count": 1,
+        "completed_count": 0,
+        "can_import": False,
+        "database_changed": False,
+    }
+
+    after_response = isolated_client.get(
+        "/api/v1/tasks"
+    )
+
+    assert after_response.status_code == 200
+    assert after_response.json() == tasks_before

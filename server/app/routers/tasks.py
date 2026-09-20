@@ -22,6 +22,7 @@ from app.database import get_db
 from app.models import Task
 from app.schemas import (
     TaskCreate,
+    TaskImportPreviewResult,
     TaskImportRequest,
     TaskImportResult,
     TaskRead,
@@ -30,6 +31,7 @@ from app.schemas import (
 from app.services import (
     TaskImportConflictError,
     import_tasks,
+    preview_task_import,
 )
 
 # Every endpoint in this router will begin with /api/v1/tasks.
@@ -112,6 +114,26 @@ def read_tasks(
     # Execute the SELECT and return all matching Task objects.
     # FastAPI converts each object through TaskRead.
     return list(db.scalars(statement).all())
+
+@router.post(
+    "/import/preview",
+    response_model=TaskImportPreviewResult,
+)
+def preview_task_import_batch(
+    task_data: TaskImportRequest,
+    db: Session = Depends(get_db),
+) -> TaskImportPreviewResult:
+    """
+    Preview a SQLite task migration without changing PostgreSQL.
+
+    The service performs SELECT queries only.
+    """
+
+    return preview_task_import(
+        task_data=task_data,
+        db=db,
+    )
+
 
 @router.post(
     "/import",

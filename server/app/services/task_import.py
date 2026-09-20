@@ -1,6 +1,6 @@
 """Database service for importing SQLite tasks into PostgreSQL."""
 
-from sqlalchemy import select
+from sqlalchemy import select, tuple_
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -8,6 +8,7 @@ from app.models import Task
 from app.schemas import (
     TaskImportItem,
     TaskImportMapping,
+    TaskImportPreviewResult,
     TaskImportRequest,
     TaskImportResult,
 )
@@ -56,6 +57,141 @@ def task_matches_import_item(
         getattr(stored_task, field_name)
         == getattr(import_item, field_name)
         for field_name in IMPORT_FIELD_NAMES
+    )
+
+
+def preview_task_import(
+    task_data: TaskImportRequest,
+    db: Session,
+) -> TaskImportPreviewResult:
+    """
+    Compare SQLite tasks with PostgreSQL without changing either database.
+
+    This function deliberately performs SELECT queries only.
+    """
+
+    source_task_ids = [
+        task.source_task_id
+        for task in task_data.tasks
+    ]
+
+    # Find tasks that already use one of the incoming SQLite IDs.
+    stored_statement = select(Task).where(
+        Task.source_task_id.in_(source_task_ids)
+    )
+
+    stored_tasks = db.scalars(
+        stored_statement
+    ).all()
+
+    stored_by_source_task_id = {
+        task.source_task_id: task
+        for task in stored_tasks
+    }
+
+    # A different source task might already own the same recurring
+    # rule/date identity. Check those identities separately.
+    requested_recurring_identities = [
+        (
+            task.source_recurring_rule_id,
+            task.recurrence_occurrence_date,
+        )
+        for task in task_data.tasks
+        if (
+            task.source_recurring_rule_id is not None
+            and task.recurrence_occurrence_date is not None
+        )
+    ]
+
+    existing_recurring_identities = set()
+
+    if requested_recurring_identities:
+        recurring_statement = select(
+            Task.source_recurring_rule_id,
+            Task.recurrence_occurrence_date,
+        ).where(
+            tuple_(
+                Task.source_recurring_rule_id,
+                Task.recurrence_occurrence_date,
+            ).in_(requested_recurring_identities)
+        )
+
+        existing_recurring_identities = {
+            (
+                recurring_rule_id,
+                occurrence_date,
+            )
+            for recurring_rule_id, occurrence_date
+            in db.execute(recurring_statement)
+        }
+
+    would_create_count = 0
+    already_imported_count = 0
+    conflict_source_task_ids: list[int] = []
+
+    for task in task_data.tasks:
+        stored_task = stored_by_source_task_id.get(
+            task.source_task_id
+        )
+
+        if stored_task is not None:
+            if task_matches_import_item(
+                stored_task,
+                task,
+            ):
+                already_imported_count += 1
+            else:
+                conflict_source_task_ids.append(
+                    task.source_task_id
+                )
+
+            continue
+
+        recurring_identity = (
+            task.source_recurring_rule_id,
+            task.recurrence_occurrence_date,
+        )
+
+        has_recurring_identity = (
+            task.source_recurring_rule_id is not None
+            and task.recurrence_occurrence_date is not None
+        )
+
+        if (
+            has_recurring_identity
+            and recurring_identity
+            in existing_recurring_identities
+        ):
+            conflict_source_task_ids.append(
+                task.source_task_id
+            )
+        else:
+            would_create_count += 1
+
+    return TaskImportPreviewResult(
+        received_count=len(task_data.tasks),
+        would_create_count=would_create_count,
+        already_imported_count=already_imported_count,
+        conflict_count=len(
+            conflict_source_task_ids
+        ),
+        conflict_source_task_ids=(
+            conflict_source_task_ids
+        ),
+        goal_linked_count=sum(
+            task.source_goal_id is not None
+            for task in task_data.tasks
+        ),
+        recurring_count=sum(
+            task.source_recurring_rule_id is not None
+            for task in task_data.tasks
+        ),
+        completed_count=sum(
+            task.completed
+            for task in task_data.tasks
+        ),
+        can_import=not conflict_source_task_ids,
+        database_changed=False,
     )
 
 

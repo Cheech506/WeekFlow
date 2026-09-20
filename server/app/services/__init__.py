@@ -3,11 +3,13 @@
 from app.services.task_import import (
     TaskImportConflictError,
     import_tasks,
+    preview_task_import,
     task_matches_import_item,
 )
 
 __all__ = [
     "TaskImportConflictError",
     "import_tasks",
+    "preview_task_import",
     "task_matches_import_item",
 ]

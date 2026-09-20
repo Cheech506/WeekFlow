@@ -188,3 +188,21 @@ class TaskImportResult(BaseModel):
     created_count: int = Field(ge=0)
     unchanged_count: int = Field(ge=0)
     mappings: list[TaskImportMapping]
+
+
+class TaskImportPreviewResult(BaseModel):
+    """Describe a task migration without changing PostgreSQL."""
+
+    received_count: int = Field(ge=0)
+    would_create_count: int = Field(ge=0)
+    already_imported_count: int = Field(ge=0)
+    conflict_count: int = Field(ge=0)
+    conflict_source_task_ids: list[int]
+    goal_linked_count: int = Field(ge=0)
+    recurring_count: int = Field(ge=0)
+    completed_count: int = Field(ge=0)
+    can_import: bool
+
+    # Literal[False] guarantees that a preview can never claim it
+    # changed the database.
+    database_changed: Literal[False] = False

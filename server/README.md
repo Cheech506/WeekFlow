@@ -4,7 +4,7 @@ WeekFlow’s backend uses Python, FastAPI, SQLAlchemy, Alembic, Psycopg, Postgre
 
 The backend provides health checks and a PostgreSQL-backed Task API. Tasks can be created, read, partially updated, completed, reopened, and deleted.
 
-The mobile app still stores its data locally in SQLite. It is **not connected to this API yet**, and no mobile data has been moved to PostgreSQL.
+The app still stores its primary data locally in SQLite. Its Task API tools can read PostgreSQL tasks and preview a migration, but no SQLite task data has been imported into PostgreSQL.
 
 ## Requirements
 
@@ -86,6 +86,7 @@ Docker Compose starts PostgreSQL, but it does **not** start the FastAPI server.
 | `DELETE` | `/api/v1/tasks/{task_id}` | Permanently delete a task |
 | `GET` | `/docs` | Interactive API documentation |
 | `POST` | `/api/v1/tasks/import` | Safely import a validated batch of SQLite tasks |
+| `POST` | `/api/v1/tasks/import/preview` | Preview a SQLite task migration without changing PostgreSQL |
 
 Creating a task returns `201 Created`. Successful reads and updates return `200 OK`. Deleting a task returns `204 No Content`, so there is no response body. A missing task returns `404 Not Found`; invalid request data returns `422`.
 
@@ -138,7 +139,7 @@ source .venv/bin/activate
 python -m pytest
 ```
 
-The current suite contains **47 tests** covering API and database health, the Task model, request validation, create/read/update/delete behavior, completion timestamps, missing tasks, invalid requests, migration metadata, source-ID uniqueness, and recurring-source integrity. The tests include checks that unknown fields are rejected rather than silently ignored.
+The current suite contains **50 tests** covering API and database health, the Task model, request validation, create/read/update/delete behavior, completion timestamps, missing tasks, invalid requests, migration metadata, source-ID uniqueness, and recurring-source integrity. The tests include checks that unknown fields are rejected rather than silently ignored.
 
 The FastAPI development server does not need to be running during pytest. A known FastAPI/Starlette deprecation warning may appear even when all tests pass.
 

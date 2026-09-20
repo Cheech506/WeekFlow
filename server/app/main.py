@@ -24,7 +24,8 @@ app.add_middleware(
         "http://localhost:8081",
         "http://127.0.0.1:8081",
     ],
-    allow_methods=["GET"],
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
 )
 
 # Attach the task endpoints to the main FastAPI application.
