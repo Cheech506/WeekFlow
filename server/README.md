@@ -139,7 +139,7 @@ source .venv/bin/activate
 python -m pytest
 ```
 
-The current suite contains **50 tests** covering API and database health, the Task model, request validation, create/read/update/delete behavior, completion timestamps, missing tasks, invalid requests, migration metadata, source-ID uniqueness, and recurring-source integrity. The tests include checks that unknown fields are rejected rather than silently ignored.
+The current suite contains **103 tests** covering API and database health, Tasks, planning cycles, Goals, milestones, recurring schedules, skipped recurring occurrences, request validation, migration metadata, source-ID uniqueness, relationship integrity, and safe deletion behavior. The tests include checks that unknown fields are rejected rather than silently ignored.
 
 The FastAPI development server does not need to be running during pytest. A known FastAPI/Starlette deprecation warning may appear even when all tests pass.
 
