@@ -1,6 +1,5 @@
 """Validation schemas for importing SQLite tasks into PostgreSQL."""
 
-from datetime import date, datetime
 from typing import Literal, Self
 
 from pydantic import (
@@ -11,9 +10,13 @@ from pydantic import (
     model_validator,
 )
 
-
-# JavaScript and TypeScript can represent integers exactly through this value.
-MAX_JS_SAFE_INTEGER = 9_007_199_254_740_991
+from app.schemas.backup_common import (
+    BackupBoolean,
+    BackupDate,
+    BackupTimestamp,
+    Priority,
+    SourceId,
+)
 
 TaskDay = Literal[
     "Sunday",
@@ -41,39 +44,26 @@ class TaskImportItem(BaseModel):
 
     # Pydantic aliases map the backup's camelCase fields to the names used
     # by the PostgreSQL Task model.
-    source_task_id: int = Field(
-        alias="id",
-        gt=0,
-        le=MAX_JS_SAFE_INTEGER,
-    )
+    source_task_id: SourceId = Field(alias="id")
     title: str
     day: TaskDay
-    due_date: date | None = Field(
+    due_date: BackupDate | None = Field(
         alias="dueDate",
     )
     notes: str | None
-    priority: int = Field(
-        ge=0,
-        le=2,
-    )
-    source_goal_id: int | None = Field(
-        alias="goalId",
-        gt=0,
-        le=MAX_JS_SAFE_INTEGER,
-    )
-    completed: bool
-    created_at: datetime = Field(
+    priority: Priority
+    source_goal_id: SourceId | None = Field(alias="goalId")
+    completed: BackupBoolean
+    created_at: BackupTimestamp = Field(
         alias="createdAt",
     )
-    completed_at: datetime | None = Field(
+    completed_at: BackupTimestamp | None = Field(
         alias="completedAt",
     )
-    source_recurring_rule_id: int | None = Field(
+    source_recurring_rule_id: SourceId | None = Field(
         alias="recurringRuleId",
-        gt=0,
-        le=MAX_JS_SAFE_INTEGER,
     )
-    recurrence_occurrence_date: date | None = Field(
+    recurrence_occurrence_date: BackupDate | None = Field(
         alias="recurrenceOccurrenceDate",
     )
 
@@ -84,22 +74,6 @@ class TaskImportItem(BaseModel):
 
         if not value.strip():
             raise ValueError("title cannot be blank")
-
-        return value
-
-    @field_validator(
-        "created_at",
-        "completed_at",
-    )
-    @classmethod
-    def require_timezone(
-        cls,
-        value: datetime | None,
-    ) -> datetime | None:
-        """Require timestamps that identify an exact moment in time."""
-
-        if value is not None and value.utcoffset() is None:
-            raise ValueError("timestamp must include a timezone")
 
         return value
 
