@@ -2,11 +2,17 @@
 
 from typing import Literal, Self
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import (
+    AwareDatetime,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 from app.schemas.backup_common import (
     BackupSchema,
     BackupTimestamp,
+    NonNegativeInt,
     require_visible_text,
 )
 from app.schemas.backup_core import (
@@ -541,3 +547,42 @@ class WeekFlowBackupImportRequest(BackupSchema):
             raise ValueError("version must be an integer")
 
         return value
+
+class BackupImportCounts(BackupSchema):
+    """Count every collection in one validated backup."""
+
+    tasks: NonNegativeInt
+    goals: NonNegativeInt
+    goal_milestones: NonNegativeInt
+    brain_dumps: NonNegativeInt
+    task_templates: NonNegativeInt
+    recurring_rules: NonNegativeInt
+    recurring_exceptions: NonNegativeInt
+    planning_cycles: NonNegativeInt
+    weekly_reviews: NonNegativeInt
+    weekly_commitments: NonNegativeInt
+    weekly_task_decisions: NonNegativeInt
+    cycle_reviews: NonNegativeInt
+    cycle_goal_outcomes: NonNegativeInt
+
+
+class BackupImportPreviewResult(BackupSchema):
+    """Summarize a complete backup without changing PostgreSQL."""
+
+    format: Literal["weekflow-backup"]
+    version: Literal[12]
+    exported_at: AwareDatetime
+    app_version: str
+    data_model_version: Literal[1]
+    total_records: NonNegativeInt
+    counts: BackupImportCounts
+    would_create_count: NonNegativeInt
+    already_imported_count: NonNegativeInt
+    conflict_count: NonNegativeInt
+    would_create_counts: BackupImportCounts
+    already_imported_counts: BackupImportCounts
+    conflict_counts: BackupImportCounts
+    conflict_identities: dict[str, list[str]]
+    can_import: bool
+    validation_passed: Literal[True] = True
+    database_changed: Literal[False] = False

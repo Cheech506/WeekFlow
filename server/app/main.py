@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException, status
 from sqlalchemy.exc import SQLAlchemyError
 from app.routers.tasks import router as tasks_router
 from fastapi.middleware.cors import CORSMiddleware
+from app.routers.backups import router as backups_router
 
 from app.config import (
     API_PREFIX,
@@ -28,7 +29,8 @@ app.add_middleware(
     allow_headers=["Content-Type"],
 )
 
-# Attach the task endpoints to the main FastAPI application.
+# Attach the API endpoints to the main FastAPI application.
+app.include_router(backups_router)
 app.include_router(tasks_router)
 
 

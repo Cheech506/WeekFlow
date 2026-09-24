@@ -87,6 +87,7 @@ Docker Compose starts PostgreSQL, but it does **not** start the FastAPI server.
 | `GET` | `/docs` | Interactive API documentation |
 | `POST` | `/api/v1/tasks/import` | Safely import a validated batch of SQLite tasks |
 | `POST` | `/api/v1/tasks/import/preview` | Preview a SQLite task migration without changing PostgreSQL |
+| `POST` | `/api/v1/backups/import/preview` | Preview a complete backup against PostgreSQL without changing data |
 
 Creating a task returns `201 Created`. Successful reads and updates return `200 OK`. Deleting a task returns `204 No Content`, so there is no response body. A missing task returns `404 Not Found`; invalid request data returns `422`.
 
@@ -139,7 +140,7 @@ source .venv/bin/activate
 python -m pytest
 ```
 
-The current suite contains **103 tests** covering API and database health, Tasks, planning cycles, Goals, milestones, recurring schedules, skipped recurring occurrences, request validation, migration metadata, source-ID uniqueness, relationship integrity, and safe deletion behavior. The tests include checks that unknown fields are rejected rather than silently ignored.
+The current suite contains **235 tests** covering API and database health, Tasks, planning cycles, Goals, milestones, recurring schedules, skipped recurring occurrences, request validation, migration metadata, source-ID uniqueness, relationship integrity, and safe deletion behavior. The tests include checks that unknown fields are rejected rather than silently ignored.
 
 The FastAPI development server does not need to be running during pytest. A known FastAPI/Starlette deprecation warning may appear even when all tests pass.
 

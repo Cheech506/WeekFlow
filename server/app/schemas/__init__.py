@@ -17,6 +17,8 @@ from app.schemas.backup_history import (
     BackupWeeklyTaskDecisionItem,
 )
 from app.schemas.backup_import import (
+    BackupImportCounts,
+    BackupImportPreviewResult,
     WeekFlowBackupData,
     WeekFlowBackupImportRequest,
     WeekFlowBackupMetadata,
@@ -31,6 +33,11 @@ from app.schemas.task_import import (
 )
 
 __all__ = [
+    "BackupImportCounts",
+    "BackupImportPreviewResult",
+    "BackupBrainDumpItem",
+    "BackupCycleGoalOutcomeItem",
+    "BackupCycleReviewItem",
     "BackupBrainDumpItem",
     "BackupCycleGoalOutcomeItem",
     "BackupCycleReviewItem",
