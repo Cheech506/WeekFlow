@@ -16,11 +16,11 @@ import {
   type WeekFlowBackup,
 } from './backupValidation';
 import { getBrainDumps } from './brainDumpStorage';
-import { getPlanningCycles } from './cycleStorage';
 import {
   getCycleGoalOutcomes,
   getCycleReviews,
 } from './cycleReviewStorage';
+import { getPlanningCycles } from './cycleStorage';
 import { getDb, migrateDb } from './db';
 import { getGoalMilestones } from './goalMilestoneStorage';
 import { getGoals } from './goalStorage';
@@ -41,7 +41,7 @@ export type {
   BackupPreview,
   ExportedWeekFlowBackup,
   PickedWeekFlowBackup,
-  WeekFlowBackup,
+  WeekFlowBackup
 } from './backupValidation';
 
 const MAX_BACKUP_FILE_BYTES = 25 * 1024 * 1024;
@@ -72,7 +72,7 @@ function createBackupFileName(
   return `weekflow-backup-${safeTimestamp}.json`;
 }
 
-async function buildWeekFlowBackup(): Promise<WeekFlowBackup> {
+export async function buildWeekFlowBackup(): Promise<WeekFlowBackup> {
   const [
     tasks,
     goals,

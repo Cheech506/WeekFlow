@@ -586,3 +586,20 @@ class BackupImportPreviewResult(BackupSchema):
     can_import: bool
     validation_passed: Literal[True] = True
     database_changed: Literal[False] = False
+
+class BackupImportResult(BackupSchema):
+    """Summarize one successful complete-backup import."""
+
+    format: Literal["weekflow-backup"]
+    version: Literal[12]
+    exported_at: AwareDatetime
+    app_version: str
+    data_model_version: Literal[1]
+    total_records: NonNegativeInt
+    created_count: NonNegativeInt
+    already_imported_count: NonNegativeInt
+    created_counts: BackupImportCounts
+    already_imported_counts: BackupImportCounts
+    validation_passed: Literal[True] = True
+    import_completed: Literal[True] = True
+    database_changed: bool

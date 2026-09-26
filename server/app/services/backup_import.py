@@ -1,4 +1,4 @@
-"""Read-only planning for complete WeekFlow backup imports."""
+"""Plan and safely import complete WeekFlow backups."""
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -30,6 +30,7 @@ from app.schemas import (
     BackupGoalMilestoneItem,
     BackupImportCounts,
     BackupImportPreviewResult,
+    BackupImportResult,
     BackupPlanningCycleItem,
     BackupRecurringExceptionItem,
     BackupRecurringRuleItem,
@@ -135,6 +136,21 @@ RELATION_FIELDS = {
     },
 }
 
+IMPORT_ORDER = (
+    "planning_cycles",
+    "goals",
+    "recurring_rules",
+    "tasks",
+    "goal_milestones",
+    "brain_dumps",
+    "task_templates",
+    "recurring_exceptions",
+    "weekly_reviews",
+    "weekly_commitments",
+    "weekly_task_decisions",
+    "cycle_reviews",
+    "cycle_goal_outcomes",
+)
 
 @dataclass
 class CollectionImportPlan:
@@ -151,6 +167,7 @@ class BackupImportPlan:
     """Hold reusable classifications for a complete backup."""
 
     collections: dict[str, CollectionImportPlan]
+    stored_rows: dict[str, list[Any]]
 
     def counts_for(self, status: str) -> BackupImportCounts:
         """Count one classification across all collections."""
@@ -406,7 +423,8 @@ def build_backup_import_plan(
                 source_maps=source_maps,
             )
             for name in MODELS
-        }
+        },
+        stored_rows=stored,
     )
 
 
@@ -452,4 +470,146 @@ def preview_backup_import(
         can_import=conflict_count == 0,
         validation_passed=True,
         database_changed=False,
+    )
+
+class BackupImportConflictError(Exception):
+    """Raised when the preview finds changed or colliding data."""
+
+    def __init__(
+        self,
+        conflict_identities: dict[str, list[str]],
+    ):
+        self.conflict_identities = conflict_identities
+        super().__init__("The backup contains import conflicts")
+
+
+def internal_ids_by_source(
+    stored: dict[str, list[Any]],
+) -> dict[str, dict[int, int]]:
+    """Map preserved SQLite identities to PostgreSQL identities."""
+
+    mappings: dict[str, dict[int, int]] = {}
+
+    for name, source_field in SOURCE_ID_FIELDS.items():
+        mappings[name] = {
+            source_id: row.id
+            for row in stored[name]
+            if (
+                source_id := getattr(row, source_field)
+            ) is not None
+        }
+
+    return mappings
+
+
+def model_from_backup_item(
+    name: str,
+    item: Any,
+    internal_ids: dict[str, dict[int, int]],
+) -> Any:
+    """Translate one validated backup item into its SQLAlchemy model."""
+
+    values: dict[str, Any] = {}
+    relationships = RELATION_FIELDS.get(name, {})
+
+    for field_name in SCHEMAS[name].model_fields:
+        value = getattr(item, field_name)
+        relationship = relationships.get(field_name)
+
+        if relationship is not None:
+            internal_field, parent_name = relationship
+            values[internal_field] = (
+                internal_ids[parent_name][value]
+                if value is not None
+                else None
+            )
+            continue
+
+        if (
+            name == "goals"
+            and field_name in {"start_date", "end_date"}
+        ):
+            value = value.date()
+
+        values[field_name] = value
+
+    return MODELS[name](**values)
+
+
+def import_backup(
+    backup: WeekFlowBackupImportRequest,
+    db: Session,
+) -> BackupImportResult:
+    """Import a complete backup atomically and make retries safe."""
+
+    try:
+        plan = build_backup_import_plan(
+            backup=backup,
+            db=db,
+        )
+
+        if plan.conflict_identities:
+            raise BackupImportConflictError(
+                plan.conflict_identities
+            )
+
+        created_counts = plan.counts_for("would_create")
+        already_imported_counts = plan.counts_for(
+            "already_imported"
+        )
+        created_count = total_counts(created_counts)
+        already_imported_count = total_counts(
+            already_imported_counts
+        )
+
+        internal_ids = internal_ids_by_source(
+            plan.stored_rows
+        )
+
+        for name in IMPORT_ORDER:
+            rows = [
+                model_from_backup_item(
+                    name=name,
+                    item=item,
+                    internal_ids=internal_ids,
+                )
+                for item in plan.collections[name].would_create
+            ]
+
+            if not rows:
+                continue
+
+            db.add_all(rows)
+            db.flush()
+
+            source_field = SOURCE_ID_FIELDS.get(name)
+
+            if source_field is not None:
+                internal_ids[name].update(
+                    {
+                        getattr(row, source_field): row.id
+                        for row in rows
+                    }
+                )
+
+        db.commit()
+
+    except Exception:
+        db.rollback()
+        raise
+
+    return BackupImportResult(
+        format=backup.format,
+        version=backup.version,
+        exported_at=backup.exported_at,
+        app_version=backup.metadata.app_version,
+        data_model_version=backup.metadata.data_model_version,
+        total_records=created_count + already_imported_count,
+        created_count=created_count,
+        already_imported_count=already_imported_count,
+        created_counts=created_counts,
+        already_imported_counts=already_imported_counts,
+        validation_passed=True,
+        import_completed=True,
+        database_changed=created_count > 0,
     )

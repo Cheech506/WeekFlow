@@ -93,9 +93,9 @@ def test_task_can_be_saved_and_read_without_persisting():
     """Round-trip migration metadata through PostgreSQL, then roll it back."""
 
     temporary_id = -1
-    source_task_id = 1_781_204_320_207
-    source_goal_id = 1_782_503_210_780
-    source_recurring_rule_id = 1_781_999_999_999
+    source_task_id = 9_000_000_000_000_001
+    source_goal_id = 9_000_000_000_000_002
+    source_recurring_rule_id = 9_000_000_000_000_003
     occurrence_date = date(2026, 9, 16)
 
     with Session(engine) as session:

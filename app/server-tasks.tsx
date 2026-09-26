@@ -1,6 +1,8 @@
 import { Stack } from 'expo-router';
 import { useState } from 'react';
 import {
+  Alert,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -9,6 +11,11 @@ import {
 import { Text, View } from '@/components/Themed';
 import { useTasks } from '@/context/TaskContext';
 import {
+  importBackupMigration,
+  type BackupImportResult,
+} from '@/lib/backupMigrationApi';
+import { buildWeekFlowBackup } from '@/lib/backupStorage';
+import {
   fetchServerTasks,
   type ServerTask,
 } from '@/lib/taskApi';
@@ -16,6 +23,41 @@ import {
   previewTaskMigration,
   type TaskMigrationPreview,
 } from '@/lib/taskMigrationApi';
+
+function confirmCompleteMigration(): Promise<boolean> {
+  const message =
+    'Copy all current WeekFlow SQLite data to PostgreSQL? ' +
+    'This does not delete the SQLite data.';
+
+  if (Platform.OS === 'web') {
+    return Promise.resolve(
+      globalThis.confirm(message)
+    );
+  }
+
+  return new Promise((resolve) => {
+    Alert.alert(
+      'Import WeekFlow data?',
+      message,
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+          onPress: () => resolve(false),
+        },
+        {
+          text: 'Import',
+          style: 'destructive',
+          onPress: () => resolve(true),
+        },
+      ],
+      {
+        cancelable: true,
+        onDismiss: () => resolve(false),
+      }
+    );
+  });
+}
 
 export default function ServerTasksScreen() {
   const {
@@ -35,6 +77,13 @@ export default function ServerTasksScreen() {
   const [previewLoading, setPreviewLoading] =
     useState(false);
   const [previewError, setPreviewError] =
+    useState<string | null>(null);
+
+  const [backupImportResult, setBackupImportResult] =
+    useState<BackupImportResult | null>(null);
+  const [backupImportLoading, setBackupImportLoading] =
+    useState(false);
+  const [backupImportError, setBackupImportError] =
     useState<string | null>(null);
 
   async function loadServerTasks() {
@@ -107,6 +156,48 @@ export default function ServerTasksScreen() {
     }
   }
 
+  async function runCompleteBackupImport() {
+    const baseUrl =
+      process.env.EXPO_PUBLIC_API_BASE_URL;
+
+    if (!baseUrl) {
+      setBackupImportError(
+        'The API address is missing from .env.local.'
+      );
+      return;
+    }
+
+    const confirmed =
+      await confirmCompleteMigration();
+
+    if (!confirmed) {
+      return;
+    }
+
+    setBackupImportLoading(true);
+    setBackupImportError(null);
+    setBackupImportResult(null);
+
+    try {
+      const backup = await buildWeekFlowBackup();
+
+      setBackupImportResult(
+        await importBackupMigration(
+          baseUrl,
+          backup
+        )
+      );
+    } catch (caught) {
+      setBackupImportError(
+        caught instanceof Error
+          ? caught.message
+          : 'Could not import WeekFlow data.'
+      );
+    } finally {
+      setBackupImportLoading(false);
+    }
+  }
+
   const previewDisabled =
     previewLoading ||
     localTasksLoading ||
@@ -126,8 +217,8 @@ export default function ServerTasksScreen() {
         </Text>
 
         <Text style={styles.pageSubtitle}>
-          Read PostgreSQL tasks and preview how this
-          device&apos;s SQLite tasks compare.
+          Read PostgreSQL tasks and move this
+          device&apos;s SQLite data into PostgreSQL.
         </Text>
 
         <View style={styles.section}>
@@ -275,6 +366,95 @@ export default function ServerTasksScreen() {
 
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>
+            Complete PostgreSQL import
+          </Text>
+
+          <Text style={styles.sectionText}>
+            Copy this device&apos;s current tasks, goals,
+            cycles, schedules, reviews, and other WeekFlow
+            data from SQLite into PostgreSQL. SQLite remains
+            unchanged.
+          </Text>
+
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Import all WeekFlow data into PostgreSQL"
+            disabled={backupImportLoading}
+            onPress={() => {
+              void runCompleteBackupImport();
+            }}
+            style={[
+              styles.importButton,
+              backupImportLoading &&
+                styles.disabledButton,
+            ]}
+          >
+            <Text style={styles.importButtonText}>
+              {backupImportLoading
+                ? 'Importing...'
+                : 'Import all data to PostgreSQL'}
+            </Text>
+          </Pressable>
+
+          {backupImportError ? (
+            <Text style={styles.errorText}>
+              {backupImportError}
+            </Text>
+          ) : null}
+
+          {backupImportResult ? (
+            <View style={styles.previewCard}>
+              <Text style={styles.resultTitle}>
+                Import completed
+              </Text>
+
+              <View style={styles.metricGrid}>
+                <View style={styles.metricCard}>
+                  <Text style={styles.metricLabel}>
+                    Records checked
+                  </Text>
+                  <Text style={styles.metricValue}>
+                    {backupImportResult.total_records}
+                  </Text>
+                </View>
+
+                <View style={styles.metricCard}>
+                  <Text style={styles.metricLabel}>
+                    Created
+                  </Text>
+                  <Text style={styles.metricValue}>
+                    {backupImportResult.created_count}
+                  </Text>
+                </View>
+
+                <View style={styles.metricCard}>
+                  <Text style={styles.metricLabel}>
+                    Already imported
+                  </Text>
+                  <Text style={styles.metricValue}>
+                    {
+                      backupImportResult
+                        .already_imported_count
+                    }
+                  </Text>
+                </View>
+              </View>
+
+              <Text style={styles.successText}>
+                {backupImportResult.database_changed
+                  ? 'New records were added to PostgreSQL.'
+                  : 'All records were already in PostgreSQL.'}
+              </Text>
+
+              <Text style={styles.safetyText}>
+                SQLite data was not deleted.
+              </Text>
+            </View>
+          ) : null}
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>
             Server tasks
           </Text>
 
@@ -369,6 +549,18 @@ const styles = StyleSheet.create({
     paddingVertical: 13,
   },
   primaryButtonText: {
+    color: '#ffffff',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  importButton: {
+    alignItems: 'center',
+    backgroundColor: '#b45309',
+    borderRadius: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 13,
+  },
+  importButtonText: {
     color: '#ffffff',
     fontSize: 15,
     fontWeight: '700',

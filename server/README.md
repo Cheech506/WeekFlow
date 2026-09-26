@@ -4,7 +4,7 @@ WeekFlow’s backend uses Python, FastAPI, SQLAlchemy, Alembic, Psycopg, Postgre
 
 The backend provides health checks and a PostgreSQL-backed Task API. Tasks can be created, read, partially updated, completed, reopened, and deleted.
 
-The app still stores its primary data locally in SQLite. Its Task API tools can read PostgreSQL tasks and preview a migration, but no SQLite task data has been imported into PostgreSQL.
+The app still stores its primary data locally in SQLite. The backend can preview and safely import a complete WeekFlow backup into PostgreSQL, but the application does not call the complete-backup import endpoint yet and no real SQLite data has been imported.
 
 ## Requirements
 
@@ -88,6 +88,7 @@ Docker Compose starts PostgreSQL, but it does **not** start the FastAPI server.
 | `POST` | `/api/v1/tasks/import` | Safely import a validated batch of SQLite tasks |
 | `POST` | `/api/v1/tasks/import/preview` | Preview a SQLite task migration without changing PostgreSQL |
 | `POST` | `/api/v1/backups/import/preview` | Preview a complete backup against PostgreSQL without changing data |
+| `POST` | `/api/v1/backups/import` | Safely import a complete validated WeekFlow backup into PostgreSQL |
 
 Creating a task returns `201 Created`. Successful reads and updates return `200 OK`. Deleting a task returns `204 No Content`, so there is no response body. A missing task returns `404 Not Found`; invalid request data returns `422`.
 
@@ -125,6 +126,24 @@ The import is transactional and idempotent:
 
 The application does not call this import endpoint yet, and no real SQLite task data has been imported into PostgreSQL.
 
+## Complete backup import
+
+`POST /api/v1/backups/import/preview` validates a complete WeekFlow backup and compares all 13 collections with PostgreSQL without changing the database.
+
+`POST /api/v1/backups/import` uses that same comparison plan to import planning cycles, goals, recurring rules, tasks, milestones, brain dumps, task templates, recurring exceptions, weekly reviews, commitments, task decisions, cycle reviews, and cycle goal outcomes.
+
+The complete import preserves the original SQLite source IDs while creating PostgreSQL IDs and foreign-key relationships. Parent records are inserted before records that reference them.
+
+The complete import is transactional and idempotent:
+
+- New records are created in relationship-safe order.
+- An identical retry reports the records as already imported.
+- Existing source IDs with different data return `409 Conflict`.
+- No records are committed when a conflict or database error occurs.
+- The endpoint returns collection-by-collection created and already-imported counts.
+
+The WeekFlow application does not call this endpoint yet. No real user backup has been imported into PostgreSQL.
+
 ## Run backend tests
 
 Start PostgreSQL if needed:
@@ -140,7 +159,7 @@ source .venv/bin/activate
 python -m pytest
 ```
 
-The current suite contains **235 tests** covering API and database health, Tasks, planning cycles, Goals, milestones, recurring schedules, skipped recurring occurrences, request validation, migration metadata, source-ID uniqueness, relationship integrity, and safe deletion behavior. The tests include checks that unknown fields are rejected rather than silently ignored.
+The current suite contains **238 tests** covering API and database health, Tasks, planning cycles, Goals, milestones, recurring schedules, skipped recurring occurrences, complete-backup validation, database-aware previews, transactional complete-backup imports, safe retries, conflict handling, migration metadata, source-ID uniqueness, relationship integrity, and safe deletion behavior. The tests include checks that unknown fields are rejected rather than silently ignored.
 
 The FastAPI development server does not need to be running during pytest. A known FastAPI/Starlette deprecation warning may appear even when all tests pass.
 

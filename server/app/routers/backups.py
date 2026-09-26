@@ -1,15 +1,25 @@
 """API routes for WeekFlow backup migration tools."""
 
-from fastapi import APIRouter, Depends
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    status,
+)
 from sqlalchemy.orm import Session
 
 from app.config import API_PREFIX
 from app.database import get_db
 from app.schemas import (
     BackupImportPreviewResult,
+    BackupImportResult,
     WeekFlowBackupImportRequest,
 )
-from app.services import preview_backup_import
+from app.services import (
+    BackupImportConflictError,
+    import_backup,
+    preview_backup_import,
+)
 
 
 router = APIRouter(
@@ -36,3 +46,32 @@ def preview_complete_backup(
         backup=backup,
         db=db,
     )
+
+
+@router.post(
+    "/import",
+    response_model=BackupImportResult,
+)
+def import_complete_backup(
+    backup: WeekFlowBackupImportRequest,
+    db: Session = Depends(get_db),
+) -> BackupImportResult:
+    """Import one complete validated backup in one transaction."""
+
+    try:
+        return import_backup(
+            backup=backup,
+            db=db,
+        )
+
+    except BackupImportConflictError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": (
+                    "The backup conflicts with data already "
+                    "stored in PostgreSQL."
+                ),
+                "conflicts": error.conflict_identities,
+            },
+        ) from error
