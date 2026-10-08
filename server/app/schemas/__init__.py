@@ -23,6 +23,22 @@ from app.schemas.backup_import import (
     WeekFlowBackupData,
     WeekFlowBackupImportRequest,
     WeekFlowBackupMetadata,
+    BackupRefreshResult,
+)
+from app.schemas.planning_cycle import (
+    PlanningCycleCreate,
+    PlanningCycleRead,
+    PlanningCycleUpdate,
+)
+from app.schemas.goal import (
+    GoalCreate,
+    GoalRead,
+    GoalUpdate,
+)
+from app.schemas.goal_milestone import (
+    GoalMilestoneCreate,
+    GoalMilestoneRead,
+    GoalMilestoneUpdate,
 )
 from app.schemas.task import TaskCreate, TaskRead, TaskUpdate
 from app.schemas.task_import import (
@@ -47,11 +63,21 @@ __all__ = [
     "BackupGoalMilestoneItem",
     "BackupPlanningCycleItem",
     "BackupRecurringExceptionItem",
+    "BackupRefreshResult",
     "BackupRecurringRuleItem",
     "BackupTaskTemplateItem",
     "BackupWeeklyCommitmentItem",
     "BackupWeeklyReviewItem",
     "BackupWeeklyTaskDecisionItem",
+    "GoalCreate",
+    "GoalMilestoneCreate",
+    "GoalMilestoneRead",
+    "GoalMilestoneUpdate",
+    "GoalRead",
+    "GoalUpdate",
+    "PlanningCycleCreate",
+    "PlanningCycleRead",
+    "PlanningCycleUpdate",
     "TaskCreate",
     "TaskImportItem",
     "TaskImportMapping",

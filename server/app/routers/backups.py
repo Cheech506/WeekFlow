@@ -13,12 +13,14 @@ from app.database import get_db
 from app.schemas import (
     BackupImportPreviewResult,
     BackupImportResult,
+    BackupRefreshResult,
     WeekFlowBackupImportRequest,
 )
 from app.services import (
     BackupImportConflictError,
     import_backup,
     preview_backup_import,
+    refresh_backup,
 )
 
 
@@ -71,6 +73,34 @@ def import_complete_backup(
                 "message": (
                     "The backup conflicts with data already "
                     "stored in PostgreSQL."
+                ),
+                "conflicts": error.conflict_identities,
+            },
+        ) from error
+
+@router.post(
+    "/import/refresh",
+    response_model=BackupRefreshResult,
+)
+def refresh_complete_backup(
+    backup: WeekFlowBackupImportRequest,
+    db: Session = Depends(get_db),
+) -> BackupRefreshResult:
+    """Refresh imported records while preserving PostgreSQL IDs."""
+
+    try:
+        return refresh_backup(
+            backup=backup,
+            db=db,
+        )
+
+    except BackupImportConflictError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": (
+                    "The backup refresh could not be applied "
+                    "safely. No changes were saved."
                 ),
                 "conflicts": error.conflict_identities,
             },

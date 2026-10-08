@@ -603,3 +603,10 @@ class BackupImportResult(BackupSchema):
     validation_passed: Literal[True] = True
     import_completed: Literal[True] = True
     database_changed: bool
+
+class BackupRefreshResult(BackupImportResult):
+    """Summarize a backup refresh that preserves PostgreSQL IDs."""
+
+    updated_count: NonNegativeInt
+    updated_counts: BackupImportCounts
+    refresh_completed: Literal[True] = True

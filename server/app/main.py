@@ -3,6 +3,13 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.routers.tasks import router as tasks_router
 from fastapi.middleware.cors import CORSMiddleware
 from app.routers.backups import router as backups_router
+from app.routers.planning_cycles import (
+    router as planning_cycles_router,
+)
+from app.routers.goals import router as goals_router
+from app.routers.goal_milestones import (
+    router as goal_milestones_router,
+)
 
 from app.config import (
     API_PREFIX,
@@ -25,13 +32,16 @@ app.add_middleware(
         "http://localhost:8081",
         "http://127.0.0.1:8081",
     ],
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE"],
     allow_headers=["Content-Type"],
 )
 
 # Attach the API endpoints to the main FastAPI application.
 app.include_router(backups_router)
 app.include_router(tasks_router)
+app.include_router(planning_cycles_router)
+app.include_router(goals_router)
+app.include_router(goal_milestones_router)
 
 
 @app.get("/")

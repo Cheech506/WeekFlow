@@ -15,6 +15,8 @@ from app.services.task_import import (
     task_matches_import_item,
 )
 
+from app.services.backup_refresh import refresh_backup
+
 __all__ = [
     "BackupImportConflictError",
     "BackupImportPlan",
@@ -25,5 +27,6 @@ __all__ = [
     "import_tasks",
     "preview_backup_import",
     "preview_task_import",
+    "refresh_backup",
     "task_matches_import_item",
 ]
