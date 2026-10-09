@@ -8,6 +8,7 @@ from sqlalchemy import (
     CheckConstraint,
     Date,
     DateTime,
+    ForeignKey,
     Integer,
     SmallInteger,
     String,
@@ -68,6 +69,13 @@ class Task(Base):
         BigInteger,
         nullable=True,
     )
+    # The real PostgreSQL goal relationship. Source IDs remain separate.
+    goal_id: Mapped[int | None] = mapped_column(
+        ForeignKey("goals.id", name="fk_tasks_goal_id_goals", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     source_goal_id: Mapped[int | None] = mapped_column(
         BigInteger,
         nullable=True,

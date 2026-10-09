@@ -6,6 +6,7 @@ from fastapi import (
     Depends,
     HTTPException,
     Path,
+    Response,
     status,
 )
 from sqlalchemy import select, text, update
@@ -14,7 +15,9 @@ from sqlalchemy.orm import Session
 
 from app.config import API_PREFIX
 from app.database import get_db
-from app.models import PlanningCycle
+from app.models import (
+    CycleReview, Goal, PlanningCycle, WeeklyCommitment, WeeklyReview,
+)
 from app.schemas import (
     PlanningCycleCreate,
     PlanningCycleRead,
@@ -246,3 +249,64 @@ def update_planning_cycle(
     db.refresh(cycle)
 
     return cycle
+
+@router.delete(
+    "/{cycle_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+)
+def delete_planning_cycle(
+    cycle_id: int = Path(gt=0, le=2_147_483_647),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Delete an empty cycle while protecting goals and review history."""
+
+    try:
+        db.execute(text(
+            "LOCK TABLE cycle_reviews, goals, planning_cycles, "
+            "weekly_commitments, weekly_reviews "
+            "IN SHARE ROW EXCLUSIVE MODE"
+        ))
+        cycle = db.scalar(
+            select(PlanningCycle)
+            .where(PlanningCycle.id == cycle_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+
+        if cycle is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Planning cycle not found.",
+            )
+
+        linked_records = (
+            select(Goal.id).where(Goal.cycle_id == cycle_id),
+            select(CycleReview.id).where(CycleReview.cycle_id == cycle_id),
+            select(CycleReview.id).where(CycleReview.next_cycle_id == cycle_id),
+            select(WeeklyReview.id).where(WeeklyReview.cycle_id == cycle_id),
+            select(WeeklyCommitment.id).where(WeeklyCommitment.cycle_id == cycle_id),
+        )
+        if any(db.scalar(statement.limit(1)) is not None for statement in linked_records):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "This cycle is linked to goals, reviews, or commitments "
+                    "and cannot be deleted."
+                ),
+            )
+
+        db.delete(cycle)
+        db.commit()
+
+    except IntegrityError as error:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The planning cycle could not be deleted. No changes were saved.",
+        ) from error
+    except Exception:
+        db.rollback()
+        raise
+
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

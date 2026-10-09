@@ -125,3 +125,39 @@ class GoalRead(BaseModel):
     completion_milestone_total: int | None
     completion_milestone_completed: int | None
     completion_high_priority_completed: int | None
+
+class GoalComplete(BaseModel):
+    """Validate reflections when completing a goal."""
+
+    model_config = ConfigDict(
+        str_strip_whitespace=True,
+        extra="forbid",
+    )
+
+    what_helped: str | None = Field(
+        default=None, max_length=1_000,
+    )
+    hardest_part: str | None = Field(
+        default=None, max_length=1_000,
+    )
+    learned: str | None = Field(
+        default=None, max_length=1_000,
+    )
+    do_differently: str | None = Field(
+        default=None, max_length=1_000,
+    )
+
+    @field_validator(
+        "what_helped",
+        "hardest_part",
+        "learned",
+        "do_differently",
+    )
+    @classmethod
+    def convert_blank_text_to_none(
+        cls,
+        value: str | None,
+    ) -> str | None:
+        """Store blank optional reflections as null."""
+
+        return value or None

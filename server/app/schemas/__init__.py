@@ -31,6 +31,7 @@ from app.schemas.planning_cycle import (
     PlanningCycleUpdate,
 )
 from app.schemas.goal import (
+    GoalComplete,
     GoalCreate,
     GoalRead,
     GoalUpdate,
@@ -69,6 +70,7 @@ __all__ = [
     "BackupWeeklyCommitmentItem",
     "BackupWeeklyReviewItem",
     "BackupWeeklyTaskDecisionItem",
+    "GoalComplete",
     "GoalCreate",
     "GoalMilestoneCreate",
     "GoalMilestoneRead",

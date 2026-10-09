@@ -13,6 +13,7 @@ from app.models import Task
 
 EXPECTED_TASK_COLUMNS = {
     "id",
+    "goal_id",
     "source_task_id",
     "source_goal_id",
     "source_recurring_rule_id",
