@@ -1,10 +1,11 @@
 """Database service for importing SQLite tasks into PostgreSQL."""
 
-from sqlalchemy import select, tuple_
+from sqlalchemy import select, text, tuple_
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.models import Task
+from app.models import Goal, RecurringRule, Task
 from app.schemas import (
     TaskImportItem,
     TaskImportMapping,
@@ -199,11 +200,10 @@ def import_tasks(
     task_data: TaskImportRequest,
     db: Session,
 ) -> TaskImportResult:
-    """
-    Import one validated task batch as a single transaction.
+    """Import tasks and connect any parents already present in PostgreSQL.
 
-    Exact retries return unchanged mappings. If an existing source task
-    contains different data, the entire request is rolled back.
+    Identical retries keep the same task IDs. Changed source data rejects
+    the whole batch. Missing parents can be connected on a later retry.
     """
 
     source_task_ids = [
@@ -211,108 +211,138 @@ def import_tasks(
         for task in task_data.tasks
     ]
 
-    # model_dump() returns the internal snake_case names created by the
-    # Pydantic aliases.
-    #
-    # For example:
-    # id becomes source_task_id
-    # dueDate becomes due_date
-    task_values = [
-        task.model_dump()
-        for task in task_data.tasks
-    ]
-
-    # PostgreSQL attempts to insert every task.
-    #
-    # If source_task_id already exists, PostgreSQL leaves that row
-    # unchanged. We inspect it below to determine whether it is an
-    # identical retry or a conflicting retry.
-    insert_statement = (
-        insert(Task)
-        .values(task_values)
-        .on_conflict_do_nothing()
-        .returning(Task.source_task_id)
-    )
-
     try:
+        # Hold related writes until validation and link mapping finish.
+        # Use the same table order as task edits and backup imports.
+        db.execute(text(
+            "LOCK TABLE goals, recurring_rules, tasks "
+            "IN SHARE ROW EXCLUSIVE MODE"
+        ))
+
+        goal_sources = {
+            task.source_goal_id
+            for task in task_data.tasks
+            if task.source_goal_id is not None
+        }
+        rule_sources = {
+            task.source_recurring_rule_id
+            for task in task_data.tasks
+            if task.source_recurring_rule_id is not None
+        }
+
+        # Look up existing parent IDs; never copy a SQLite ID into a
+        # PostgreSQL foreign key or create another parent here.
+        goal_ids = dict(db.execute(
+            select(Goal.source_goal_id, Goal.id)
+            .where(Goal.source_goal_id.in_(goal_sources))
+        ).all())
+        rule_ids = dict(db.execute(
+            select(
+                RecurringRule.source_recurring_rule_id,
+                RecurringRule.id,
+            )
+            .where(
+                RecurringRule.source_recurring_rule_id.in_(rule_sources)
+            )
+        ).all())
+
+        task_values = [
+            {
+                **task.model_dump(),
+                "goal_id": goal_ids.get(task.source_goal_id),
+                "recurring_rule_id": rule_ids.get(
+                    task.source_recurring_rule_id
+                ),
+            }
+            for task in task_data.tasks
+        ]
+
+        # The task's own source_goal_id determines its goal. A schedule's
+        # current goal must not rewrite historical task relationships.
+        # Preserve source IDs for retries and for parents arriving later.
+        insert_statement = (
+            insert(Task)
+            .values(task_values)
+            .on_conflict_do_nothing()
+            .returning(Task.source_task_id)
+        )
         created_source_task_ids = set(
             db.scalars(insert_statement).all()
         )
 
-        # Read all requested source tasks back from PostgreSQL,
-        # including both newly inserted and previously existing rows.
-        stored_statement = select(Task).where(
-            Task.source_task_id.in_(source_task_ids)
-        )
-
         stored_tasks = db.scalars(
-            stored_statement
+            select(Task)
+            .where(Task.source_task_id.in_(source_task_ids))
+            .execution_options(populate_existing=True)
         ).all()
-
         stored_by_source_task_id = {
             task.source_task_id: task
             for task in stored_tasks
         }
 
-        # A conflict exists when PostgreSQL did not insert the task
-        # because another unique identity owns its values, or when the
-        # source task ID exists but its stored data has changed.
+        # Skipped inserts must be exact retries. A changed task or a
+        # recurring identity already owned by another task is a conflict.
         conflicting_source_task_ids = [
             task.source_task_id
             for task in task_data.tasks
             if (
-                task.source_task_id
-                not in stored_by_source_task_id
+                task.source_task_id not in stored_by_source_task_id
                 or not task_matches_import_item(
-                    stored_by_source_task_id[
-                        task.source_task_id
-                    ],
+                    stored_by_source_task_id[task.source_task_id],
                     task,
                 )
             )
         ]
-
         if conflicting_source_task_ids:
             raise TaskImportConflictError(
                 conflicting_source_task_ids
             )
 
-        # Preserve the request order in the response mappings.
+        # An identical task may have been imported before its parents.
+        # Connect those parents now while keeping the task's primary key
+        # and all of its imported content unchanged.
+        for task in task_data.tasks:
+            stored_task = stored_by_source_task_id[task.source_task_id]
+
+            if task.source_goal_id in goal_ids:
+                stored_task.goal_id = goal_ids[task.source_goal_id]
+
+            if task.source_recurring_rule_id in rule_ids:
+                stored_task.recurring_rule_id = rule_ids[
+                    task.source_recurring_rule_id
+                ]
+
+        # Keep the original response format and request order. An
+        # "unchanged" task can have a previously missing parent connected.
         mappings = [
             TaskImportMapping(
                 source_task_id=task.source_task_id,
-                task_id=stored_by_source_task_id[
-                    task.source_task_id
-                ].id,
+                task_id=stored_by_source_task_id[task.source_task_id].id,
                 status=(
                     "created"
-                    if task.source_task_id
-                    in created_source_task_ids
+                    if task.source_task_id in created_source_task_ids
                     else "unchanged"
                 ),
             )
             for task in task_data.tasks
         ]
-
         result = TaskImportResult(
             received_count=len(task_data.tasks),
-            created_count=len(
-                created_source_task_ids
-            ),
+            created_count=len(created_source_task_ids),
             unchanged_count=(
-                len(task_data.tasks)
-                - len(created_source_task_ids)
+                len(task_data.tasks) - len(created_source_task_ids)
             ),
             mappings=mappings,
         )
 
-        # Nothing becomes permanent until every task has passed the
-        # comparison above.
+        # Commit only after every task and relationship has passed.
         db.commit()
 
+    except IntegrityError as error:
+        db.rollback()
+        raise TaskImportConflictError(source_task_ids) from error
+
     except Exception:
-        # This also removes newly inserted tasks when another task in
-        # the same batch conflicts.
         db.rollback()
         raise
 

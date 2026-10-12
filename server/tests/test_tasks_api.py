@@ -120,7 +120,7 @@ def test_create_task_rejects_invalid_input(
 def test_create_task_rejects_migration_metadata(
     isolated_client: TestClient,
 ):
-    """Keep SQLite migration metadata out of the normal create endpoint."""
+    """Keep SQLite source IDs out of the normal create endpoint."""
 
     response = isolated_client.post(
         "/api/v1/tasks",
@@ -129,24 +129,51 @@ def test_create_task_rejects_migration_metadata(
             "source_task_id": 1_781_204_320_207,
             "source_goal_id": 1_782_503_210_780,
             "source_recurring_rule_id": 1_781_999_999_999,
-            "recurrence_occurrence_date": "2026-09-16",
         },
     )
 
     assert response.status_code == 422
 
-    invalid_fields = {
-        error["loc"][-1]
-        for error in response.json()["detail"]
-    }
+    errors = response.json()["detail"]
 
-    assert invalid_fields == {
+    assert {error["loc"][-1] for error in errors} == {
         "source_task_id",
         "source_goal_id",
         "source_recurring_rule_id",
-        "recurrence_occurrence_date",
     }
+    assert all(
+        error["type"] == "extra_forbidden"
+        for error in errors
+    )
 
+
+@pytest.mark.parametrize(
+    "recurrence_fields",
+    [
+        {"recurring_rule_id": 1},
+        {"recurrence_occurrence_date": "2026-09-16"},
+    ],
+)
+def test_create_task_rejects_incomplete_recurring_identity(
+    isolated_client: TestClient,
+    recurrence_fields: dict[str, object],
+):
+    """Require the schedule ID and occurrence date together."""
+
+    response = isolated_client.post(
+        "/api/v1/tasks",
+        json={
+            "title": "Incomplete recurring task",
+            **recurrence_fields,
+        },
+    )
+
+    assert response.status_code == 422
+    assert any(
+        error["type"] == "value_error"
+        and "must be supplied together" in error["msg"]
+        for error in response.json()["detail"]
+    )
 
 def test_read_task_returns_404_when_missing(
     isolated_client: TestClient,

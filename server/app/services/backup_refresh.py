@@ -67,7 +67,59 @@ def refresh_values(
                 attribute,
             )
 
+    if name == "tasks":
+        # These native links are derived from the preserved source IDs.
+        # Update them together with the task's content and completion
+        # fields. The task's own primary key stays unchanged.
+        values["goal_id"] = candidate.goal_id
+        values["recurring_rule_id"] = candidate.recurring_rule_id
+
     return values
+
+
+def prepare_task_identity_changes(
+    items: list[Any],
+    rows_by_source: dict[Any, Any],
+    internal_ids: dict[str, dict[int, int]],
+    db: Session,
+) -> set[int]:
+    """Release changing occurrence keys before any task claims its new key.
+
+    Only tasks present in this backup are touched. Their PostgreSQL IDs,
+    source task IDs, goal links, and completion history are retained here.
+    The loop below immediately applies their final backup values inside
+    the same locked transaction. A failure rolls back both steps.
+    """
+
+    released_source_ids: set[int] = set()
+    identity_fields = (
+        "source_recurring_rule_id",
+        "recurring_rule_id",
+        "recurrence_occurrence_date",
+    )
+
+    for item in items:
+        row = rows_by_source.get(item.source_task_id)
+        if row is None:
+            continue
+
+        desired = refresh_values("tasks", item, internal_ids)
+        if all(
+            getattr(row, field) == desired[field]
+            for field in identity_fields
+        ):
+            continue
+
+        # Clear the complete identity together to satisfy the pair check.
+        # This also supports exchanging two occurrence keys in one backup.
+        for field in identity_fields:
+            setattr(row, field, None)
+        released_source_ids.add(item.source_task_id)
+
+    if released_source_ids:
+        db.flush()
+
+    return released_source_ids
 
 
 def refresh_backup(
@@ -126,6 +178,16 @@ def refresh_backup(
                     key=lambda item: item.active
                 )
 
+            released_task_ids: set[int] = set()
+            if name == "tasks":
+                released_task_ids = prepare_task_identity_changes(
+                    items, rows_by_source, internal_ids, db
+                )
+                # Apply existing rows before inserting newly generated tasks.
+                items.sort(
+                    key=lambda item: item.source_task_id not in rows_by_source
+                )
+
             for item in items:
                 identity = primary_identity(
                     name,
@@ -168,7 +230,9 @@ def refresh_backup(
                     internal_ids,
                 )
 
-                changed = any(
+                changed = (
+                    name == "tasks" and identity in released_task_ids
+                ) or any(
                     getattr(row, attribute) != value
                     for attribute, value in values.items()
                 )

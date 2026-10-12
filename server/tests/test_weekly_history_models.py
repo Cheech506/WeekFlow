@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import engine
+from test_backup_refresh_api import refresh_client
 from app.models import (
     PlanningCycle,
     Task,
@@ -15,6 +16,19 @@ from app.models import (
     WeeklyReview,
     WeeklyTaskDecision,
 )
+
+
+@pytest.fixture
+def isolated_history_connection(refresh_client):
+    """Use test-owned tables, keeping saved WeekFlow history separate.
+
+    The shared fixture rolls back the schema after each test. Each
+    Session uses a savepoint so its rollback leaves the test tables
+    available for the follow-up reads that verify nothing persisted.
+    """
+
+    _, session = refresh_client
+    return session.get_bind()
 
 
 WEEK_START = date(2026, 9, 21)
@@ -360,7 +374,7 @@ def test_weekly_history_constraints_and_relationships_exist():
     assert decision_task_key["options"]["ondelete"] == "SET NULL"
 
 
-def test_weekly_history_round_trip_without_persisting():
+def test_weekly_history_round_trip_without_persisting(isolated_history_connection):
     """Save linked history, read it, and roll everything back."""
 
     cycle_id = -400
@@ -369,7 +383,10 @@ def test_weekly_history_round_trip_without_persisting():
     commitment_id = -403
     decision_id = -404
 
-    with Session(engine) as session:
+    with Session(
+        bind=isolated_history_connection,
+        join_transaction_mode="create_savepoint",
+    ) as session:
         session.add(
             make_cycle(
                 internal_id=cycle_id,
@@ -453,7 +470,10 @@ def test_weekly_history_round_trip_without_persisting():
 
         session.rollback()
 
-    with Session(engine) as session:
+    with Session(
+        bind=isolated_history_connection,
+        join_transaction_mode="create_savepoint",
+    ) as session:
         assert session.get(WeeklyReview, review_id) is None
         assert session.get(WeeklyCommitment, commitment_id) is None
         assert session.get(WeeklyTaskDecision, decision_id) is None
@@ -467,7 +487,7 @@ def test_weekly_history_round_trip_without_persisting():
         "decision",
     ],
 )
-def test_weekly_source_ids_must_be_unique(model_name: str):
+def test_weekly_source_ids_must_be_unique(model_name: str, isolated_history_connection):
     """Prevent importing the same SQLite history row twice."""
 
     duplicate_source_id = 1_781_204_330_100
@@ -506,7 +526,10 @@ def test_weekly_source_ids_must_be_unique(model_name: str):
             week_start=WEEK_START + timedelta(days=7),
         )
 
-    with Session(engine) as session:
+    with Session(
+        bind=isolated_history_connection,
+        join_transaction_mode="create_savepoint",
+    ) as session:
         session.add_all([first, second])
 
         with pytest.raises(IntegrityError):
@@ -515,10 +538,13 @@ def test_weekly_source_ids_must_be_unique(model_name: str):
         session.rollback()
 
 
-def test_only_one_review_can_exist_for_each_week():
+def test_only_one_review_can_exist_for_each_week(isolated_history_connection):
     """Reject two weekly reviews for the same Monday."""
 
-    with Session(engine) as session:
+    with Session(
+        bind=isolated_history_connection,
+        join_transaction_mode="create_savepoint",
+    ) as session:
         session.add_all(
             [
                 make_review(
@@ -538,12 +564,15 @@ def test_only_one_review_can_exist_for_each_week():
         session.rollback()
 
 
-def test_linked_commitment_identity_must_be_unique():
+def test_linked_commitment_identity_must_be_unique(isolated_history_connection):
     """Reject two commitments for the same task and week."""
 
     task_id = -430
 
-    with Session(engine) as session:
+    with Session(
+        bind=isolated_history_connection,
+        join_transaction_mode="create_savepoint",
+    ) as session:
         session.add(
             make_task(
                 internal_id=task_id,
@@ -573,12 +602,15 @@ def test_linked_commitment_identity_must_be_unique():
         session.rollback()
 
 
-def test_linked_decision_identity_must_be_unique():
+def test_linked_decision_identity_must_be_unique(isolated_history_connection):
     """Reject duplicate decisions for one task, week, and date."""
 
     task_id = -440
 
-    with Session(engine) as session:
+    with Session(
+        bind=isolated_history_connection,
+        join_transaction_mode="create_savepoint",
+    ) as session:
         session.add(
             make_task(
                 internal_id=task_id,
@@ -623,6 +655,7 @@ def test_linked_decision_identity_must_be_unique():
 )
 def test_weekly_review_rejects_invalid_values(
     changes: dict[str, object],
+    isolated_history_connection,
 ):
     """Ensure PostgreSQL rejects inconsistent weekly reviews."""
 
@@ -634,7 +667,10 @@ def test_weekly_review_rejects_invalid_values(
     for field_name, value in changes.items():
         setattr(review, field_name, value)
 
-    with Session(engine) as session:
+    with Session(
+        bind=isolated_history_connection,
+        join_transaction_mode="create_savepoint",
+    ) as session:
         session.add(review)
 
         with pytest.raises(IntegrityError):
@@ -661,6 +697,7 @@ def test_weekly_review_rejects_invalid_values(
 )
 def test_weekly_commitment_rejects_invalid_values(
     changes: dict[str, object],
+    isolated_history_connection,
 ):
     """Ensure PostgreSQL rejects invalid commitments."""
 
@@ -672,7 +709,10 @@ def test_weekly_commitment_rejects_invalid_values(
     for field_name, value in changes.items():
         setattr(commitment, field_name, value)
 
-    with Session(engine) as session:
+    with Session(
+        bind=isolated_history_connection,
+        join_transaction_mode="create_savepoint",
+    ) as session:
         session.add(commitment)
 
         with pytest.raises(IntegrityError):
@@ -709,6 +749,7 @@ def test_weekly_commitment_rejects_invalid_values(
 )
 def test_weekly_decision_rejects_invalid_values(
     changes: dict[str, object],
+    isolated_history_connection,
 ):
     """Ensure PostgreSQL rejects invalid task decisions."""
 
@@ -720,7 +761,10 @@ def test_weekly_decision_rejects_invalid_values(
     for field_name, value in changes.items():
         setattr(decision, field_name, value)
 
-    with Session(engine) as session:
+    with Session(
+        bind=isolated_history_connection,
+        join_transaction_mode="create_savepoint",
+    ) as session:
         session.add(decision)
 
         with pytest.raises(IntegrityError):
@@ -729,7 +773,7 @@ def test_weekly_decision_rejects_invalid_values(
         session.rollback()
 
 
-def test_deleting_parents_preserves_weekly_history():
+def test_deleting_parents_preserves_weekly_history(isolated_history_connection):
     """Clear live links without deleting historical records."""
 
     cycle_id = -480
@@ -738,7 +782,10 @@ def test_deleting_parents_preserves_weekly_history():
     commitment_id = -483
     decision_id = -484
 
-    with Session(engine) as session:
+    with Session(
+        bind=isolated_history_connection,
+        join_transaction_mode="create_savepoint",
+    ) as session:
         cycle = make_cycle(
             internal_id=cycle_id,
             source_id=1_781_204_330_180,

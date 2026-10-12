@@ -8,8 +8,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.database import engine, get_db
-from app.main import app
+from test_backup_refresh_api import refresh_client
 from app.models import (
     BrainDump,
     CycleGoalOutcome,
@@ -43,32 +42,17 @@ from test_backup_import_schemas import (
 
 
 @pytest.fixture
-def isolated_backup_import() -> Generator[
-    tuple[TestClient, Session],
-    None,
-    None,
-]:
-    """Run endpoint commits inside a transaction rolled back by the test."""
+def isolated_backup_import(
+    refresh_client: tuple[TestClient, Session],
+) -> Generator[tuple[TestClient, Session], None, None]:
+    """Use isolated tables and roll back every endpoint write afterward.
 
-    with engine.connect() as connection:
-        outer_transaction = connection.begin()
-        session = Session(
-            bind=connection,
-            join_transaction_mode="create_savepoint",
-        )
+    The shared fixture creates a test-owned schema inside the existing
+    database. Imported WeekFlow records in public cannot collide with
+    test dates or source IDs. Endpoint commits remain savepoints.
+    """
 
-        def override_get_db():
-            yield session
-
-        app.dependency_overrides[get_db] = override_get_db
-
-        try:
-            with TestClient(app) as client:
-                yield client, session
-        finally:
-            app.dependency_overrides.clear()
-            session.close()
-            outer_transaction.rollback()
+    yield refresh_client
 
 
 def test_complete_backup_import_creates_all_relationships(
@@ -82,7 +66,7 @@ def test_complete_backup_import_creates_all_relationships(
         json=make_valid_backup(),
     )
 
-    assert response.status_code == 200
+    assert response.status_code == 200, response.text
     result = response.json()
 
     assert result["total_records"] == 13
@@ -182,6 +166,8 @@ def test_complete_backup_import_creates_all_relationships(
     assert milestone.goal_id == goal.id
     assert template.goal_id == goal.id
     assert rule.goal_id == goal.id
+    assert task.goal_id == goal.id
+    assert task.recurring_rule_id == rule.id
     assert task.source_goal_id == GOAL_ID
     assert task.source_recurring_rule_id == RECURRING_RULE_ID
     assert weekly_review.cycle_id == cycle.id
@@ -211,8 +197,8 @@ def test_complete_backup_import_is_idempotent(
         json=backup,
     )
 
-    assert first_response.status_code == 200
-    assert retry_response.status_code == 200
+    assert first_response.status_code == 200, first_response.text
+    assert retry_response.status_code == 200, retry_response.text
 
     result = retry_response.json()
 
@@ -238,7 +224,7 @@ def test_complete_backup_conflict_creates_nothing(
         "/api/v1/backups/import",
         json=backup,
     )
-    assert first_response.status_code == 200
+    assert first_response.status_code == 200, first_response.text
 
     changed_backup = deepcopy(backup)
     data = changed_backup["data"]

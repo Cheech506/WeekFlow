@@ -134,3 +134,86 @@ export async function importBackupMigration(
 
   return data;
 }
+
+/** Summary returned after adding and updating a complete SQLite backup. */
+export type BackupRefreshResult = BackupImportResult & {
+  updated_count: number;
+  updated_counts: BackupImportCounts;
+  refresh_completed: true;
+};
+
+function isBackupRefreshResult(
+  value: unknown
+): value is BackupRefreshResult {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  const { updated_count, updated_counts, refresh_completed } = value;
+
+  return (
+    isBackupImportResult(value) &&
+    isNonNegativeInteger(updated_count) &&
+    isBackupImportCounts(updated_counts) &&
+    refresh_completed === true &&
+    value.total_records ===
+      value.created_count +
+        updated_count +
+        value.already_imported_count
+  );
+}
+
+/**
+ * Add new records and update matching records to their SQLite values.
+ * PostgreSQL primary keys stay unchanged. The screen must confirm this
+ * action before calling it. Records absent from the backup are retained.
+ */
+export async function refreshBackupMigration(
+  baseUrl: string,
+  backup: WeekFlowBackup
+): Promise<BackupRefreshResult> {
+  const normalizedBaseUrl =
+    baseUrl.trim().replace(/\/+$/, '');
+
+  const response = await fetch(
+    `${normalizedBaseUrl}/api/v1/backups/import/refresh`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(backup),
+    }
+  );
+
+  if (!response.ok) {
+    const fallback =
+      `Backup migration refresh returned ${response.status}`;
+    let message = fallback;
+
+    try {
+      const errorBody: unknown = await response.json();
+      if (
+        isRecord(errorBody) &&
+        isRecord(errorBody.detail) &&
+        typeof errorBody.detail.message === 'string'
+      ) {
+        message = `${fallback}: ${errorBody.detail.message}`;
+      }
+    } catch {
+      // Keep the HTTP status when the server returns a non-JSON error.
+    }
+
+    throw new Error(message);
+  }
+
+  const data: unknown = await response.json();
+
+  if (!isBackupRefreshResult(data)) {
+    throw new Error(
+      'Backup migration refresh returned an invalid response'
+    );
+  }
+
+  return data;
+}

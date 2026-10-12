@@ -1,5 +1,5 @@
 import { Stack } from 'expo-router';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   Alert,
   Platform,
@@ -11,8 +11,8 @@ import {
 import { Text, View } from '@/components/Themed';
 import { useTasks } from '@/context/TaskContext';
 import {
-  importBackupMigration,
-  type BackupImportResult,
+  refreshBackupMigration,
+  type BackupRefreshResult,
 } from '@/lib/backupMigrationApi';
 import { buildWeekFlowBackup } from '@/lib/backupStorage';
 import {
@@ -24,10 +24,13 @@ import {
   type TaskMigrationPreview,
 } from '@/lib/taskMigrationApi';
 
-function confirmCompleteMigration(): Promise<boolean> {
+function confirmCompleteRefresh(): Promise<boolean> {
   const message =
-    'Copy all current WeekFlow SQLite data to PostgreSQL? ' +
-    'This does not delete the SQLite data.';
+    'Add new WeekFlow records and overwrite matching PostgreSQL records ' +
+    'with this device’s current SQLite values? This includes task ' +
+    'completion, goal links, schedules, and reviews. ' +
+    'Existing PostgreSQL IDs stay the same. SQLite data and PostgreSQL ' +
+    'records absent from this backup will not be deleted.';
 
   if (Platform.OS === 'web') {
     return Promise.resolve(
@@ -37,7 +40,7 @@ function confirmCompleteMigration(): Promise<boolean> {
 
   return new Promise((resolve) => {
     Alert.alert(
-      'Import WeekFlow data?',
+      'Update PostgreSQL from this device?',
       message,
       [
         {
@@ -46,7 +49,7 @@ function confirmCompleteMigration(): Promise<boolean> {
           onPress: () => resolve(false),
         },
         {
-          text: 'Import',
+          text: 'Import and update',
           style: 'destructive',
           onPress: () => resolve(true),
         },
@@ -79,11 +82,11 @@ export default function ServerTasksScreen() {
   const [previewError, setPreviewError] =
     useState<string | null>(null);
 
-  const [backupImportResult, setBackupImportResult] =
-    useState<BackupImportResult | null>(null);
-  const [backupImportLoading, setBackupImportLoading] =
+  const [backupRefreshResult, setBackupRefreshResult] =
+    useState<BackupRefreshResult | null>(null);
+  const [backupRefreshLoading, setBackupRefreshLoading] =
     useState(false);
-  const [backupImportError, setBackupImportError] =
+  const [backupRefreshError, setBackupRefreshError] =
     useState<string | null>(null);
 
   async function loadServerTasks() {
@@ -156,52 +159,73 @@ export default function ServerTasksScreen() {
     }
   }
 
-  async function runCompleteBackupImport() {
-    const baseUrl =
-      process.env.EXPO_PUBLIC_API_BASE_URL;
+  const refreshInProgress = useRef(false);
+
+  async function runCompleteBackupRefresh() {
+    if (
+      refreshInProgress.current ||
+      localTasksLoading ||
+      previewLoading ||
+      serverTasksLoading
+    ) {
+      return;
+    }
+
+    const baseUrl = process.env.EXPO_PUBLIC_API_BASE_URL;
 
     if (!baseUrl) {
-      setBackupImportError(
+      setBackupRefreshError(
         'The API address is missing from .env.local.'
       );
       return;
     }
 
-    const confirmed =
-      await confirmCompleteMigration();
-
-    if (!confirmed) {
-      return;
-    }
-
-    setBackupImportLoading(true);
-    setBackupImportError(null);
-    setBackupImportResult(null);
+    // Guard both the confirmation and request against repeated taps.
+    refreshInProgress.current = true;
 
     try {
-      const backup = await buildWeekFlowBackup();
+      const confirmed = await confirmCompleteRefresh();
 
-      setBackupImportResult(
-        await importBackupMigration(
-          baseUrl,
-          backup
-        )
-      );
+      if (!confirmed) {
+        return;
+      }
+
+      setBackupRefreshLoading(true);
+      setBackupRefreshError(null);
+      setBackupRefreshResult(null);
+
+      const backup = await buildWeekFlowBackup();
+      const result = await refreshBackupMigration(baseUrl, backup);
+      setBackupRefreshResult(result);
+
+      // Earlier comparisons and task lists describe the old server data.
+      setPreview(null);
+      setPreviewError(null);
+      setServerTasks(null);
+      setServerTasksError(null);
     } catch (caught) {
-      setBackupImportError(
+      setBackupRefreshError(
         caught instanceof Error
           ? caught.message
-          : 'Could not import WeekFlow data.'
+          : 'Could not update PostgreSQL from this device.'
       );
     } finally {
-      setBackupImportLoading(false);
+      setBackupRefreshLoading(false);
+      refreshInProgress.current = false;
     }
   }
 
   const previewDisabled =
     previewLoading ||
+    backupRefreshLoading ||
     localTasksLoading ||
     localTasks.length === 0;
+
+  const backupRefreshDisabled =
+    backupRefreshLoading ||
+    localTasksLoading ||
+    previewLoading ||
+    serverTasksLoading;
 
   return (
     <>
@@ -344,7 +368,7 @@ export default function ServerTasksScreen() {
                       preview.conflict_count === 1
                         ? ''
                         : 's'
-                    } must be resolved first.`}
+                    } were found. Refresh below can replace changed values with this device's values; duplicates and invalid links still require correction.`}
               </Text>
 
               {preview.conflict_source_task_ids.length >
@@ -366,46 +390,47 @@ export default function ServerTasksScreen() {
 
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>
-            Complete PostgreSQL import
+            Import and update PostgreSQL
           </Text>
 
           <Text style={styles.sectionText}>
-            Copy this device&apos;s current tasks, goals,
-            cycles, schedules, reviews, and other WeekFlow
-            data from SQLite into PostgreSQL. SQLite remains
-            unchanged.
+            Add new tasks, goals, cycles, schedules, reviews,
+            and other WeekFlow records. Overwrite matching
+            PostgreSQL records with this device&apos;s current
+            SQLite values, including completion status.
+            Existing PostgreSQL IDs stay the same.
           </Text>
 
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Import all WeekFlow data into PostgreSQL"
-            disabled={backupImportLoading}
+            accessibilityLabel="Import and update PostgreSQL from this device"
+            disabled={backupRefreshDisabled}
             onPress={() => {
-              void runCompleteBackupImport();
+              void runCompleteBackupRefresh();
             }}
             style={[
               styles.importButton,
-              backupImportLoading &&
+              backupRefreshDisabled &&
                 styles.disabledButton,
             ]}
           >
             <Text style={styles.importButtonText}>
-              {backupImportLoading
-                ? 'Importing...'
-                : 'Import all data to PostgreSQL'}
+              {backupRefreshLoading
+                ? 'Updating PostgreSQL...'
+                : 'Import and update from this device'}
             </Text>
           </Pressable>
 
-          {backupImportError ? (
+          {backupRefreshError ? (
             <Text style={styles.errorText}>
-              {backupImportError}
+              {backupRefreshError}
             </Text>
           ) : null}
 
-          {backupImportResult ? (
+          {backupRefreshResult ? (
             <View style={styles.previewCard}>
               <Text style={styles.resultTitle}>
-                Import completed
+                PostgreSQL update completed
               </Text>
 
               <View style={styles.metricGrid}>
@@ -414,7 +439,7 @@ export default function ServerTasksScreen() {
                     Records checked
                   </Text>
                   <Text style={styles.metricValue}>
-                    {backupImportResult.total_records}
+                    {backupRefreshResult.total_records}
                   </Text>
                 </View>
 
@@ -423,17 +448,26 @@ export default function ServerTasksScreen() {
                     Created
                   </Text>
                   <Text style={styles.metricValue}>
-                    {backupImportResult.created_count}
+                    {backupRefreshResult.created_count}
                   </Text>
                 </View>
 
                 <View style={styles.metricCard}>
                   <Text style={styles.metricLabel}>
-                    Already imported
+                    Updated
+                  </Text>
+                  <Text style={styles.metricValue}>
+                    {backupRefreshResult.updated_count}
+                  </Text>
+                </View>
+
+                <View style={styles.metricCard}>
+                  <Text style={styles.metricLabel}>
+                    Unchanged
                   </Text>
                   <Text style={styles.metricValue}>
                     {
-                      backupImportResult
+                      backupRefreshResult
                         .already_imported_count
                     }
                   </Text>
@@ -441,13 +475,13 @@ export default function ServerTasksScreen() {
               </View>
 
               <Text style={styles.successText}>
-                {backupImportResult.database_changed
-                  ? 'New records were added to PostgreSQL.'
-                  : 'All records were already in PostgreSQL.'}
+                {backupRefreshResult.database_changed
+                  ? 'New and changed records were saved to PostgreSQL.'
+                  : 'No changes were needed. All backup records already match PostgreSQL.'}
               </Text>
 
               <Text style={styles.safetyText}>
-                SQLite data was not deleted.
+                SQLite data was not deleted. Existing PostgreSQL IDs were preserved.
               </Text>
             </View>
           ) : null}
@@ -464,13 +498,13 @@ export default function ServerTasksScreen() {
 
           <Pressable
             accessibilityRole="button"
-            disabled={serverTasksLoading}
+            disabled={serverTasksLoading || backupRefreshLoading}
             onPress={() => {
               void loadServerTasks();
             }}
             style={[
               styles.secondaryButton,
-              serverTasksLoading &&
+              (serverTasksLoading || backupRefreshLoading) &&
                 styles.disabledButton,
             ]}
           >

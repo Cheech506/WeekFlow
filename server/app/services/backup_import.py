@@ -4,7 +4,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -533,7 +534,59 @@ def model_from_backup_item(
 
         values[field_name] = value
 
+    if name == "tasks":
+        # Complete backups validate these parents and import them first.
+        # Keep source metadata while adding the PostgreSQL relationships.
+        # Use the task's saved goal, never its schedule's current goal.
+        values["goal_id"] = (
+            internal_ids["goals"][item.source_goal_id]
+            if item.source_goal_id is not None
+            else None
+        )
+        values["recurring_rule_id"] = (
+            internal_ids["recurring_rules"][item.source_recurring_rule_id]
+            if item.source_recurring_rule_id is not None
+            else None
+        )
+
     return MODELS[name](**values)
+
+
+def reconnect_task_relationships(
+    plan: BackupImportPlan,
+    internal_ids: dict[str, dict[int, int]],
+) -> bool:
+    """Fill missing task links after their parents have been imported.
+
+    Preserve any existing PostgreSQL relationship, the task's primary
+    key, its source metadata, and its saved completion history.
+    """
+
+    stored_tasks = {
+        row.source_task_id: row
+        for row in plan.stored_rows["tasks"]
+    }
+    links_changed = False
+
+    for item in plan.collections["tasks"].already_imported:
+        row = stored_tasks[item.source_task_id]
+        mapped_task = model_from_backup_item(
+            name="tasks",
+            item=item,
+            internal_ids=internal_ids,
+        )
+
+        for field_name in ("goal_id", "recurring_rule_id"):
+            expected_id = getattr(mapped_task, field_name)
+
+            if (
+                getattr(row, field_name) is None
+                and expected_id is not None
+            ):
+                setattr(row, field_name, expected_id)
+                links_changed = True
+
+    return links_changed
 
 
 def import_backup(
@@ -543,6 +596,17 @@ def import_backup(
     """Import a complete backup atomically and make retries safe."""
 
     try:
+        # These names come from our models, never from the backup.
+        # Match the lock order used by backup refresh and other writes.
+        table_names = ", ".join(
+            f'"{MODELS[name].__tablename__}"'
+            for name in sorted(MODELS)
+        )
+        db.execute(text(
+            f"LOCK TABLE {table_names} "
+            "IN SHARE ROW EXCLUSIVE MODE"
+        ))
+
         plan = build_backup_import_plan(
             backup=backup,
             db=db,
@@ -566,6 +630,8 @@ def import_backup(
             plan.stored_rows
         )
 
+        # Create parents before children so every imported relationship
+        # uses the parent's PostgreSQL ID, not its SQLite source ID.
         for name in IMPORT_ORDER:
             rows = [
                 model_from_backup_item(
@@ -592,7 +658,22 @@ def import_backup(
                     }
                 )
 
+        # Tasks imported before their parents can now receive missing
+        # links. Exact retries retain the same task IDs and content.
+        links_changed = reconnect_task_relationships(
+            plan=plan,
+            internal_ids=internal_ids,
+        )
         db.commit()
+
+    except IntegrityError as error:
+        db.rollback()
+        raise BackupImportConflictError({
+            "database": [
+                "Import would violate a uniqueness or relationship "
+                "constraint. No changes were saved."
+            ],
+        }) from error
 
     except Exception:
         db.rollback()
@@ -611,5 +692,5 @@ def import_backup(
         already_imported_counts=already_imported_counts,
         validation_passed=True,
         import_completed=True,
-        database_changed=created_count > 0,
+        database_changed=created_count > 0 or links_changed,
     )

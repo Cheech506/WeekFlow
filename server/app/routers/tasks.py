@@ -1,25 +1,28 @@
-"""API routes for WeekFlow tasks."""
-# UTC gives timestamps an explicit universal timezone.
-# datetime creates the exact time when a task is completed.
+"""API routes for tasks, relationships, and SQLite task imports."""
+
 from datetime import UTC, datetime
 
-# FastAPI tools used by these task routes.
 from fastapi import (
     APIRouter,
     Depends,
     HTTPException,
+    Query,
     Response,
     status,
 )
-# select builds SELECT queries in Python.
-from sqlalchemy import select
-
-# Session represents one conversation with PostgreSQL.
+from sqlalchemy import and_, or_, select, text
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import API_PREFIX
 from app.database import get_db
-from app.models import Task
+from app.models import (
+    Goal,
+    RecurringOccurrenceException,
+    RecurringRule,
+    Task,
+)
 from app.schemas import (
     TaskCreate,
     TaskImportPreviewResult,
@@ -34,13 +37,89 @@ from app.services import (
     preview_task_import,
 )
 
-# Every endpoint in this router will begin with /api/v1/tasks.
-#
-# The "tasks" tag also groups these endpoints together in Swagger.
+
 router = APIRouter(
     prefix=f"{API_PREFIX}/tasks",
     tags=["tasks"],
 )
+
+
+def lock_task_writes(db: Session) -> None:
+    """Coordinate task changes with imports and goal snapshots."""
+
+    db.execute(text(
+        "LOCK TABLE goals, recurring_occurrence_exceptions, "
+        "recurring_rules, tasks "
+        "IN SHARE ROW EXCLUSIVE MODE"
+    ))
+
+
+def require_task(
+    db: Session,
+    task_id: int,
+    *,
+    for_update: bool = False,
+) -> Task:
+    """Find a task or return 404."""
+
+    statement = select(Task).where(
+        Task.id == task_id
+    )
+
+    if for_update:
+        statement = (
+            statement
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+
+    task = db.scalar(statement)
+
+    if task is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Task not found",
+        )
+
+    return task
+
+
+def goal_values(
+    db: Session,
+    goal_id: int | None,
+) -> dict:
+    """Validate the goal and keep migration metadata consistent."""
+
+    if goal_id is None:
+        return {
+            "goal_id": None,
+            "source_goal_id": None,
+        }
+
+    goal = db.get(Goal, goal_id)
+
+    if goal is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Goal not found.",
+        )
+
+    return {
+        "goal_id": goal.id,
+        "source_goal_id": goal.source_goal_id,
+    }
+
+
+def write_conflict() -> HTTPException:
+    """Return a safe message after a database constraint fails."""
+
+    return HTTPException(
+        status_code=409,
+        detail=(
+            "The task would duplicate a recurring occurrence "
+            "or violate a relationship. No changes were saved."
+        ),
+    )
 
 
 @router.post(
@@ -52,68 +131,154 @@ def create_task(
     task_data: TaskCreate,
     db: Session = Depends(get_db),
 ) -> Task:
-    """
-    Validate, save, and return one new task.
+    """Create a task using PostgreSQL parent IDs."""
 
-    FastAPI converts the incoming JSON into TaskCreate before this
-    function runs. Invalid requests never reach this function.
-    """
+    try:
+        lock_task_writes(db)
 
-    # A task without a due date belongs in Inbox.
-    #
-    # If it has a due date, strftime("%A") returns the weekday name.
-    # For example, 2026-09-10 becomes "Thursday".
-    day = (
-        task_data.due_date.strftime("%A")
-        if task_data.due_date is not None
-        else "Inbox"
-    )
+        values = task_data.model_dump()
 
-    # Convert the validated API data into a SQLAlchemy Task object.
-    #
-    # We do not provide id, completed, or created_at because
-    # SQLAlchemy/PostgreSQL supply their configured defaults.
-    task = Task(
-        title=task_data.title,
-        day=day,
-        due_date=task_data.due_date,
-        notes=task_data.notes or None,
-        priority=task_data.priority,
-    )
+        values["notes"] = task_data.notes or None
 
-    # Stage the new Task inside this database session.
-    db.add(task)
+        values["day"] = (
+            task_data.due_date.strftime("%A")
+            if task_data.due_date is not None
+            else "Inbox"
+        )
 
-    # Permanently send the INSERT to PostgreSQL.
-    db.commit()
+        goal_id = task_data.goal_id
 
-    # Reload the row so PostgreSQL-generated values such as id and
-    # created_at are available for the response.
+        if task_data.recurring_rule_id is not None:
+            rule = db.get(
+                RecurringRule,
+                task_data.recurring_rule_id,
+            )
+
+            if rule is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Recurring rule not found.",
+                )
+
+            skipped_occurrence = db.get(
+                RecurringOccurrenceException,
+                (
+                    rule.id,
+                    task_data.recurrence_occurrence_date,
+                ),
+            )
+
+            if skipped_occurrence is not None:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "This recurring occurrence "
+                        "was skipped or deleted."
+                    ),
+                )
+
+            values["source_recurring_rule_id"] = (
+                rule.source_recurring_rule_id
+            )
+
+            # Inherit the schedule's goal only when creating the task.
+            # Explicit goal_id=null means the task should be unlinked.
+            if "goal_id" not in task_data.model_fields_set:
+                goal_id = rule.goal_id
+
+        values.update(
+            goal_values(db, goal_id)
+        )
+
+        task = Task(**values)
+
+        db.add(task)
+        db.commit()
+
+    except IntegrityError as error:
+        db.rollback()
+        raise write_conflict() from error
+
+    except Exception:
+        db.rollback()
+        raise
+
     db.refresh(task)
-
-    # FastAPI passes this SQLAlchemy object through TaskRead and
-    # converts it into response JSON.
     return task
+
 
 @router.get(
     "",
     response_model=list[TaskRead],
 )
 def read_tasks(
+    goal_id: int | None = Query(
+        default=None,
+        gt=0,
+        le=2_147_483_647,
+    ),
+    recurring_rule_id: int | None = Query(
+        default=None,
+        gt=0,
+        le=2_147_483_647,
+    ),
     db: Session = Depends(get_db),
 ) -> list[Task]:
-    """Return every task, with the newest tasks first."""
+    """Read tasks, optionally filtered by goal or recurring schedule."""
 
-    # Build the SQLAlchemy version of:
-    # SELECT * FROM tasks ORDER BY created_at DESC, id DESC;
-    statement = select(Task).order_by(
+    statement = select(Task)
+
+    if goal_id is not None:
+        goal = db.get(Goal, goal_id)
+
+        link = Task.goal_id == goal_id
+
+        # Support older imports whose native link is not mapped yet.
+        if goal is not None and goal.source_goal_id is not None:
+            link = or_(
+                link,
+                and_(
+                    Task.goal_id.is_(None),
+                    Task.source_goal_id == goal.source_goal_id,
+                ),
+            )
+
+        statement = statement.where(link)
+
+    if recurring_rule_id is not None:
+        rule = db.get(
+            RecurringRule,
+            recurring_rule_id,
+        )
+
+        link = (
+            Task.recurring_rule_id == recurring_rule_id
+        )
+
+        if (
+            rule is not None
+            and rule.source_recurring_rule_id is not None
+        ):
+            link = or_(
+                link,
+                and_(
+                    Task.recurring_rule_id.is_(None),
+                    Task.source_recurring_rule_id
+                    == rule.source_recurring_rule_id,
+                ),
+            )
+
+        statement = statement.where(link)
+
+    statement = statement.order_by(
         Task.created_at.desc(),
         Task.id.desc(),
     )
 
-    # Execute the SELECT and return all matching Task objects.
-    # FastAPI converts each object through TaskRead.
-    return list(db.scalars(statement).all())
+    return list(
+        db.scalars(statement).all()
+    )
+
 
 @router.post(
     "/import/preview",
@@ -123,11 +288,7 @@ def preview_task_import_batch(
     task_data: TaskImportRequest,
     db: Session = Depends(get_db),
 ) -> TaskImportPreviewResult:
-    """
-    Preview a SQLite task migration without changing PostgreSQL.
-
-    The service performs SELECT queries only.
-    """
+    """Compare SQLite tasks without changing PostgreSQL."""
 
     return preview_task_import(
         task_data=task_data,
@@ -143,12 +304,7 @@ def import_task_batch(
     task_data: TaskImportRequest,
     db: Session = Depends(get_db),
 ) -> TaskImportResult:
-    """
-    Import one validated batch of SQLite tasks into PostgreSQL.
-
-    An identical retry is safe and returns unchanged mappings.
-    Changed data using an existing source ID returns HTTP 409.
-    """
+    """Import tasks atomically and detect conflicting retries."""
 
     try:
         return import_tasks(
@@ -158,15 +314,16 @@ def import_task_batch(
 
     except TaskImportConflictError as error:
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
+            status_code=409,
             detail={
                 "message": (
-                    "One or more source task IDs already exist "
-                    "with different data."
+                    "One or more source task IDs already "
+                    "exist with different data."
                 ),
                 "source_task_ids": error.source_task_ids,
             },
         ) from error
+
 
 @router.get(
     "/{task_id}",
@@ -176,19 +333,10 @@ def read_task(
     task_id: int,
     db: Session = Depends(get_db),
 ) -> Task:
-    """Return one task using its unique ID."""
+    """Read a task using its PostgreSQL ID."""
 
-    # PostgreSQL searches the tasks primary key for task_id.
-    task = db.get(Task, task_id)
+    return require_task(db, task_id)
 
-    # A missing resource should produce 404 Not Found.
-    if task is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Task not found",
-        )
-
-    return task
 
 @router.patch(
     "/{task_id}",
@@ -199,76 +347,64 @@ def update_task(
     task_data: TaskUpdate,
     db: Session = Depends(get_db),
 ) -> Task:
-    """
-    Change only the supplied fields on one existing task.
+    """Edit this task while preserving its recurrence identity."""
 
-    PATCH is a partial update. Fields missing from the request keep
-    their current PostgreSQL values.
-    """
+    try:
+        lock_task_writes(db)
 
-    # First, retrieve the existing task using its primary-key ID.
-    task = db.get(Task, task_id)
-
-    # We cannot update a task that does not exist.
-    if task is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Task not found",
+        task = require_task(
+            db,
+            task_id,
+            for_update=True,
         )
 
-    # Convert TaskUpdate into a dictionary containing only fields
-    # that the client actually included in the PATCH request.
-    #
-    # Example:
-    # {"priority": 2}
-    #
-    # Without exclude_unset=True, omitted fields would appear as None
-    # and could accidentally erase existing values.
-    changes = task_data.model_dump(
-        exclude_unset=True,
-    )
-
-    # WeekFlow derives day from due_date, so they must change together.
-    if "due_date" in changes:
-        due_date = changes["due_date"]
-
-        changes["day"] = (
-            due_date.strftime("%A")
-            if due_date is not None
-            else "Inbox"
+        changes = task_data.model_dump(
+            exclude_unset=True,
         )
 
-    # Keep completed and completed_at synchronized.
-    if "completed" in changes:
-        completed = changes["completed"]
+        if "goal_id" in changes:
+            changes.update(
+                goal_values(
+                    db,
+                    changes["goal_id"],
+                )
+            )
 
-        # Set the completion time only when an incomplete task becomes complete.
-        if completed and not task.completed:
-            changes["completed_at"] = datetime.now(UTC)
+        if "due_date" in changes:
+            due_date = changes["due_date"]
 
-        # Reopening a task removes its old completion time.
-        elif not completed:
-            changes["completed_at"] = None
+            changes["day"] = (
+                due_date.strftime("%A")
+                if due_date is not None
+                else "Inbox"
+            )
 
-    # Apply every supplied change to the SQLAlchemy Task object.
-    #
-    # setattr(task, "priority", 2) is the dynamic equivalent of:
-    # task.priority = 2
-    for field_name, value in changes.items():
-        setattr(
-            task,
-            field_name,
-            value,
-        )
+        if "completed" in changes:
+            if changes["completed"] and not task.completed:
+                changes["completed_at"] = datetime.now(UTC)
 
-    # Permanently save the UPDATE in PostgreSQL.
-    db.commit()
+            elif not changes["completed"]:
+                changes["completed_at"] = None
 
-    # Reload the saved row before constructing the API response.
+        if "notes" in changes:
+            changes["notes"] = changes["notes"] or None
+
+        for field_name, value in changes.items():
+            setattr(task, field_name, value)
+
+        db.commit()
+
+    except IntegrityError as error:
+        db.rollback()
+        raise write_conflict() from error
+
+    except Exception:
+        db.rollback()
+        raise
+
     db.refresh(task)
-
-    # TaskRead converts the SQLAlchemy object into response JSON.
     return task
+
 
 @router.delete(
     "/{task_id}",
@@ -278,30 +414,57 @@ def delete_task(
     task_id: int,
     db: Session = Depends(get_db),
 ) -> Response:
-    """Permanently remove one task from PostgreSQL."""
+    """Delete a task and preserve a skip record for recurring work."""
 
-    # Find the task before attempting to delete it.
-    task = db.get(Task, task_id)
+    try:
+        lock_task_writes(db)
 
-    # We cannot delete a task that does not exist.
-    if task is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Task not found",
+        task = require_task(
+            db,
+            task_id,
+            for_update=True,
         )
 
-    # Mark this SQLAlchemy Task object for deletion.
-    #
-    # This has not permanently changed PostgreSQL yet.
-    db.delete(task)
+        rule_id = task.recurring_rule_id
 
-    # Send the DELETE operation to PostgreSQL permanently.
-    db.commit()
+        # Resolve older source-only imports when their schedule exists.
+        if (
+            rule_id is None
+            and task.source_recurring_rule_id is not None
+        ):
+            rule_id = db.scalar(
+                select(RecurringRule.id).where(
+                    RecurringRule.source_recurring_rule_id
+                    == task.source_recurring_rule_id
+                )
+            )
 
-    # HTTP 204 means:
-    # "The operation succeeded, but there is no response body."
-    #
-    # There is no task JSON to return because the task no longer exists.
+        if (
+            rule_id is not None
+            and task.recurrence_occurrence_date is not None
+        ):
+            # Save the exception and delete the task in one transaction.
+            # A future scheduler must respect this skipped occurrence.
+            db.execute(
+                insert(RecurringOccurrenceException)
+                .values(
+                    recurring_rule_id=rule_id,
+                    occurrence_date=task.recurrence_occurrence_date,
+                )
+                .on_conflict_do_nothing()
+            )
+
+        db.delete(task)
+        db.commit()
+
+    except IntegrityError as error:
+        db.rollback()
+        raise write_conflict() from error
+
+    except Exception:
+        db.rollback()
+        raise
+
     return Response(
         status_code=status.HTTP_204_NO_CONTENT,
     )

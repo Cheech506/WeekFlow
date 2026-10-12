@@ -3,7 +3,7 @@
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response, status
-from sqlalchemy import false, func, select, text, update
+from sqlalchemy import and_, func, or_, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -17,6 +17,23 @@ router = APIRouter(
     prefix=f"{API_PREFIX}/goals",
     tags=["goals"],
 )
+
+
+def task_goal_link(goal: Goal):
+    """Match a task's PostgreSQL goal, with fallback for older imports."""
+
+    link = Task.goal_id == goal.id
+
+    if goal.source_goal_id is not None:
+        link = or_(
+            link,
+            and_(
+                Task.goal_id.is_(None),
+                Task.source_goal_id == goal.source_goal_id,
+            ),
+        )
+
+    return link
 
 
 @router.get("", response_model=list[GoalRead])
@@ -203,12 +220,11 @@ def delete_goal(
                 detail="This goal has saved completion history and cannot be deleted.",
             )
 
-        if goal.source_goal_id is not None:
-            db.execute(
-                update(Task)
-                .where(Task.source_goal_id == goal.source_goal_id)
-                .values(source_goal_id=None)
-            )
+        db.execute(
+            update(Task)
+            .where(task_goal_link(goal))
+            .values(goal_id=None, source_goal_id=None)
+        )
 
         # Existing foreign keys delete child milestones and clear goal
         # links on schedules, templates, and saved cycle outcomes.
@@ -257,13 +273,8 @@ def complete_goal(
 
         # Repeating a successful request must not replace its saved history.
         if not goal.completed:
-            # Tasks currently retain their SQLite goal link. Never compare
-            # those source IDs with PostgreSQL's generated goal IDs.
-            task_link = (
-                Task.source_goal_id == goal.source_goal_id
-                if goal.source_goal_id is not None
-                else false()
-            )
+            # Use each task's own goal, not its schedule's current goal.
+            task_link = task_goal_link(goal)
             task_total, task_completed, high_priority_completed = db.execute(
                 select(
                     func.count(Task.id),

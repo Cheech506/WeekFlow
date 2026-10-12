@@ -14,6 +14,7 @@ from app.models import Task
 EXPECTED_TASK_COLUMNS = {
     "id",
     "goal_id",
+    "recurring_rule_id",
     "source_task_id",
     "source_goal_id",
     "source_recurring_rule_id",
@@ -81,6 +82,16 @@ def test_tasks_table_matches_model():
 
     assert "uq_tasks_source_task_id" in unique_names
     assert "uq_tasks_source_recurring_occurrence" in unique_names
+    assert "uq_tasks_recurring_occurrence" in unique_names
+
+    foreign_keys = {
+        tuple(constraint["constrained_columns"]): constraint
+        for constraint in inspector.get_foreign_keys(Task.__tablename__)
+    }
+    assert foreign_keys[("goal_id",)]["referred_table"] == "goals"
+    assert foreign_keys[("goal_id",)]["options"]["ondelete"] == "SET NULL"
+    assert foreign_keys[("recurring_rule_id",)]["referred_table"] == "recurring_rules"
+    assert foreign_keys[("recurring_rule_id",)]["options"]["ondelete"] == "RESTRICT"
 
     indexes = {
         index["name"]: index["column_names"]
