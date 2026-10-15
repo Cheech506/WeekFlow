@@ -41,6 +41,19 @@ from app.schemas.goal_milestone import (
     GoalMilestoneRead,
     GoalMilestoneUpdate,
 )
+from app.schemas.recurrence_generation import (
+    RecurrenceGenerationRead,
+    RecurrenceGenerationRequest,
+)
+from app.schemas.recurring_exception import (
+    RecurringExceptionCreate,
+    RecurringExceptionRead,
+)
+from app.schemas.recurring_rule import (
+    RecurringRuleCreate,
+    RecurringRuleRead,
+    RecurringRuleUpdate,
+)
 from app.schemas.task import TaskCreate, TaskRead, TaskUpdate
 from app.schemas.task_import import (
     TaskImportItem,
@@ -54,9 +67,6 @@ __all__ = [
     "BackupImportCounts",
     "BackupImportPreviewResult",
     "BackupImportResult",
-    "BackupBrainDumpItem",
-    "BackupCycleGoalOutcomeItem",
-    "BackupCycleReviewItem",
     "BackupBrainDumpItem",
     "BackupCycleGoalOutcomeItem",
     "BackupCycleReviewItem",
@@ -80,6 +90,13 @@ __all__ = [
     "PlanningCycleCreate",
     "PlanningCycleRead",
     "PlanningCycleUpdate",
+    "RecurrenceGenerationRead",
+    "RecurrenceGenerationRequest",
+    "RecurringExceptionCreate",
+    "RecurringExceptionRead",
+    "RecurringRuleCreate",
+    "RecurringRuleRead",
+    "RecurringRuleUpdate",
     "TaskCreate",
     "TaskImportItem",
     "TaskImportMapping",

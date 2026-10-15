@@ -2,7 +2,7 @@
 
 WeekFlow’s backend uses Python, FastAPI, Pydantic, SQLAlchemy, Psycopg, PostgreSQL, Alembic, and Docker Compose.
 
-The API supports everyday operations for tasks, planning cycles, goals, and goal milestones. Complete-backup tools validate, preview, import, and refresh all 13 supported record collections, including recurring schedules and review history.
+The API supports everyday operations for tasks, planning cycles, goals, goal milestones, recurring schedules, and skipped occurrences. It also generates missing recurring tasks transactionally. Complete-backup tools validate, preview, import, and refresh all 13 supported record collections, including recurring schedules and review history.
 
 **Current app storage:** WeekFlow still uses SQLite for everyday activity. The app’s Task API tools screen can read server tasks and copy or refresh the device’s current data into PostgreSQL. Real WeekFlow data has been imported and refreshed successfully. This migration does not switch the main app to PostgreSQL or enable automatic synchronization.
 
@@ -130,6 +130,29 @@ Cycle creation currently calculates a 12-week period: `end_date = start_date + 8
 
 Completing a goal saves task and milestone totals without completing unfinished tasks. Reopening retains the saved reflections and totals; completing again recalculates the totals. Goals with completion history cannot be deleted. Deleting an eligible goal removes its milestones and clears the applicable goal links on retained records.
 
+### Recurring schedules and exceptions
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/api/v1/recurring-rules` | Read schedules, optionally filtered by `goal_id` and `active` |
+| `POST` | `/api/v1/recurring-rules` | Create a recurring schedule |
+| `GET` | `/api/v1/recurring-rules/{rule_id}` | Read one schedule |
+| `PATCH` | `/api/v1/recurring-rules/{rule_id}` | Edit details and goal links, or pause/resume a schedule |
+| `DELETE` | `/api/v1/recurring-rules/{rule_id}` | Delete using `stopOnly` or `deleteUnfinished` mode |
+| `POST` | `/api/v1/recurring-rules/generate` | Create missing occurrences for one schedule or all schedules |
+| `GET` | `/api/v1/recurring-exceptions` | Read skips, optionally filtered by `recurring_rule_id` and `occurrence_date` |
+| `POST` | `/api/v1/recurring-exceptions` | Skip an occurrence that has no task; identical retries return the existing skip |
+| `GET` | `/api/v1/recurring-exceptions/{rule_id}/{occurrence_date}` | Read one skip by its composite identity |
+| `DELETE` | `/api/v1/recurring-exceptions/{rule_id}/{occurrence_date}` | Remove a skip without immediately generating a task |
+
+Schedule writes validate PostgreSQL goal IDs, date order, priority, frequency, and selected weekdays. PATCH validates the supplied changes together with the saved schedule. Omitted fields retain their values; explicit null clears optional goal links, notes, or end dates. Source identities and timestamps cannot be supplied through ordinary writes.
+
+Editing a schedule preserves all existing tasks, including their own goal links and completion history. Frequency changes do not delete or rebuild previously generated tasks. Pausing stops future generation requests from creating occurrences; it does not remove existing tasks. Resuming permits the next generation request to create missing occurrences.
+
+Deleting a schedule defaults to `mode=stopOnly`, which keeps all tasks as standalone tasks. `mode=deleteUnfinished` removes incomplete occurrences, including rescheduled and Inbox tasks, while retaining completed tasks as standalone history. Retained tasks keep their IDs, details, goal links, and completion state; their recurrence identity fields are cleared together. Skip records are removed with the schedule. Weekly commitments and decisions survive deleted tasks through their historical fields and nullable live task links.
+
+A new skip returns `201`; retrying an existing skip returns `200` and preserves its timestamp. A new skip for an occurrence that already has a task returns `409` without changing the task. Delete that occurrence through the Task API when appropriate; task deletion records the skip atomically. Removing a skip makes the occurrence eligible for a later generation request, subject to the schedule's dates, pattern, and active status.
+
 ### Complete backups
 
 | Method | Path | Purpose |
@@ -163,6 +186,37 @@ For PATCH requests, omitted fields retain their current values. For example, `{"
 - A referenced recurring schedule cannot be deleted directly until its retained tasks are explicitly detached. Deleting an eligible goal keeps its tasks and clears their applicable goal links.
 
 Native relationships are authoritative when present. Legacy source-only imports remain supported, and import retries can fill missing native task links after their parents become available.
+
+## Recurring-task generation
+
+Call `POST /api/v1/recurring-rules/generate` with an explicit user-local calendar date:
+
+```json
+{
+  "current_date": "2026-10-13",
+  "horizon_days": 30
+}
+```
+
+Omit `recurring_rule_id`, or supply null, to process all schedules. To process one schedule, supply its PostgreSQL ID. A missing selected schedule returns `404`. No schedules, paused schedules, and schedules outside the requested window return a successful summary with no created tasks.
+
+The default horizon is 30 days, meaning today and the following 30 days: up to 31 inclusive dates per daily schedule. Zero checks only the supplied date. The maximum horizon is 366 days. Invalid horizons, dates, identifiers, and windows beyond the supported date range return `422`.
+
+Supported frequencies match the app's existing calendar calculations:
+
+- `daily`: every date in range.
+- `weekly`: the start date's weekday.
+- `everyTwoWeeks`: every 14 calendar days from the start date, unaffected by daylight-saving changes.
+- `certainDays`: selected weekdays using Sunday=0 through Saturday=6.
+- `monthly`: the start date's day number, clamped to the last day of shorter months. A January 31 anchor generates on February's last day and returns to March 31.
+
+Generation locks the related tables, checks skip records and native/source occurrence identities, and creates only missing tasks. New tasks copy the schedule's current title, notes, priority, and goal, receive PostgreSQL primary keys, and start incomplete. Imported schedule and goal references remain available as source metadata; generated tasks have no SQLite `source_task_id`.
+
+Existing tasks are preserved exactly, including completed tasks, tasks moved to another due date or Inbox, historical goal links, and legacy source-only occurrences. Repeating a request creates no duplicates. Extending its window creates only additional missing occurrences. Genuine source-identity or database conflicts return `409` and roll back the whole request, including tasks created earlier in the same call.
+
+The result reports `current_date`, `horizon_days`, `window_end`, `rules_checked`, `candidate_count`, `created_count`, `existing_count`, `skipped_count`, `created_task_ids`, and `database_changed`. Candidate totals equal created + existing + skipped. If a skip and historical task share the same occurrence, the candidate counts as skipped and the task remains unchanged.
+
+Generation runs when this endpoint is called. There is no automatic background scheduler or frontend storage switch in this change.
 
 ## Strict imports, previews, and refreshes
 
@@ -208,11 +262,11 @@ python -m alembic check
 python -m pytest -q
 ```
 
-Latest reported verification on October 12, 2026: **594 backend tests passed**, and Alembic reported no new upgrade operations.
+Latest reported verification on October 13, 2026: **783 backend tests passed**, and Alembic reported no new upgrade operations.
 
-Coverage includes request validation, model constraints, task relationships, historical goal links, goal completion and deletion, planning cycles, milestones, migration backfills, backup previews, strict imports, refreshes, duplicate protection, and rollback behavior.
+Coverage includes request validation, model constraints, task relationships, historical goal links, goal completion and deletion, planning cycles, milestones, migration backfills, backup previews, strict imports, refreshes, duplicate protection, recurrence date calculations, schedule and exception APIs, transactional occurrence generation, and rollback behavior.
 
-Backup write, refresh, task relationship, and weekly-history write tests use isolated schemas inside the existing PostgreSQL database. Endpoint commits run within test-owned transactions, and teardown rolls back their data and schema. Schema inspection tests still check the migrated application tables. The FastAPI development server does not need to be running during pytest. A known FastAPI/Starlette deprecation warning may appear even when all tests pass.
+Backup write, refresh, task relationship, weekly-history write, and recurrence API tests use isolated schemas inside the existing PostgreSQL database. Endpoint commits run within test-owned transactions, and teardown rolls back their data and schema. Schema inspection tests still check the migrated application tables. The FastAPI development server does not need to be running during pytest. A known FastAPI/Starlette deprecation warning may appear even when all tests pass.
 
 Useful focused checks:
 
@@ -220,6 +274,8 @@ Useful focused checks:
 python -m pytest tests/test_task_model.py tests/test_task_relationship_schemas.py tests/test_task_relationships_api.py -q
 python -m pytest tests/test_backup_refresh_api.py tests/test_backup_refresh_order.py -q
 python -m pytest tests/test_backup_import_write_api.py tests/test_weekly_history_models.py -q
+python -m pytest tests/test_recurring_rules_api.py tests/test_recurring_exceptions_api.py -q
+python -m pytest tests/test_recurrence_dates.py tests/test_recurrence_generation_api.py -q
 ```
 
 For frontend type checking, run from the WeekFlow repository root:
@@ -253,10 +309,12 @@ docker compose start db
 | `app/database.py` | SQLAlchemy engine, sessions, shared model base, and connection check |
 | `app/models/` | PostgreSQL table definitions and relationships |
 | `app/schemas/` | Pydantic request, response, and backup validation |
-| `app/routers/` | Task, planning-cycle, goal, milestone, and backup HTTP endpoints |
+| `app/routers/` | Task, planning-cycle, goal, milestone, recurrence, and backup HTTP endpoints |
 | `app/services/task_import.py` | Task-batch comparison, strict import, and relationship mapping |
 | `app/services/backup_import.py` | Complete-backup comparison plan and strict import |
 | `app/services/backup_refresh.py` | Transactional create/update refresh with stable PostgreSQL IDs |
+| `app/services/recurrence.py` | Calendar occurrence calculations and generation-window limits |
+| `app/services/recurrence_generation.py` | Transactional generation with skip, duplicate, and history protection |
 | `alembic/versions/` | Versioned database structure changes |
 | `tests/` | Backend validation, database, migration, and API tests |
 | `../lib/backupMigrationApi.ts` | Frontend clients and response validation for complete import and refresh |
@@ -264,8 +322,9 @@ docker compose start db
 
 ## Remaining work
 
-- Finish planning-cycle lifecycle behavior and any agreed changes to cycle duration.
-- Add everyday APIs for recurring schedules, exceptions, commitments, reviews, brain dumps, templates, and other remaining features. Their models and backup import support already exist.
+- Add everyday APIs for commitments, weekly reviews and task decisions, cycle reviews and goal outcomes, brain dumps, and task templates. Their models and backup import support already exist.
+- Add recurrence-specific actions for task conversion and editing from a selected occurrence before those frontend flows switch to the API.
+- Add any agreed extensions to planning-cycle lifecycle behavior or cycle duration.
 - Connect frontend features to their PostgreSQL APIs and verify behavior before the final storage switch.
 - Add authentication and define any future synchronization or offline behavior.
 

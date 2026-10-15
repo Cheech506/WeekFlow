@@ -11,6 +11,9 @@ from app.routers.goal_milestones import (
     router as goal_milestones_router,
 )
 
+from app.routers.recurring_rules import router as recurring_rules_router
+from app.routers.recurring_exceptions import router as recurring_exceptions_router
+
 from app.config import (
     API_PREFIX,
     API_VERSION,
@@ -42,6 +45,8 @@ app.include_router(tasks_router)
 app.include_router(planning_cycles_router)
 app.include_router(goals_router)
 app.include_router(goal_milestones_router)
+app.include_router(recurring_rules_router)
+app.include_router(recurring_exceptions_router)
 
 
 @app.get("/")
