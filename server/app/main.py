@@ -13,6 +13,9 @@ from app.routers.goal_milestones import (
 
 from app.routers.recurring_rules import router as recurring_rules_router
 from app.routers.recurring_exceptions import router as recurring_exceptions_router
+from app.routers.weekly_commitments import router as weekly_commitments_router
+from app.routers.weekly_reviews import router as weekly_reviews_router
+from app.routers.weekly_task_decisions import router as weekly_task_decisions_router
 
 from app.config import (
     API_PREFIX,
@@ -47,6 +50,9 @@ app.include_router(goals_router)
 app.include_router(goal_milestones_router)
 app.include_router(recurring_rules_router)
 app.include_router(recurring_exceptions_router)
+app.include_router(weekly_commitments_router)
+app.include_router(weekly_reviews_router)
+app.include_router(weekly_task_decisions_router)
 
 
 @app.get("/")

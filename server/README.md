@@ -2,7 +2,7 @@
 
 WeekFlow’s backend uses Python, FastAPI, Pydantic, SQLAlchemy, Psycopg, PostgreSQL, Alembic, and Docker Compose.
 
-The API supports everyday operations for tasks, planning cycles, goals, goal milestones, recurring schedules, and skipped occurrences. It also generates missing recurring tasks transactionally. Complete-backup tools validate, preview, import, and refresh all 13 supported record collections, including recurring schedules and review history.
+The API supports everyday operations for tasks, planning cycles, goals, goal milestones, recurring schedules, skipped occurrences, weekly commitments, weekly reviews, and weekly task decisions. It also generates missing recurring tasks transactionally. Complete-backup tools validate, preview, import, and refresh all 13 supported record collections, including recurring schedules and review history.
 
 **Current app storage:** WeekFlow still uses SQLite for everyday activity. The app’s Task API tools screen can read server tasks and copy or refresh the device’s current data into PostgreSQL. Real WeekFlow data has been imported and refreshed successfully. This migration does not switch the main app to PostgreSQL or enable automatic synchronization.
 
@@ -153,6 +153,74 @@ Deleting a schedule defaults to `mode=stopOnly`, which keeps all tasks as standa
 
 A new skip returns `201`; retrying an existing skip returns `200` and preserves its timestamp. A new skip for an occurrence that already has a task returns `409` without changing the task. Delete that occurrence through the Task API when appropriate; task deletion records the skip atomically. Removing a skip makes the occurrence eligible for a later generation request, subject to the schedule's dates, pattern, and active status.
 
+### Weekly commitments
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/api/v1/weekly-commitments` | Read commitments, optionally filtered by `week_start`, `cycle_id`, `task_id`, and displayed `completed` state |
+| `POST` | `/api/v1/weekly-commitments` | Create a standalone promise or select an existing PostgreSQL task for a week |
+| `GET` | `/api/v1/weekly-commitments/{commitment_id}` | Read one commitment |
+| `PATCH` | `/api/v1/weekly-commitments/{commitment_id}` | Edit a standalone title, or complete/reopen a commitment and its linked task atomically |
+| `DELETE` | `/api/v1/weekly-commitments/{commitment_id}` | Delete the commitment while preserving its task and planning cycle |
+
+A commitment belongs to a Monday-based week and may reference a current or historical planning cycle. Standalone commitments require a nonblank title of at most 180 characters. Task-linked commitments accept a native `task_id` and copy the task's title and completion state; omit `title` when creating one. The linked task must initially have a title that fits the commitment's limit. Selecting the same task for the same week returns `409`; selecting it for different weeks is allowed.
+
+Reads display the linked task's current title, completion status, and completion timestamp. Reopening the task displays a null completion timestamp, even when the commitment's saved snapshot was completed. Reading does not rewrite that saved snapshot. Edit a linked title through the Task API. Commitment PATCH cannot change the week, task link, or cycle link.
+
+Completing or reopening a linked commitment changes its task and that commitment's saved completion fields in one transaction. Repeating completion preserves the existing completion timestamp. Other commitments linked to the same task display its live state. Deleting a task clears the commitment's live link and retains its stored title and completion fields; those fallback values are the saved snapshot and may differ from later direct edits to the task.
+
+### Weekly reviews
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/api/v1/weekly-reviews` | Read saved reviews, optionally filtered by Monday `week_start` and `cycle_id` |
+| `POST` | `/api/v1/weekly-reviews` | Save a week's reflection and its initial statistics snapshot |
+| `GET` | `/api/v1/weekly-reviews/{review_id}` | Read one saved review |
+| `PATCH` | `/api/v1/weekly-reviews/{review_id}` | Edit written responses or the optional planning-cycle link |
+| `DELETE` | `/api/v1/weekly-reviews/{review_id}` | Delete only the review, retaining tasks, commitments, and task decisions |
+
+There is one saved review per Monday-based week, regardless of its cycle link. Creating a second review for that week returns `409`; use PATCH to edit the existing review. Written responses are trimmed, limited to 2,000 characters each, and stored as null when blank. PATCH retains omitted fields and allows explicit null to clear a response or cycle link.
+
+Create requests supply a nested `snapshot` with `completed_count`, `unfinished_count`, `overdue_count`, `completion_rate`, `goals_progressed_count`, `best_day`, `best_day_count`, `archived_brain_dump_count`, `high_priority_completed_count`, and `recurring_completed_count`. The API validates integer ranges, rounded completion rate, count relationships, and best-day consistency. It validates the supplied statistics; it does not independently calculate them from PostgreSQL tasks. Responses expose the persisted values as `snapshot_*` fields.
+
+The first snapshot is frozen. Later task completions, reschedules, deletions, and reflection edits do not recalculate it. Ordinary PATCH requests reject snapshot fields, the week identity, source IDs, and timestamps. Editing supplied fields updates `updated_at` and `reviewed_at`, retaining `created_at`; an empty PATCH changes nothing. These rules apply to the everyday review API; the separate, explicitly requested backup refresh can update matching imported records.
+
+### Weekly task decisions
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/api/v1/weekly-task-decisions` | Read history, optionally filtered by Monday `week_start`, `task_id`, `recurring_rule_id`, and `action` |
+| `POST` | `/api/v1/weekly-task-decisions` | Apply an unfinished-task action and save its history in one transaction |
+| `GET` | `/api/v1/weekly-task-decisions/{decision_id}` | Read one saved decision, including history for a deleted task |
+| `DELETE` | `/api/v1/weekly-task-decisions/{decision_id}` | Delete only the history record without undoing the task action or its skip |
+
+Send the task's native PostgreSQL ID, the selected Monday, its due date before the action, and one of the five supported actions:
+
+```json
+{
+  "week_start": "2026-10-12",
+  "task_id": 123,
+  "original_due_date": "2026-10-14",
+  "action": "nextWeek"
+}
+```
+
+| Action | Task effect | Request date rule |
+|---|---|---|
+| `nextWeek` | Move the task seven days forward, preserving its weekday | Omit `resolved_due_date`, or supply exactly `original_due_date + 7 days` |
+| `inbox` | Clear the due date and set `day` to `Inbox` | No non-null resolved date |
+| `reschedule` | Move the task to the selected date | Require `resolved_due_date` |
+| `keep` | Retain the task's current schedule | No non-null resolved date |
+| `delete` | Delete the task and preserve its decision history | No non-null resolved date |
+
+The original due date must belong to the selected week. All actions, including delete, require the existing task's ID. The server copies its title and recurring identity into the decision record. Completed tasks, inconsistent completion data, blank task titles, and stale scheduled dates return `409` without applying changes. Missing tasks return `404`. Call this endpoint before moving or deleting the task; it performs the task action and history write together.
+
+New decision records return `201`. A decision for the same week, task, and original due date can be updated in place while the task is still scheduled on that original date, preserving its PostgreSQL and imported source IDs. A matching retry while the task remains in the expected resulting state returns `200` with the same decision ID and timestamp. A later conflicting task change causes the retry to return `409`. Retrying after task deletion returns `404` without creating duplicate history.
+
+Moves and Inbox actions preserve the task's goal links, original recurring occurrence identity, and completion fields. Recurring deletion records a skip for the original occurrence date when its schedule can be resolved, preventing generation from recreating that occurrence. The task action, decision write, and skip creation commit or roll back together.
+
+Deleting a task clears live links on older decision and commitment records while retaining their stored history. Decision records preserve recurring identity even if the schedule is later deleted. Deleting decision history does not restore a task, reverse a reschedule, or remove a skip. There is no separate decision PATCH: POST applies an action and, when appropriate, updates its existing history record.
+
 ### Complete backups
 
 | Method | Path | Purpose |
@@ -262,9 +330,9 @@ python -m alembic check
 python -m pytest -q
 ```
 
-Latest reported verification on October 13, 2026: **783 backend tests passed**, and Alembic reported no new upgrade operations.
+Weekly API verification reported by the developer for this batch: **77 commitment tests**, **130 weekly review tests**, and **86 weekly task decision tests** passed. The full backend suite currently collects **1,076 tests** (October 16, 2026). Run both commands above before committing; collection alone does not confirm that the full suite or Alembic check passed for the final batch.
 
-Coverage includes request validation, model constraints, task relationships, historical goal links, goal completion and deletion, planning cycles, milestones, migration backfills, backup previews, strict imports, refreshes, duplicate protection, recurrence date calculations, schedule and exception APIs, transactional occurrence generation, and rollback behavior.
+Coverage includes request validation, model constraints, task relationships, historical goal links, goal completion and deletion, planning cycles, milestones, migration backfills, backup previews, strict imports, refreshes, duplicate protection, recurrence date calculations, schedule and exception APIs, transactional occurrence generation, weekly commitment task links and completion, frozen review snapshots, atomic weekly task decisions, recurring deletion skips, and rollback behavior.
 
 Backup write, refresh, task relationship, weekly-history write, and recurrence API tests use isolated schemas inside the existing PostgreSQL database. Endpoint commits run within test-owned transactions, and teardown rolls back their data and schema. Schema inspection tests still check the migrated application tables. The FastAPI development server does not need to be running during pytest. A known FastAPI/Starlette deprecation warning may appear even when all tests pass.
 
@@ -276,6 +344,7 @@ python -m pytest tests/test_backup_refresh_api.py tests/test_backup_refresh_orde
 python -m pytest tests/test_backup_import_write_api.py tests/test_weekly_history_models.py -q
 python -m pytest tests/test_recurring_rules_api.py tests/test_recurring_exceptions_api.py -q
 python -m pytest tests/test_recurrence_dates.py tests/test_recurrence_generation_api.py -q
+python -m pytest tests/test_weekly_commitments_api.py tests/test_weekly_reviews_api.py tests/test_weekly_task_decisions_api.py -q
 ```
 
 For frontend type checking, run from the WeekFlow repository root:
@@ -309,7 +378,7 @@ docker compose start db
 | `app/database.py` | SQLAlchemy engine, sessions, shared model base, and connection check |
 | `app/models/` | PostgreSQL table definitions and relationships |
 | `app/schemas/` | Pydantic request, response, and backup validation |
-| `app/routers/` | Task, planning-cycle, goal, milestone, recurrence, and backup HTTP endpoints |
+| `app/routers/` | Task, planning-cycle, goal, milestone, recurrence, weekly-history, and backup HTTP endpoints |
 | `app/services/task_import.py` | Task-batch comparison, strict import, and relationship mapping |
 | `app/services/backup_import.py` | Complete-backup comparison plan and strict import |
 | `app/services/backup_refresh.py` | Transactional create/update refresh with stable PostgreSQL IDs |
@@ -322,7 +391,7 @@ docker compose start db
 
 ## Remaining work
 
-- Add everyday APIs for commitments, weekly reviews and task decisions, cycle reviews and goal outcomes, brain dumps, and task templates. Their models and backup import support already exist.
+- Add everyday APIs for cycle reviews and goal outcomes, brain dumps, and task templates. Their models and backup import support already exist.
 - Add recurrence-specific actions for task conversion and editing from a selected occurrence before those frontend flows switch to the API.
 - Add any agreed extensions to planning-cycle lifecycle behavior or cycle duration.
 - Connect frontend features to their PostgreSQL APIs and verify behavior before the final storage switch.

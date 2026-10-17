@@ -62,6 +62,23 @@ from app.schemas.task_import import (
     TaskImportRequest,
     TaskImportResult,
 )
+from app.schemas.weekly_commitment import (
+    WeeklyCommitmentCreate,
+    WeeklyCommitmentRead,
+    WeeklyCommitmentUpdate,
+)
+
+from app.schemas.weekly_review import (
+    WeeklyReviewCreate,
+    WeeklyReviewRead,
+    WeeklyReviewSnapshot,
+    WeeklyReviewUpdate,
+)
+
+from app.schemas.weekly_task_decision import (
+    WeeklyTaskDecisionCreate,
+    WeeklyTaskDecisionRead,
+)
 
 __all__ = [
     "BackupImportCounts",
@@ -108,4 +125,13 @@ __all__ = [
     "WeekFlowBackupData",
     "WeekFlowBackupImportRequest",
     "WeekFlowBackupMetadata",
+    "WeeklyCommitmentCreate",
+    "WeeklyCommitmentRead",
+    "WeeklyCommitmentUpdate",
+    "WeeklyReviewCreate",
+    "WeeklyReviewRead",
+    "WeeklyReviewSnapshot",
+    "WeeklyReviewUpdate",
+    "WeeklyTaskDecisionCreate",
+    "WeeklyTaskDecisionRead",
 ]
