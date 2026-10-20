@@ -16,6 +16,9 @@ from app.routers.recurring_exceptions import router as recurring_exceptions_rout
 from app.routers.weekly_commitments import router as weekly_commitments_router
 from app.routers.weekly_reviews import router as weekly_reviews_router
 from app.routers.weekly_task_decisions import router as weekly_task_decisions_router
+from app.routers.cycle_reviews import router as cycle_reviews_router
+from app.routers.brain_dumps import router as brain_dumps_router
+from app.routers.task_templates import router as task_templates_router
 
 from app.config import (
     API_PREFIX,
@@ -53,6 +56,9 @@ app.include_router(recurring_exceptions_router)
 app.include_router(weekly_commitments_router)
 app.include_router(weekly_reviews_router)
 app.include_router(weekly_task_decisions_router)
+app.include_router(cycle_reviews_router)
+app.include_router(brain_dumps_router)
+app.include_router(task_templates_router)
 
 
 @app.get("/")

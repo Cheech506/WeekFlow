@@ -2,7 +2,7 @@
 
 WeekFlow’s backend uses Python, FastAPI, Pydantic, SQLAlchemy, Psycopg, PostgreSQL, Alembic, and Docker Compose.
 
-The API supports everyday operations for tasks, planning cycles, goals, goal milestones, recurring schedules, skipped occurrences, weekly commitments, weekly reviews, and weekly task decisions. It also generates missing recurring tasks transactionally. Complete-backup tools validate, preview, import, and refresh all 13 supported record collections, including recurring schedules and review history.
+The core data API supports tasks, planning cycles, goals, goal milestones, recurring schedules, skipped occurrences, weekly commitments, weekly reviews, weekly task decisions, cycle reviews and their goal outcomes, brain dumps, and task templates. Cycle goal outcomes are saved together with their parent review. It also generates missing recurring tasks transactionally. Complete-backup tools validate, preview, import, and refresh all 13 supported record collections, including recurring schedules and review history.
 
 **Current app storage:** WeekFlow still uses SQLite for everyday activity. The app’s Task API tools screen can read server tasks and copy or refresh the device’s current data into PostgreSQL. Real WeekFlow data has been imported and refreshed successfully. This migration does not switch the main app to PostgreSQL or enable automatic synchronization.
 
@@ -109,7 +109,7 @@ Open Settings → Check server tasks to reach Task API tools. Keep both terminal
 | `PATCH` | `/api/v1/planning-cycles/{cycle_id}` | Edit the active cycle |
 | `DELETE` | `/api/v1/planning-cycles/{cycle_id}` | Delete a cycle only when no protected goals, reviews, or commitments reference it |
 
-Cycle creation currently calculates a 12-week period: `end_date = start_date + 83 days`, including the starting day. Variable-length cycles and further cycle lifecycle operations remain future work.
+Cycle creation currently calculates a 12-week period: `end_date = start_date + 83 days`, including the starting day. The cycle review finalization endpoint closes the current cycle and starts its successor transactionally. Variable-length cycles remain an optional future extension.
 
 ### Goals and milestones
 
@@ -221,6 +221,75 @@ Moves and Inbox actions preserve the task's goal links, original recurring occur
 
 Deleting a task clears live links on older decision and commitment records while retaining their stored history. Decision records preserve recurring identity even if the schedule is later deleted. Deleting decision history does not restore a task, reverse a reschedule, or remove a skip. There is no separate decision PATCH: POST applies an action and, when appropriate, updates its existing history record.
 
+### Cycle reviews and goal outcomes
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/api/v1/cycle-reviews` | Read reports, optionally filtered by native `cycle_id` and `finalized` state |
+| `POST` | `/api/v1/cycle-reviews/draft` | Create or replace a complete draft and its selected goal outcomes together |
+| `GET` | `/api/v1/cycle-reviews/{review_id}` | Read one review together with its goal outcomes |
+| `POST` | `/api/v1/cycle-reviews/{review_id}/finalize` | Apply saved outcomes, close the current cycle, and create its successor atomically |
+| `DELETE` | `/api/v1/cycle-reviews/{review_id}` | Delete an unfinished draft and its child selections, retaining goals and tasks |
+| `GET` | `/api/v1/cycle-goal-outcomes` | Read outcomes, optionally filtered by `cycle_review_id`, `goal_id`, `destination_goal_id`, and `action` |
+| `GET` | `/api/v1/cycle-goal-outcomes/{outcome_id}` | Read one saved selection or historical outcome |
+
+Save a draft with five explicit sections: `cycle_id`, `reflection`, `snapshot`, `next_cycle`, and `outcomes`. Both a new draft and an updated draft return `200`. There is one review per cycle. A draft save replaces all supplied draft content; use `reflection: {}` or `outcomes: []` only when intending to clear that section. The next-cycle plan requires `start_date` and accepts optional `name`, `primary_focus`, `theme`, and `first_week_commitments`.
+
+Reflection fields are optional, trimmed, and limited to 2,000 characters each. Next-cycle name, focus, and theme follow the planning-cycle limits. Up to five first-week commitments are accepted, each at most 180 characters; blank rows are omitted and case-insensitive duplicates are rejected. Goal selections require native `goal_id` values belonging to the reviewed cycle. Completed goals cannot receive an unfinished-goal selection. The server copies each goal's title into its saved outcome; source IDs, destination IDs, historical titles, and timestamps are not accepted as ordinary input.
+
+Draft statistics are supplied by the app and validated for ranges and consistency. They may be refreshed while editing the draft. Saving a draft does not modify goals, tasks, schedules, or cycle state. Retained goal selections keep their PostgreSQL primary keys and imported source IDs; removing a selection from `outcomes` removes that draft selection.
+
+To finalize, call `POST /api/v1/cycle-reviews/{review_id}/finalize` with no required request body after saving the complete draft. Only the current cycle may be finalized. Its proposed successor must start after the reviewed cycle ends, and every currently unfinished goal must have exactly one valid outcome. Missing, deleted, completed, or reassigned goals can make a previously saved selection stale and block finalization with `409`.
+
+| Goal outcome | Finalization behavior |
+|---|---|
+| `complete` | Complete the original goal and save its current task and milestone totals, retaining written completion reflections and leaving task completion states unchanged |
+| `carryForward` | Create a new goal in the successor cycle, copying the original title, reward, purpose, success definition, notes, and milestones |
+| `archive` | Keep the original goal unfinished in the closed cycle; retain its data |
+| `replace` | Create a new goal with the required `replacement_title` in the successor cycle |
+
+Copied milestones receive new PostgreSQL IDs while retaining their titles, notes, target dates, completion states, and timestamps. New goals and milestone copies do not inherit SQLite source identities. Original tasks and recurring schedules retain their own goal links; carry-forward does not move historical tasks to the new goal.
+
+Finalization closes the old cycle before inserting the new active cycle, preserving the single-active-cycle constraint. It creates the next cycle's first commitments in the Monday-based week containing its start date. It then saves the finalized report and destination goal links, adjusting saved completed-goal and reward totals for goals completed by this operation. The entire transition commits or rolls back together.
+
+The response includes `review`, `outcomes`, `next_cycle`, and `already_finalized`. A successful retry returns the saved result with `already_finalized: true` and creates no duplicate cycles, goals, milestones, or commitments. If finalized imported history has no live successor link, `next_cycle` can be null without creating another cycle. Finalized reports cannot be edited or deleted through these review endpoints. Drafts already linked to successor records are also protected from unsafe replacement or deletion.
+
+Goal outcomes have read endpoints because their writes belong to the draft transaction. Add or change selections by saving the draft; remove one by saving the remaining selections, or remove all with `outcomes: []`. Deleting an unfinished draft cascades its child selections. Saved outcome titles remain readable when an original or destination goal link is later cleared. These ordinary API rules are separate from explicitly requested backup refreshes of imported records.
+
+### Brain dumps
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/api/v1/brain-dumps` | Read notes, optionally filtered by `archived` |
+| `POST` | `/api/v1/brain-dumps` | Create an active note |
+| `GET` | `/api/v1/brain-dumps/{brain_dump_id}` | Read one note |
+| `PATCH` | `/api/v1/brain-dumps/{brain_dump_id}` | Edit `body`, archive with `archived: true`, or restore with `archived: false` |
+| `DELETE` | `/api/v1/brain-dumps/{brain_dump_id}` | Delete only the note |
+| `POST` | `/api/v1/brain-dumps/{brain_dump_id}/convert-to-task` | Create an Inbox task and remove the active source note in one transaction |
+
+Notes require nonblank trimmed text and support multiline content without an added short text limit. Reads order notes by creation time, newest first, with the ID as a tie-breaker. PATCH retains omitted fields and rejects explicit null for required text or archive state. IDs, source identities, and timestamps are server-managed.
+
+Text edits retain the original creation time and archive state. Archiving records `archived_at`; repeating the same archive request preserves that timestamp. Restoring clears it. Editing or deleting notes does not recalculate previously saved weekly or cycle report statistics.
+
+Conversion takes the source note ID and requires no request body. It returns `201` with a newly generated, incomplete Inbox task using the trimmed note text as its title. The task has priority zero, no due date or notes, no goal or recurring identity, and no SQLite source identity. The source note is deleted only as part of the successful transaction. Archived notes return `409` until restored. A retry after successful conversion returns `404`, preventing another task from that deleted note. If task insertion, note deletion, or commit fails, the original note remains and no task is saved.
+
+### Task templates
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/api/v1/task-templates` | Read templates, optionally filtered by native `goal_id` |
+| `POST` | `/api/v1/task-templates` | Save reusable task details without creating a live task |
+| `GET` | `/api/v1/task-templates/{template_id}` | Read one template |
+| `PATCH` | `/api/v1/task-templates/{template_id}` | Edit supplied template details or clear optional notes/goal links |
+| `DELETE` | `/api/v1/task-templates/{template_id}` | Delete only the template while preserving previously created tasks |
+| `POST` | `/api/v1/task-templates/{template_id}/create-task` | Create a new one-time Inbox task from the current template |
+
+Templates store `title`, optional `notes`, priority from zero through two, and an optional native `goal_id`. Titles are trimmed and must be nonblank; blank notes become null. Text fields use the model's unrestricted text storage. A supplied goal must exist. PATCH retains omitted fields; explicit null clears notes or the goal link, while title and priority cannot be null. Editing retains identity and creation time and updates `updated_at`; an empty PATCH changes nothing. Reads order by update time, newest first, then ID.
+
+Using a template requires no request body and returns `201` with an independent Inbox task. It copies the template's current trimmed title, notes, priority, and goal. The task is incomplete, has no due date or recurring identity, and receives a fresh PostgreSQL ID with no SQLite task source identity. When linked to a goal, the server reads that goal's current source metadata for migration consistency. The template and its timestamps remain unchanged.
+
+Each successful use intentionally creates another task. Editing or deleting a template leaves earlier tasks unchanged. Goal deletion clears the template's goal link, so later tasks can be created unlinked. To customize details before creating a task, read the template into the app's task form and submit the normal Task API request. Templates do not represent recurring schedules.
+
 ### Complete backups
 
 | Method | Path | Purpose |
@@ -330,11 +399,11 @@ python -m alembic check
 python -m pytest -q
 ```
 
-Weekly API verification reported by the developer for this batch: **77 commitment tests**, **130 weekly review tests**, and **86 weekly task decision tests** passed. The full backend suite currently collects **1,076 tests** (October 16, 2026). Run both commands above before committing; collection alone does not confirm that the full suite or Alembic check passed for the final batch.
+The backend suite currently collects **1,341 tests** (October 19, 2026). The new focused suites contain **101 cycle review tests**, **67 brain dump tests**, and **97 task template tests**. Run the commands above against PostgreSQL to verify this checkout before committing; collection alone does not confirm execution passed.
 
-Coverage includes request validation, model constraints, task relationships, historical goal links, goal completion and deletion, planning cycles, milestones, migration backfills, backup previews, strict imports, refreshes, duplicate protection, recurrence date calculations, schedule and exception APIs, transactional occurrence generation, weekly commitment task links and completion, frozen review snapshots, atomic weekly task decisions, recurring deletion skips, and rollback behavior.
+Coverage includes request validation, model constraints, task relationships, historical goal links, goal completion and deletion, planning cycles, milestones, migration backfills, backup previews, strict imports, refreshes, duplicate protection, recurrence date calculations, schedule and exception APIs, transactional occurrence generation, weekly commitment task links and completion, frozen review snapshots, atomic weekly task decisions, recurring deletion skips, cycle draft editing and finalization, goal carry-forward and replacement, preserved cycle history, brain dump archive/restore and conversion, independent template-created tasks, and rollback behavior.
 
-Backup write, refresh, task relationship, weekly-history write, and recurrence API tests use isolated schemas inside the existing PostgreSQL database. Endpoint commits run within test-owned transactions, and teardown rolls back their data and schema. Schema inspection tests still check the migrated application tables. The FastAPI development server does not need to be running during pytest. A known FastAPI/Starlette deprecation warning may appear even when all tests pass.
+Backup write, refresh, task relationship, weekly-history write, recurrence, cycle review, brain dump, and task template API tests use isolated schemas inside the existing PostgreSQL database. Endpoint commits run within test-owned transactions, and teardown rolls back their data and schema. Schema inspection tests still check the migrated application tables. The FastAPI development server does not need to be running during pytest. A known FastAPI/Starlette deprecation warning may appear even when all tests pass.
 
 Useful focused checks:
 
@@ -345,6 +414,7 @@ python -m pytest tests/test_backup_import_write_api.py tests/test_weekly_history
 python -m pytest tests/test_recurring_rules_api.py tests/test_recurring_exceptions_api.py -q
 python -m pytest tests/test_recurrence_dates.py tests/test_recurrence_generation_api.py -q
 python -m pytest tests/test_weekly_commitments_api.py tests/test_weekly_reviews_api.py tests/test_weekly_task_decisions_api.py -q
+python -m pytest tests/test_cycle_reviews_api.py tests/test_brain_dumps_api.py tests/test_task_templates_api.py -q
 ```
 
 For frontend type checking, run from the WeekFlow repository root:
@@ -378,12 +448,13 @@ docker compose start db
 | `app/database.py` | SQLAlchemy engine, sessions, shared model base, and connection check |
 | `app/models/` | PostgreSQL table definitions and relationships |
 | `app/schemas/` | Pydantic request, response, and backup validation |
-| `app/routers/` | Task, planning-cycle, goal, milestone, recurrence, weekly-history, and backup HTTP endpoints |
+| `app/routers/` | Core data and workflow HTTP endpoints, including weekly/cycle history, brain dumps, templates, and backups |
 | `app/services/task_import.py` | Task-batch comparison, strict import, and relationship mapping |
 | `app/services/backup_import.py` | Complete-backup comparison plan and strict import |
 | `app/services/backup_refresh.py` | Transactional create/update refresh with stable PostgreSQL IDs |
 | `app/services/recurrence.py` | Calendar occurrence calculations and generation-window limits |
 | `app/services/recurrence_generation.py` | Transactional generation with skip, duplicate, and history protection |
+| `app/services/cycle_reviews.py` | Atomic draft saves and finalization, goal outcomes, successor cycles, and first commitments |
 | `alembic/versions/` | Versioned database structure changes |
 | `tests/` | Backend validation, database, migration, and API tests |
 | `../lib/backupMigrationApi.ts` | Frontend clients and response validation for complete import and refresh |
@@ -391,10 +462,12 @@ docker compose start db
 
 ## Remaining work
 
-- Add everyday APIs for cycle reviews and goal outcomes, brain dumps, and task templates. Their models and backup import support already exist.
-- Add recurrence-specific actions for task conversion and editing from a selected occurrence before those frontend flows switch to the API.
-- Add any agreed extensions to planning-cycle lifecycle behavior or cycle duration.
-- Connect frontend features to their PostgreSQL APIs and verify behavior before the final storage switch.
-- Add authentication and define any future synchronization or offline behavior.
+The core data API groups are implemented. Remaining work before completing the intended app migration includes:
+
+- Add the specialized action for converting an existing task into recurring work.
+- Add the specialized action for editing a recurring schedule from a selected occurrence onward, with explicit rules for preserving history. These two actions may extend existing schemas/routers and add service logic and tests.
+- Connect the main app's storage operations to the PostgreSQL APIs, verify each feature, and complete the final data refresh and storage switch.
+- Add any agreed extensions to cycle duration; current cycles remain twelve weeks.
+- Add authentication and define any future synchronization or offline behavior according to the deployment scope.
 
 Successful backup migration verifies a copy of the data in PostgreSQL. It does not complete the frontend storage switch.

@@ -80,6 +80,32 @@ from app.schemas.weekly_task_decision import (
     WeeklyTaskDecisionRead,
 )
 
+from app.schemas.cycle_goal_outcome import (
+    CycleGoalOutcomeInput,
+    CycleGoalOutcomeRead,
+)
+from app.schemas.cycle_review import (
+    CycleReviewSnapshot,
+    CycleReviewReflection,
+    NextCyclePlan,
+    CycleReviewDraftSave,
+    CycleReviewRead,
+    CycleReviewDetail,
+    CycleReviewFinalizeResult,
+)
+
+from app.schemas.brain_dump import (
+    BrainDumpCreate,
+    BrainDumpUpdate,
+    BrainDumpRead,
+)
+
+from app.schemas.task_template import (
+    TaskTemplateCreate,
+    TaskTemplateUpdate,
+    TaskTemplateRead,
+)
+
 __all__ = [
     "BackupImportCounts",
     "BackupImportPreviewResult",
@@ -97,6 +123,18 @@ __all__ = [
     "BackupWeeklyCommitmentItem",
     "BackupWeeklyReviewItem",
     "BackupWeeklyTaskDecisionItem",
+    "BrainDumpCreate",
+    "BrainDumpUpdate",
+    "BrainDumpRead",
+    "CycleGoalOutcomeInput",
+    "CycleGoalOutcomeRead",
+    "CycleReviewSnapshot",
+    "CycleReviewReflection",
+    "NextCyclePlan",
+    "CycleReviewDraftSave",
+    "CycleReviewRead",
+    "CycleReviewDetail",
+    "CycleReviewFinalizeResult",
     "GoalComplete",
     "GoalCreate",
     "GoalMilestoneCreate",
@@ -120,6 +158,9 @@ __all__ = [
     "TaskImportPreviewResult",
     "TaskImportRequest",
     "TaskImportResult",
+    "TaskTemplateCreate",
+    "TaskTemplateUpdate",
+    "TaskTemplateRead",
     "TaskRead",
     "TaskUpdate",
     "WeekFlowBackupData",
