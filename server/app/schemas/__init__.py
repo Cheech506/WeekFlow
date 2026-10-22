@@ -106,6 +106,12 @@ from app.schemas.task_template import (
     TaskTemplateRead,
 )
 
+from app.schemas.recurring_task_workflow import (
+    TaskConvertToRecurringRequest,
+    RecurringEditFromOccurrenceRequest,
+    RecurringTaskWorkflowRead,
+)
+
 __all__ = [
     "BackupImportCounts",
     "BackupImportPreviewResult",
@@ -152,6 +158,9 @@ __all__ = [
     "RecurringRuleCreate",
     "RecurringRuleRead",
     "RecurringRuleUpdate",
+    "RecurringEditFromOccurrenceRequest",
+    "RecurringTaskWorkflowRead",
+    "TaskConvertToRecurringRequest",
     "TaskCreate",
     "TaskImportItem",
     "TaskImportMapping",

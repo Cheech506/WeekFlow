@@ -2,7 +2,7 @@
 
 WeekFlow’s backend uses Python, FastAPI, Pydantic, SQLAlchemy, Psycopg, PostgreSQL, Alembic, and Docker Compose.
 
-The core data API supports tasks, planning cycles, goals, goal milestones, recurring schedules, skipped occurrences, weekly commitments, weekly reviews, weekly task decisions, cycle reviews and their goal outcomes, brain dumps, and task templates. Cycle goal outcomes are saved together with their parent review. It also generates missing recurring tasks transactionally. Complete-backup tools validate, preview, import, and refresh all 13 supported record collections, including recurring schedules and review history.
+The core data API supports tasks, planning cycles, goals, goal milestones, recurring schedules, skipped occurrences, weekly commitments, weekly reviews, weekly task decisions, cycle reviews and their goal outcomes, brain dumps, and task templates. Cycle goal outcomes are saved together with their parent review. It also generates missing recurring tasks transactionally, converts existing tasks into recurring schedules, and revises a series from a selected occurrence while preserving earlier and completed task history. Complete-backup tools validate, preview, import, and refresh all 13 supported record collections, including recurring schedules and review history.
 
 **Current app storage:** WeekFlow still uses SQLite for everyday activity. The app’s Task API tools screen can read server tasks and copy or refresh the device’s current data into PostgreSQL. Real WeekFlow data has been imported and refreshed successfully. This migration does not switch the main app to PostgreSQL or enable automatic synchronization.
 
@@ -147,11 +147,67 @@ Completing a goal saves task and milestone totals without completing unfinished 
 
 Schedule writes validate PostgreSQL goal IDs, date order, priority, frequency, and selected weekdays. PATCH validates the supplied changes together with the saved schedule. Omitted fields retain their values; explicit null clears optional goal links, notes, or end dates. Source identities and timestamps cannot be supplied through ordinary writes.
 
-Editing a schedule preserves all existing tasks, including their own goal links and completion history. Frequency changes do not delete or rebuild previously generated tasks. Pausing stops future generation requests from creating occurrences; it does not remove existing tasks. Resuming permits the next generation request to create missing occurrences.
+Ordinary schedule PATCH preserves all existing tasks, including their own goal links and completion history. Frequency changes through PATCH do not delete or rebuild previously generated tasks. The separate series-edit action below explicitly rebuilds later unfinished occurrences. Pausing stops future generation requests from creating occurrences; it does not remove existing tasks. Resuming permits the next generation request to create missing occurrences.
 
 Deleting a schedule defaults to `mode=stopOnly`, which keeps all tasks as standalone tasks. `mode=deleteUnfinished` removes incomplete occurrences, including rescheduled and Inbox tasks, while retaining completed tasks as standalone history. Retained tasks keep their IDs, details, goal links, and completion state; their recurrence identity fields are cleared together. Skip records are removed with the schedule. Weekly commitments and decisions survive deleted tasks through their historical fields and nullable live task links.
 
 A new skip returns `201`; retrying an existing skip returns `200` and preserves its timestamp. A new skip for an occurrence that already has a task returns `409` without changing the task. Delete that occurrence through the Task API when appropriate; task deletion records the skip atomically. Removing a skip makes the occurrence eligible for a later generation request, subject to the schedule's dates, pattern, and active status.
+
+### Recurring task actions
+
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/api/v1/tasks/{task_id}/convert-to-recurring` | Convert an existing unfinished standalone task into a schedule's first occurrence and generate upcoming tasks |
+| `POST` | `/api/v1/tasks/{task_id}/edit-recurring-from-occurrence` | Revise a series from the selected original occurrence date and rebuild later unfinished tasks |
+
+Both actions use the selected task's native PostgreSQL ID. Requests supply the device's local `current_date` and may set `horizon_days` from 0 to 366, defaulting to 30. The inclusive generation window follows the same rules as the generation endpoint. These actions generate only for their own schedule. They do not start background generation or connect the main app to PostgreSQL.
+
+**Convert an existing task.** Call the conversion endpoint with a complete schedule form, for example:
+
+```json
+{
+  "title": "Study regularly",
+  "notes": "Review the next chapter",
+  "priority": 2,
+  "goal_id": null,
+  "frequency": "weekly",
+  "start_date": "2026-10-20",
+  "end_date": null,
+  "weekdays": [],
+  "current_date": "2026-10-20",
+  "horizon_days": 30
+}
+```
+
+The action returns `201`. It creates an active schedule and retains the selected task's PostgreSQL ID, original `source_task_id`, and creation timestamp. The supplied details and goal replace that task's editable details; `start_date` becomes its due date and original recurrence date. The task is linked before generation so the first occurrence is not duplicated. For `certainDays`, the first date must be one of the selected weekdays. A future first date remains saved even when it is outside the generation window. Completed tasks and tasks with an existing native or source recurring identity return `409`. Retrying a successful conversion returns `409` without creating a second schedule.
+
+**Edit from a selected occurrence.** Call the series-edit endpoint with the full editable form and window:
+
+```json
+{
+  "title": "Study on Tuesdays and Thursdays",
+  "notes": null,
+  "priority": 1,
+  "goal_id": null,
+  "frequency": "certainDays",
+  "end_date": null,
+  "weekdays": [2, 4],
+  "current_date": "2026-10-20",
+  "horizon_days": 30
+}
+```
+
+The action returns `200`. This is a complete form, not a partial PATCH: omitted optional notes, goal, and end date clear those values; omitted priority defaults to zero. Do not supply `start_date` or `active`. The saved task's original `recurrence_occurrence_date` becomes the schedule's new anchor, even when its editable due date differs or it was moved to Inbox. An end date before that original date returns `422`.
+
+The selected task keeps its ID, source task ID, creation timestamp, due date, and Inbox/scheduled state while receiving the revised title, notes, priority, and goal. The schedule retains its own PostgreSQL ID, source identity, and creation timestamp. Paused schedules remain paused. Source-only selected occurrences can resolve their imported schedule and gain a native link; other historical tasks are not rewritten.
+
+Earlier unfinished tasks and all completed tasks retain their details and individual goal links. Only later unfinished occurrences of the selected schedule are deleted, using original occurrence dates rather than moved due dates. This includes later tasks moved to Inbox or outside the generation window. Revised occurrences are generated within the requested window; dates beyond it can be generated later. A selected task may remain on a date outside its revised weekday pattern, while new tasks follow that pattern.
+
+Existing skips are retained. A selected occurrence that is itself marked skipped returns `409`; the action does not silently remove the skip. Native rule links take precedence over stale source metadata when selecting tasks to rebuild. Deleted tasks' weekly commitments and decision records retain their saved history with live task links cleared; those links are not reassigned to generated replacement tasks.
+
+Both responses contain `task`, `rule`, `generation`, and `deleted_task_ids`. Generation counts describe only generation: the retained selected task is not newly created, and `generation.database_changed` can be false even when the workflow edited a task or schedule. Conversion returns an empty deletion list. Repeating a successful series edit can rebuild later unfinished tasks again with fresh IDs; it is not an idempotent retry operation.
+
+Each action commits once after schedule edits, selected-task changes, deletions, generation, and response validation succeed. Missing required records return `404`, invalid values return `422`, and protected states or database conflicts return `409`. A failed operation rolls back its entire transaction. The generation service exposes a helper without its own commit so the workflow controls that transaction; the standalone generation endpoint still commits its own complete operation.
 
 ### Weekly commitments
 
@@ -316,7 +372,7 @@ For PATCH requests, omitted fields retain their current values. For example, `{"
 - `source_task_id`, `source_goal_id`, and `source_recurring_rule_id` preserve the original SQLite identities for migration matching. They use `BIGINT` because SQLite IDs may exceed PostgreSQL’s regular `INTEGER` range.
 - Imports map source identities to PostgreSQL parent IDs; they do not substitute SQLite IDs for PostgreSQL primary keys.
 - Creating a recurring task requires both `recurring_rule_id` and `recurrence_occurrence_date`. The occurrence inherits the schedule’s goal only at creation unless a goal, including explicit null, is supplied.
-- Each occurrence keeps its own goal link. Changing a schedule’s goal does not retroactively reassign older task occurrences.
+- Each occurrence keeps its own goal link. Ordinary schedule PATCH does not retroactively reassign existing tasks. The explicit series-edit action revises the selected task and later unfinished occurrences while preserving earlier and completed history.
 - Changing a task’s due date preserves its original occurrence date. Ordinary PATCH requests cannot rewrite the recurring identity.
 - Unique constraints protect both source and native schedule/date identities from duplicate occurrences.
 - Deleting a recurring task records a skipped occurrence when its schedule exists. Creating that skipped occurrence again returns `409`.
@@ -399,11 +455,11 @@ python -m alembic check
 python -m pytest -q
 ```
 
-The backend suite currently collects **1,341 tests** (October 19, 2026). The new focused suites contain **101 cycle review tests**, **67 brain dump tests**, and **97 task template tests**. Run the commands above against PostgreSQL to verify this checkout before committing; collection alone does not confirm execution passed.
+The backend suite currently collects **1,472 tests** (October 20, 2026). The recurring task workflow suite contains **131 tests**, and the standalone generation API suite contains **48 tests**. Run the commands above against PostgreSQL to verify this checkout before committing; collection alone does not confirm execution passed.
 
-Coverage includes request validation, model constraints, task relationships, historical goal links, goal completion and deletion, planning cycles, milestones, migration backfills, backup previews, strict imports, refreshes, duplicate protection, recurrence date calculations, schedule and exception APIs, transactional occurrence generation, weekly commitment task links and completion, frozen review snapshots, atomic weekly task decisions, recurring deletion skips, cycle draft editing and finalization, goal carry-forward and replacement, preserved cycle history, brain dump archive/restore and conversion, independent template-created tasks, and rollback behavior.
+Coverage includes request validation, model constraints, task relationships, historical goal links, goal completion and deletion, planning cycles, milestones, migration backfills, backup previews, strict imports, refreshes, duplicate protection, recurrence date calculations, schedule and exception APIs, transactional occurrence generation, existing-task conversion, series edits from original occurrence dates, retained historical goal links and task placements, rebuild-dependent weekly links, weekly commitment task links and completion, frozen review snapshots, atomic weekly task decisions, recurring deletion skips, cycle draft editing and finalization, goal carry-forward and replacement, preserved cycle history, brain dump archive/restore and conversion, independent template-created tasks, and rollback behavior.
 
-Backup write, refresh, task relationship, weekly-history write, recurrence, cycle review, brain dump, and task template API tests use isolated schemas inside the existing PostgreSQL database. Endpoint commits run within test-owned transactions, and teardown rolls back their data and schema. Schema inspection tests still check the migrated application tables. The FastAPI development server does not need to be running during pytest. A known FastAPI/Starlette deprecation warning may appear even when all tests pass.
+Backup write, refresh, task relationship, weekly-history write, recurrence and recurring task workflow, cycle review, brain dump, and task template API tests use isolated schemas inside the existing PostgreSQL database. Endpoint commits run within test-owned transactions, and teardown rolls back their data and schema. Schema inspection tests still check the migrated application tables. The FastAPI development server does not need to be running during pytest. A known FastAPI/Starlette deprecation warning may appear even when all tests pass.
 
 Useful focused checks:
 
@@ -413,6 +469,7 @@ python -m pytest tests/test_backup_refresh_api.py tests/test_backup_refresh_orde
 python -m pytest tests/test_backup_import_write_api.py tests/test_weekly_history_models.py -q
 python -m pytest tests/test_recurring_rules_api.py tests/test_recurring_exceptions_api.py -q
 python -m pytest tests/test_recurrence_dates.py tests/test_recurrence_generation_api.py -q
+python -m pytest tests/test_recurring_task_workflows_api.py -q
 python -m pytest tests/test_weekly_commitments_api.py tests/test_weekly_reviews_api.py tests/test_weekly_task_decisions_api.py -q
 python -m pytest tests/test_cycle_reviews_api.py tests/test_brain_dumps_api.py tests/test_task_templates_api.py -q
 ```
@@ -453,7 +510,8 @@ docker compose start db
 | `app/services/backup_import.py` | Complete-backup comparison plan and strict import |
 | `app/services/backup_refresh.py` | Transactional create/update refresh with stable PostgreSQL IDs |
 | `app/services/recurrence.py` | Calendar occurrence calculations and generation-window limits |
-| `app/services/recurrence_generation.py` | Transactional generation with skip, duplicate, and history protection |
+| `app/services/recurrence_generation.py` | Standalone generation and a caller-owned transaction helper, with skip, duplicate, and history protection |
+| `app/services/recurring_task_workflows.py` | Atomic task conversion and series edits that preserve earlier/completed history |
 | `app/services/cycle_reviews.py` | Atomic draft saves and finalization, goal outcomes, successor cycles, and first commitments |
 | `alembic/versions/` | Versioned database structure changes |
 | `tests/` | Backend validation, database, migration, and API tests |
@@ -462,10 +520,8 @@ docker compose start db
 
 ## Remaining work
 
-The core data API groups are implemented. Remaining work before completing the intended app migration includes:
+The planned core data APIs and the two specialized recurring task actions are implemented. Run the full PostgreSQL suite and Alembic check before committing this backend batch. Remaining work before completing the intended app migration includes:
 
-- Add the specialized action for converting an existing task into recurring work.
-- Add the specialized action for editing a recurring schedule from a selected occurrence onward, with explicit rules for preserving history. These two actions may extend existing schemas/routers and add service logic and tests.
 - Connect the main app's storage operations to the PostgreSQL APIs, verify each feature, and complete the final data refresh and storage switch.
 - Add any agreed extensions to cycle duration; current cycles remain twelve weeks.
 - Add authentication and define any future synchronization or offline behavior according to the deployment scope.
