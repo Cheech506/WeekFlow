@@ -1,6 +1,5 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { router, Tabs, type Href } from 'expo-router';
-import React from 'react';
 import { Pressable } from 'react-native';
 
 import { useClientOnlyValue } from '@/components/useClientOnlyValue';
@@ -54,7 +53,7 @@ export default function TabLayout() {
         options={{
           title: 'Goals',
           tabBarIcon: ({ color }) => (
-            <Ionicons name="flag-outline" color={color} size={28} />
+            <Ionicons name="flag-outline" style={{ color }} size={28} />
           ),
         }}
       />
@@ -64,7 +63,7 @@ export default function TabLayout() {
         options={{
           title: 'Inbox',
           tabBarIcon: ({ color }) => (
-            <Ionicons name="file-tray-outline" color={color} size={28} />
+            <Ionicons name="file-tray-outline" style={{ color }} size={28} />
           ),
         }}
       />
@@ -74,7 +73,7 @@ export default function TabLayout() {
         options={{
           title: 'Daily',
           tabBarIcon: ({ color }) => (
-            <Ionicons name="checkmark-circle-outline" color={color} size={28} />
+            <Ionicons name="checkmark-circle-outline" style={{ color }} size={28} />
           ),
         }}
       />
@@ -84,7 +83,7 @@ export default function TabLayout() {
         options={{
           title: 'Weekly',
           tabBarIcon: ({ color }) => (
-            <Ionicons name="calendar-outline" color={color} size={28} />
+            <Ionicons name="calendar-outline" style={{ color }} size={28} />
           ),
         }}
       />
@@ -94,7 +93,7 @@ export default function TabLayout() {
         options={{
           title: 'History',
           tabBarIcon: ({ color }) => (
-            <Ionicons name="time-outline" color={color} size={28} />
+            <Ionicons name="time-outline" style={{ color }} size={28} />
           ),
         }}
       />
