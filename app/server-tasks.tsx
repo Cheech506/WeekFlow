@@ -13,16 +13,16 @@ import { useTasks } from '@/context/TaskContext';
 import {
   refreshBackupMigration,
   type BackupRefreshResult,
-} from '@/lib/backupMigrationApi';
-import { buildWeekFlowBackup } from '@/lib/backupStorage';
+} from '@/lib/api/backupMigrationApi';
 import {
   fetchServerTasks,
   type ServerTask,
-} from '@/lib/taskApi';
+} from '@/lib/api/taskApi';
 import {
   previewTaskMigration,
   type TaskMigrationPreview,
-} from '@/lib/taskMigrationApi';
+} from '@/lib/api/taskMigrationApi';
+import { buildWeekFlowBackup } from '@/lib/backupStorage';
 
 function confirmCompleteRefresh(): Promise<boolean> {
   const message =

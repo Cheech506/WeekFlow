@@ -1,4 +1,4 @@
-import type { Task } from './taskStorage';
+import type { Task } from '../taskStorage';
 
 export type TaskMigrationPreview = {
   received_count: number;

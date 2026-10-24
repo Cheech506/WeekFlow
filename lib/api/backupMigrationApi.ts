@@ -1,4 +1,4 @@
-import type { WeekFlowBackup } from './backupValidation';
+import type { WeekFlowBackup } from '../backupValidation';
 
 const BACKUP_COLLECTION_NAMES = [
   'tasks',

@@ -2,9 +2,41 @@
 
 WeekFlow’s backend uses Python, FastAPI, Pydantic, SQLAlchemy, Psycopg, PostgreSQL, Alembic, and Docker Compose.
 
-The core data API supports tasks, planning cycles, goals, goal milestones, recurring schedules, skipped occurrences, weekly commitments, weekly reviews, weekly task decisions, cycle reviews and their goal outcomes, brain dumps, and task templates. Cycle goal outcomes are saved together with their parent review. It also generates missing recurring tasks transactionally, converts existing tasks into recurring schedules, and revises a series from a selected occurrence while preserving earlier and completed task history. Complete-backup tools validate, preview, import, and refresh all 13 supported record collections, including recurring schedules and review history.
+The core data API supports tasks, planning cycles, goals, goal milestones, recurring schedules, skipped occurrences, weekly commitments, weekly reviews, weekly task decisions, cycle reviews and their goal outcomes, brain dumps, and task templates. Cycle goal outcomes are saved together with their parent review. It also generates missing recurring tasks transactionally, converts existing tasks into recurring schedules, revises a series from a selected occurrence while preserving earlier and completed task history, and detaches one unfinished occurrence while retaining its task and skipping its old recurring slot. Complete-backup tools validate, preview, import, and refresh all 13 supported record collections, including recurring schedules and review history.
 
 **Current app storage:** WeekFlow still uses SQLite for everyday activity. The app’s Task API tools screen can read server tasks and copy or refresh the device’s current data into PostgreSQL. Real WeekFlow data has been imported and refreshed successfully. This migration does not switch the main app to PostgreSQL or enable automatic synchronization.
+
+## Frontend API clients and integration status
+
+The frontend now has typed clients for all 13 domain record collections, plus recurring task actions and the existing migration tools. They live in `lib/api/` at the repository root. Shared transport sends requests to `EXPO_PUBLIC_API_BASE_URL`; feature clients validate request fields, translate camelCase app fields to snake_case API fields, and validate/map responses back into the existing UI shapes.
+
+| Client in `../lib/api/` | Responsibility |
+|---|---|
+| `apiClient.ts` | Shared transport, timeouts, cancellation, HTTP errors, and response validation |
+| `taskApi.ts` | Task CRUD, native goal/schedule links, and task response decoding |
+| `planningCycleApi.ts` | Cycle CRUD, the current cycle, and shared cycle decoding |
+| `goalApi.ts` | Goal CRUD, completion reflections/totals, and reopening |
+| `goalMilestoneApi.ts` | Milestone CRUD and completion |
+| `recurringRuleApi.ts` | Schedule CRUD, deletion modes, and explicit generation |
+| `recurringExceptionApi.ts` | Skips identified by schedule ID and original occurrence date |
+| `recurringTaskWorkflowApi.ts` | Task conversion, series editing, and detaching one occurrence |
+| `taskTemplateApi.ts` | Template CRUD and independent Inbox tasks created from a template |
+| `brainDumpApi.ts` | Note CRUD, archive/restore, and atomic note-to-task conversion |
+| `weeklyReviewApi.ts` | Weekly reflections and their frozen initial snapshots |
+| `weeklyCommitmentApi.ts` | Standalone promises, live task selections, and linked completion |
+| `weeklyTaskDecisionApi.ts` | Atomic task actions with preserved weekly decision history |
+| `cycleGoalOutcomeApi.ts` | Read outcome history and validate selections for a review draft |
+| `cycleReviewApi.ts` | Whole draft saves, report/detail reads, draft deletion, and finalization |
+| `taskMigrationApi.ts` | Existing task-only migration preview |
+| `backupMigrationApi.ts` | Existing complete-backup import and refresh tools |
+
+Source IDs remain read-only migration metadata. Normal writes and parent links use native PostgreSQL IDs. Type-only imports from storage modules reuse the app's data shapes without executing SQLite queries.
+
+Clients make one request per operation and do not automatically retry writes, fall back to SQLite, or upload an outbox. A lost write response can mean PostgreSQL committed successfully; `ApiError.mutationMayHaveSucceeded` distinguishes this uncertainty from an ordinary rejected request. HTTP 409/422 responses remain visible errors.
+
+The main providers still call the SQLite storage modules. Adding these clients does not switch everyday storage. Task-sync database, cache, outbox, and backend tracking-table foundations exist, but offline upload and reconciliation are deferred until the online app integration is working. The tracking tables do not provide a sync endpoint by themselves.
+
+The next phase is to connect related providers and direct storage callers together, refresh affected app state after linked actions, and avoid mixing SQLite and PostgreSQL IDs. PostgreSQL will serve ordinary app operations; connection errors will remain visible during the initial online integration. Offline fallback is a later phase. The authoritative SQLite backup refresh must be guarded or retired at cutover so it cannot overwrite newer PostgreSQL changes.
 
 ## Requirements
 
@@ -159,8 +191,9 @@ A new skip returns `201`; retrying an existing skip returns `200` and preserves 
 |---|---|---|
 | `POST` | `/api/v1/tasks/{task_id}/convert-to-recurring` | Convert an existing unfinished standalone task into a schedule's first occurrence and generate upcoming tasks |
 | `POST` | `/api/v1/tasks/{task_id}/edit-recurring-from-occurrence` | Revise a series from the selected original occurrence date and rebuild later unfinished tasks |
+| `POST` | `/api/v1/tasks/{task_id}/detach-recurring` | Keep one unfinished occurrence as a standalone task and skip its old recurring slot atomically |
 
-Both actions use the selected task's native PostgreSQL ID. Requests supply the device's local `current_date` and may set `horizon_days` from 0 to 366, defaulting to 30. The inclusive generation window follows the same rules as the generation endpoint. These actions generate only for their own schedule. They do not start background generation or connect the main app to PostgreSQL.
+Conversion and series editing use the selected task's native PostgreSQL ID. Their requests supply the device's local `current_date` and may set `horizon_days` from 0 to 366, defaulting to 30. The inclusive generation window follows the same rules as the generation endpoint. These actions generate only for their own schedule. They do not start background generation or connect the main app to PostgreSQL.
 
 **Convert an existing task.** Call the conversion endpoint with a complete schedule form, for example:
 
@@ -205,9 +238,13 @@ Earlier unfinished tasks and all completed tasks retain their details and indivi
 
 Existing skips are retained. A selected occurrence that is itself marked skipped returns `409`; the action does not silently remove the skip. Native rule links take precedence over stale source metadata when selecting tasks to rebuild. Deleted tasks' weekly commitments and decision records retain their saved history with live task links cleared; those links are not reassigned to generated replacement tasks.
 
-Both responses contain `task`, `rule`, `generation`, and `deleted_task_ids`. Generation counts describe only generation: the retained selected task is not newly created, and `generation.database_changed` can be false even when the workflow edited a task or schedule. Conversion returns an empty deletion list. Repeating a successful series edit can rebuild later unfinished tasks again with fresh IDs; it is not an idempotent retry operation.
+Conversion and series-edit responses contain `task`, `rule`, `generation`, and `deleted_task_ids`. Generation counts describe only generation: the retained selected task is not newly created, and `generation.database_changed` can be false even when the workflow edited a task or schedule. Conversion returns an empty deletion list. Repeating a successful series edit can rebuild later unfinished tasks again with fresh IDs; it is not an idempotent retry operation.
 
-Each action commits once after schedule edits, selected-task changes, deletions, generation, and response validation succeed. Missing required records return `404`, invalid values return `422`, and protected states or database conflicts return `409`. A failed operation rolls back its entire transaction. The generation service exposes a helper without its own commit so the workflow controls that transaction; the standalone generation endpoint still commits its own complete operation.
+Conversion and series editing commit once after schedule edits, selected-task changes, deletions, generation, and response validation succeed. Missing required records return `404`, invalid values return `422`, and protected states or database conflicts return `409`. A failed operation rolls back its entire transaction. The generation service exposes a helper without its own commit so the workflow controls that transaction; the standalone generation endpoint still commits its own complete operation.
+
+**Detach one occurrence.** Send a bodyless `POST /api/v1/tasks/{task_id}/detach-recurring` using the unfinished task's native ID. The service reads the saved schedule and original occurrence date, creates or reuses that slot's skip, and clears `recurring_rule_id`, `source_recurring_rule_id`, and `recurrence_occurrence_date` together. It retains the task's PostgreSQL ID, source task ID, goal links, title, notes, priority, creation timestamp, due date or Inbox placement, and weekly history links. Other tasks and the schedule remain unchanged.
+
+Detachment returns the standalone `TaskRead` directly. Completed tasks, already detached tasks, and duplicate logical occurrences return `409`; missing required records return `404`. An existing skip retains its first timestamp. All changes roll back if the task update, skip insertion, response validation, or commit fails. A later generation request skips the detached slot and can continue generating the schedule's other dates. Repeating a successful detach returns `409`, so clients reconcile an uncertain write by reading the task instead of automatically repeating it.
 
 ### Weekly commitments
 
@@ -455,9 +492,9 @@ python -m alembic check
 python -m pytest -q
 ```
 
-The backend suite currently collects **1,472 tests** (October 20, 2026). The recurring task workflow suite contains **131 tests**, and the standalone generation API suite contains **48 tests**. Run the commands above against PostgreSQL to verify this checkout before committing; collection alone does not confirm execution passed.
+The backend suite currently collects **1,563 tests** (October 23, 2026). This includes **131** conversion/series-edit tests, **36** recurring-task detachment tests, **48** standalone generation API tests, and **55** task-sync tracking model/migration tests. Run the commands above against PostgreSQL to verify this checkout before committing; collection alone does not confirm execution passed.
 
-Coverage includes request validation, model constraints, task relationships, historical goal links, goal completion and deletion, planning cycles, milestones, migration backfills, backup previews, strict imports, refreshes, duplicate protection, recurrence date calculations, schedule and exception APIs, transactional occurrence generation, existing-task conversion, series edits from original occurrence dates, retained historical goal links and task placements, rebuild-dependent weekly links, weekly commitment task links and completion, frozen review snapshots, atomic weekly task decisions, recurring deletion skips, cycle draft editing and finalization, goal carry-forward and replacement, preserved cycle history, brain dump archive/restore and conversion, independent template-created tasks, and rollback behavior.
+Coverage includes request validation, model constraints, task relationships, historical goal links, goal completion and deletion, planning cycles, milestones, migration backfills, backup previews, strict imports, refreshes, duplicate protection, recurrence date calculations, schedule and exception APIs, transactional occurrence generation, existing-task conversion, atomic occurrence detachment and skip preservation, series edits from original occurrence dates, retained historical goal links and task placements, rebuild-dependent weekly links, weekly commitment task links and completion, frozen review snapshots, atomic weekly task decisions, recurring deletion skips, cycle draft editing and finalization, goal carry-forward and replacement, preserved cycle history, brain dump archive/restore and conversion, independent template-created tasks, and rollback behavior.
 
 Backup write, refresh, task relationship, weekly-history write, recurrence and recurring task workflow, cycle review, brain dump, and task template API tests use isolated schemas inside the existing PostgreSQL database. Endpoint commits run within test-owned transactions, and teardown rolls back their data and schema. Schema inspection tests still check the migrated application tables. The FastAPI development server does not need to be running during pytest. A known FastAPI/Starlette deprecation warning may appear even when all tests pass.
 
@@ -469,16 +506,19 @@ python -m pytest tests/test_backup_refresh_api.py tests/test_backup_refresh_orde
 python -m pytest tests/test_backup_import_write_api.py tests/test_weekly_history_models.py -q
 python -m pytest tests/test_recurring_rules_api.py tests/test_recurring_exceptions_api.py -q
 python -m pytest tests/test_recurrence_dates.py tests/test_recurrence_generation_api.py -q
-python -m pytest tests/test_recurring_task_workflows_api.py -q
+python -m pytest tests/test_recurring_task_workflows_api.py tests/test_recurring_task_detach_api.py -q
 python -m pytest tests/test_weekly_commitments_api.py tests/test_weekly_reviews_api.py tests/test_weekly_task_decisions_api.py -q
 python -m pytest tests/test_cycle_reviews_api.py tests/test_brain_dumps_api.py tests/test_task_templates_api.py -q
 ```
 
-For frontend type checking, run from the WeekFlow repository root:
+Run the complete frontend suite and type checker from the WeekFlow repository root:
 
 ```bash
+npm test -- --watchman=false
 npx tsc --noEmit
 ```
+
+On October 23, 2026, all **1,428 frontend tests across 49 suites** passed, and the frontend type check passed. Feature-client tests simulate HTTP responses; SQLite integration tests use disposable local databases. These do not replace a PostgreSQL backend test run or a live app integration check.
 
 ## Stop and restart PostgreSQL
 
@@ -511,19 +551,22 @@ docker compose start db
 | `app/services/backup_refresh.py` | Transactional create/update refresh with stable PostgreSQL IDs |
 | `app/services/recurrence.py` | Calendar occurrence calculations and generation-window limits |
 | `app/services/recurrence_generation.py` | Standalone generation and a caller-owned transaction helper, with skip, duplicate, and history protection |
-| `app/services/recurring_task_workflows.py` | Atomic task conversion and series edits that preserve earlier/completed history |
+| `app/services/recurring_task_workflows.py` | Atomic task conversion, series edits, and occurrence detachment with skip/history preservation |
 | `app/services/cycle_reviews.py` | Atomic draft saves and finalization, goal outcomes, successor cycles, and first commitments |
 | `alembic/versions/` | Versioned database structure changes |
 | `tests/` | Backend validation, database, migration, and API tests |
-| `../lib/backupMigrationApi.ts` | Frontend clients and response validation for complete import and refresh |
+| `../lib/api/` | Shared HTTP transport, feature clients, and migration clients with runtime response validation |
+| `../lib/taskSync*.ts` | Deferred offline cache, outbox, database, and type foundations |
+| `app/models/task_sync.py` | Persistent server identity, client-task mappings, and sync receipt table definitions |
 | `../app/server-tasks.tsx` | Task API tools, task preview, confirmed refresh, and server task reads |
 
 ## Remaining work
 
-The planned core data APIs and the two specialized recurring task actions are implemented. Run the full PostgreSQL suite and Alembic check before committing this backend batch. Remaining work before completing the intended app migration includes:
+The planned core data APIs, three specialized recurring task actions, and typed frontend clients are implemented. The main app storage switch remains pending. Run the full PostgreSQL suite and Alembic check before committing this batch. Remaining work before completing the intended app migration includes:
 
 - Connect the main app's storage operations to the PostgreSQL APIs, verify each feature, and complete the final data refresh and storage switch.
 - Add any agreed extensions to cycle duration; current cycles remain twelve weeks.
-- Add authentication and define any future synchronization or offline behavior according to the deployment scope.
+- Complete the deferred offline fallback/upload and reconciliation behavior after online integration; the current foundations do not upload changes.
+- Add authentication according to the deployment scope.
 
 Successful backup migration verifies a copy of the data in PostgreSQL. It does not complete the frontend storage switch.

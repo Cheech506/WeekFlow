@@ -318,3 +318,83 @@ def edit_recurring_from_occurrence(
     except Exception:
         db.rollback()
         raise
+
+
+def detach_recurring_task(
+    *,
+    db: Session,
+    task_id: int,
+) -> TaskRead:
+    """Keep one unfinished occurrence as a standalone task and skip its old slot.
+
+    The original occurrence date, rather than the editable due date, identifies
+    the slot that generation must skip. The schedule, other occurrences, goal
+    links, task ID, creation timestamp, and weekly history links stay intact.
+
+    This function owns the transaction: saving the skip and clearing all three
+    recurring identity fields either succeed together or are rolled back.
+    Repeating a successful detach returns a conflict because the task no longer
+    belongs to a series. Callers must not automatically retry uncertain writes.
+    """
+
+    try:
+        # Use the same locks as conversion and series edits so generation,
+        # schedule deletion, and other task writes cannot race this change.
+        _lock_workflow_writes(db)
+        task = _require_unfinished_task(db, task_id)
+        rule = _require_task_schedule(db, task)
+        occurrence_date = task.recurrence_occurrence_date
+
+        # A native occurrence and a source-only imported occurrence could
+        # represent the same slot despite their separate UNIQUE constraints.
+        # Do not save a skip that would also apply to a different live task.
+        other_task_id = db.scalar(
+            select(Task.id)
+            .where(
+                _task_rule_link(rule),
+                Task.recurrence_occurrence_date == occurrence_date,
+                Task.id != task.id,
+            )
+            .limit(1)
+        )
+        if other_task_id is not None:
+            raise RecurringTaskConflictError(
+                "Another task represents this recurring occurrence. "
+                "Resolve that duplicate before detaching. No changes were saved."
+            )
+
+        # Reuse an existing skip without changing its original timestamp.
+        identity = (rule.id, occurrence_date)
+        skipped = db.get(
+            RecurringOccurrenceException,
+            identity,
+            populate_existing=True,
+        )
+        if skipped is None:
+            db.add(RecurringOccurrenceException(
+                recurring_rule_id=rule.id,
+                occurrence_date=occurrence_date,
+            ))
+
+        # Clear the native link AND imported recurring metadata. Leaving a
+        # source rule/date behind would still make generation see recurrence.
+        # The task's own source_task_id and goal metadata are preserved.
+        task.recurring_rule_id = None
+        task.source_recurring_rule_id = None
+        task.recurrence_occurrence_date = None
+        db.flush()
+
+        # Copy and validate the response before committing, as with the other
+        # workflows. A bad response must not leave a half-completed action.
+        result = TaskRead.model_validate(task)
+        db.commit()
+        return result
+
+    except IntegrityError as error:
+        db.rollback()
+        raise RecurringTaskConflictError(
+            "The task could not be detached safely. No changes were saved."
+        ) from error
+    except Exception:
+        db.rollback()
+        raise

@@ -1,4 +1,4 @@
-"""API actions for converting tasks and editing their recurring series."""
+"""API actions for converting, editing, and detaching recurring tasks."""
 
 from fastapi import APIRouter, Depends, HTTPException, Path, status
 from fastapi.encoders import jsonable_encoder
@@ -11,11 +11,13 @@ from app.schemas import (
     RecurringEditFromOccurrenceRequest,
     RecurringTaskWorkflowRead,
     TaskConvertToRecurringRequest,
+    TaskRead,
 )
 from app.services.recurring_task_workflows import (
     RecurringTaskConflictError,
     RecurringTaskNotFoundError,
     convert_task_to_recurring,
+    detach_recurring_task,
     edit_recurring_from_occurrence,
 )
 
@@ -129,5 +131,40 @@ def edit_series_from_selected_task(
         raise HTTPException(status_code=409, detail=str(error)) from error
     except ValidationError as error:
         raise _validation_error(error) from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@router.post(
+    "/{task_id}/detach-recurring",
+    response_model=TaskRead,
+    status_code=status.HTTP_200_OK,
+    responses={
+        404: {"description": "The task or its recurring schedule does not exist."},
+        409: {"description": "The occurrence cannot be detached safely; no changes were saved."},
+    },
+)
+def detach_existing_recurring_task(
+    task_id: int = Path(gt=0, le=2_147_483_647),
+    db: Session = Depends(get_db),
+) -> TaskRead:
+    """Keep one unfinished occurrence as a standalone task.
+
+    No request body is needed. The server reads the original occurrence date
+    and schedule from the saved task, records a skip, and clears its recurring
+    identity in one transaction. Its ID, goal, notes, creation time, due date
+    or Inbox placement, and weekly links are retained. Other occurrences and
+    the schedule itself are unchanged. Completed history cannot be detached.
+
+    A repeat after a successful detach returns 409. Do not automatically
+    repeat this action after a lost response; read the task to check its state.
+    """
+
+    try:
+        return detach_recurring_task(db=db, task_id=task_id)
+    except RecurringTaskNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except RecurringTaskConflictError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error

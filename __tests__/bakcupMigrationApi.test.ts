@@ -1,8 +1,8 @@
 import {
-    importBackupMigration,
-    type BackupImportCounts,
-    type BackupImportResult,
-} from '../lib/backupMigrationApi';
+  importBackupMigration,
+  type BackupImportCounts,
+  type BackupImportResult,
+} from '../lib/api/backupMigrationApi';
 import type { WeekFlowBackup } from '../lib/backupValidation';
 import { makeTask } from './testFactories';
 

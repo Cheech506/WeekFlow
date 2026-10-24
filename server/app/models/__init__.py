@@ -11,6 +11,11 @@ from app.models.recurring_occurrence_exception import (
 )
 from app.models.recurring_rule import RecurringRule
 from app.models.task import Task
+from app.models.task_sync import (
+    SyncServerIdentity,
+    TaskSyncClientTask,
+    TaskSyncReceipt,
+)
 from app.models.task_template import TaskTemplate
 from app.models.weekly_commitment import WeeklyCommitment
 from app.models.weekly_review import WeeklyReview
@@ -25,7 +30,10 @@ __all__ = [
     "PlanningCycle",
     "RecurringOccurrenceException",
     "RecurringRule",
+    "SyncServerIdentity",
     "Task",
+    "TaskSyncClientTask",
+    "TaskSyncReceipt",
     "TaskTemplate",
     "WeeklyCommitment",
     "WeeklyReview",

@@ -1,7 +1,7 @@
 import {
-    previewTaskMigration,
-    type TaskMigrationPreview,
-} from '../lib/taskMigrationApi';
+  previewTaskMigration,
+  type TaskMigrationPreview,
+} from '../lib/api/taskMigrationApi';
 import { makeTask } from './testFactories';
 
 afterEach(() => {
