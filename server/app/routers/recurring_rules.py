@@ -36,6 +36,16 @@ from app.services.recurrence_generation import (
 )
 
 
+from app.schemas.recurring_series_edit import (
+    RecurringSeriesEditRead,
+    RecurringSeriesEditRequest,
+)
+from app.services.recurring_series_edit import (
+    RecurringSeriesEditConflictError,
+    RecurringSeriesEditNotFoundError,
+    edit_recurring_series,
+)
+
 router = APIRouter(
     prefix=f"{API_PREFIX}/recurring-rules",
     tags=["recurring schedules"],
@@ -356,3 +366,48 @@ def delete_recurring_rule(
         raise
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/{rule_id}/edit-series",
+    response_model=RecurringSeriesEditRead,
+    status_code=status.HTTP_200_OK,
+)
+def edit_recurring_schedule_series(
+    edit_data: RecurringSeriesEditRequest,
+    rule_id: int = Path(gt=0, le=2_147_483_647),
+    db: Session = Depends(get_db),
+) -> RecurringSeriesEditRead:
+    """Save a full schedule edit and rebuild future unfinished occurrences.
+
+    Use the device's current calendar date as the inclusive rebuild boundary.
+    Original occurrence dates determine which unfinished tasks are rebuilt,
+    even if their due dates or Inbox placement have changed. Earlier unfinished
+    tasks keep their IDs and placement while receiving the new task details.
+
+    Completed history, skips, the schedule ID, and its active/paused state are
+    preserved. Future replacement tasks receive new PostgreSQL IDs. The service
+    saves the entire operation in one transaction or rolls it all back.
+
+    Do not automatically retry after a lost response: another successful call
+    can rebuild future tasks again. Refresh before deciding to submit again.
+    """
+
+    try:
+        return edit_recurring_series(
+            db=db,
+            rule_id=rule_id,
+            request=edit_data,
+        )
+
+    except RecurringSeriesEditNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(error),
+        ) from error
+
+    except RecurringSeriesEditConflictError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(error),
+        ) from error

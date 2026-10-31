@@ -4,40 +4,41 @@ import React, {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 
 import { useCelebrations } from '@/context/CelebrationContext';
 import { useTasks } from '@/context/TaskContext';
 import {
-  deleteGoalMilestoneById,
-  getGoalMilestones,
-  insertGoalMilestone,
-  updateGoalMilestone,
-  updateGoalMilestoneCompletion,
-  type GoalMilestone,
-} from '@/lib/goalMilestoneStorage';
+  completeApiGoal,
+  createApiGoal,
+  deleteApiGoal,
+  fetchApiGoals,
+  reopenApiGoal,
+  updateApiGoal,
+  type ApiGoal,
+} from '@/lib/api/goalApi';
 import {
-  calculateGoalAnalytics,
-  createGoalCompletionSnapshot,
-  type GoalCompletionReflection,
-} from '@/lib/goalReviewUtils';
-import {
-  deleteGoalById,
-  getGoals,
-  insertGoal,
-  updateGoalCompletion,
-  updateGoalDetails,
-  type GoalPlanningDetails,
-  type StoredGoal,
-} from '@/lib/goalStorage';
+  createApiGoalMilestone,
+  deleteApiGoalMilestone,
+  fetchApiGoalMilestones,
+  updateApiGoalMilestone,
+  type ApiGoalMilestone,
+} from '@/lib/api/goalMilestoneApi';
+import type { GoalCompletionReflection } from '@/lib/goalReviewUtils';
+import type { GoalPlanningDetails, StoredGoal } from '@/lib/goalStorage';
+import { createDefaultGoalDateRange } from '@/lib/goalUtils';
 
+// Keep the existing screen contract. API records also retain migration metadata.
 export type Goal = StoredGoal;
 
 type GoalContextValue = {
-  goals: Goal[];
-  milestones: GoalMilestone[];
+  goals: ApiGoal[];
+  milestones: ApiGoalMilestone[];
   isLoading: boolean;
+  isSaving: boolean;
+  error: Error | null;
   refreshGoals: () => Promise<void>;
   addGoal: (
     title: string,
@@ -55,10 +56,7 @@ type GoalContextValue = {
     reward?: string | null,
     planningDetails?: GoalPlanningDetails
   ) => Promise<void>;
-  completeGoal: (
-    id: number,
-    reflection?: GoalCompletionReflection
-  ) => Promise<void>;
+  completeGoal: (id: number, reflection?: GoalCompletionReflection) => Promise<void>;
   reopenGoal: (id: number) => Promise<void>;
   deleteGoal: (id: number) => Promise<void>;
   addMilestone: (
@@ -79,312 +77,257 @@ type GoalContextValue = {
 
 const GoalContext = createContext<GoalContextValue | null>(null);
 
+function asError(cause: unknown): Error {
+  return cause instanceof Error ? cause : new Error('The goal request failed.');
+}
+
 export function GoalProvider({ children }: { children: React.ReactNode }) {
-  const [goals, setGoals] = useState<Goal[]>([]);
-  const [milestones, setMilestones] = useState<GoalMilestone[]>([]);
+  const [goals, setGoals] = useState<ApiGoal[]>([]);
+  const [milestones, setMilestones] = useState<ApiGoalMilestone[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const { tasks, refreshTasks } = useTasks();
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+  const { refreshTasks } = useTasks();
   const { celebrate } = useCelebrations();
+  const mountedRef = useRef(false);
+  const goalsRef = useRef<ApiGoal[]>([]);
+  const milestonesRef = useRef<ApiGoalMilestone[]>([]);
+  const operationQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const pendingWritesRef = useRef(new Set<string>());
 
-  const refreshGoals = useCallback(async () => {
-    setIsLoading(true);
-
-    try {
-      /*
-       * Goals and milestones are separate relational records, but they are
-       * refreshed together so every goal card renders a consistent snapshot.
-       */
-      const [storedGoals, storedMilestones] = await Promise.all([
-        getGoals(),
-        getGoalMilestones(),
-      ]);
-
-      setGoals(storedGoals);
-      setMilestones(storedMilestones);
-    } catch (error) {
-      console.error('Failed to load goals:', error);
-    } finally {
-      setIsLoading(false);
-    }
+  // Serialize provider operations so an older read cannot replace a saved change.
+  const enqueue = useCallback((operation: () => Promise<void>) => {
+    const result = operationQueueRef.current.then(operation);
+    operationQueueRef.current = result.catch(() => undefined);
+    return result;
   }, []);
+
+  const storeGoals = useCallback((records: ApiGoal[]) => {
+    goalsRef.current = records;
+    if (mountedRef.current) setGoals(records);
+  }, []);
+
+  const storeMilestones = useCallback((records: ApiGoalMilestone[]) => {
+    milestonesRef.current = records;
+    if (mountedRef.current) setMilestones(records);
+  }, []);
+
+  const putGoal = useCallback((record: ApiGoal) => {
+    const current = goalsRef.current;
+    storeGoals(current.some((goal) => goal.id === record.id)
+      ? current.map((goal) => goal.id === record.id ? record : goal)
+      : [record, ...current]);
+  }, [storeGoals]);
+
+  const putMilestone = useCallback((record: ApiGoalMilestone) => {
+    const current = milestonesRef.current;
+    storeMilestones(current.some((milestone) => milestone.id === record.id)
+      ? current.map((milestone) => milestone.id === record.id ? record : milestone)
+      : [...current, record]);
+  }, [storeMilestones]);
+
+  const refreshGoals = useCallback(() => enqueue(async () => {
+    if (!mountedRef.current) return;
+    setIsLoading(true);
+    setError(null);
+    try {
+      // Update neither list until both API requests have succeeded.
+      const [loadedGoals, loadedMilestones] = await Promise.all([
+        fetchApiGoals(),
+        fetchApiGoalMilestones(),
+      ]);
+      if (mountedRef.current) {
+        storeGoals(loadedGoals);
+        storeMilestones(loadedMilestones);
+      }
+    } catch (cause) {
+      const failure = asError(cause);
+      if (mountedRef.current) setError(failure);
+      throw failure;
+    } finally {
+      if (mountedRef.current) setIsLoading(false);
+    }
+  }), [enqueue, storeGoals, storeMilestones]);
 
   useEffect(() => {
-    void refreshGoals();
+    mountedRef.current = true;
+    void refreshGoals().catch((failure) => {
+      console.warn('Failed to load goals and milestones:', failure);
+    });
+    return () => {
+      mountedRef.current = false;
+    };
   }, [refreshGoals]);
 
-  const addGoal = useCallback(
-    async (
-      title: string,
-      startDateKey?: string,
-      endDateKey?: string,
-      reward?: string | null,
-      planningDetails?: GoalPlanningDetails,
-      cycleId: number | null = null
-    ) => {
-      if (!title.trim()) return;
-
-      try {
-        const newGoal = await insertGoal(
-          title,
-          startDateKey,
-          endDateKey,
-          reward,
-          planningDetails,
-          cycleId
-        );
-        setGoals((currentGoals) => [newGoal, ...currentGoals]);
-      } catch (error) {
-        console.error('Failed to add goal:', error);
-        throw error;
-      }
-    },
-    []
-  );
-
-  const editGoal = useCallback(
-    async (
-      id: number,
-      title: string,
-      startDateKey: string,
-      endDateKey: string,
-      reward?: string | null,
-      planningDetails?: GoalPlanningDetails
-    ) => {
-      try {
-        const updatedGoal = await updateGoalDetails(
-          id,
-          title,
-          startDateKey,
-          endDateKey,
-          reward,
-          planningDetails
-        );
-
-        setGoals((currentGoals) =>
-          currentGoals.map((goal) =>
-            goal.id === id
-              ? {
-                  ...goal,
-                  ...updatedGoal,
-                }
-              : goal
-          )
-        );
-      } catch (error) {
-        console.error('Failed to update goal:', error);
-        throw error;
-      }
-    },
-    []
-  );
-
-  const completeGoal = useCallback(
-    async (
-      id: number,
-      reflection: GoalCompletionReflection = {}
-    ) => {
-      const goal = goals.find((item) => item.id === id);
-      if (!goal || goal.completed) return;
-
-      const linkedTasks = tasks.filter((task) => task.goalId === id);
-      const goalMilestones = milestones.filter(
-        (milestone) => milestone.goalId === id
-      );
-      const analytics = calculateGoalAnalytics(
-        goal,
-        linkedTasks,
-        goalMilestones
-      );
-
-      try {
-        await updateGoalCompletion(
-          id,
-          true,
-          reflection,
-          createGoalCompletionSnapshot(analytics)
-        );
-        await refreshGoals();
-        celebrate('goal', goal.title);
-      } catch (error) {
-        console.error('Failed to complete goal:', error);
-        throw error;
-      }
-    },
-    [celebrate, goals, milestones, refreshGoals, tasks]
-  );
-
-  const reopenGoal = useCallback(
-    async (id: number) => {
-      const goal = goals.find((item) => item.id === id);
-      if (!goal || !goal.completed) return;
-
-      try {
-        await updateGoalCompletion(id, false);
-        await refreshGoals();
-      } catch (error) {
-        console.error('Failed to reopen goal:', error);
-        throw error;
-      }
-    },
-    [goals, refreshGoals]
-  );
-
-  const deleteGoal = useCallback(
-    async (id: number) => {
-      try {
-        await deleteGoalById(id);
-
-        setGoals((currentGoals) =>
-          currentGoals.filter((goal) => goal.id !== id)
-        );
-        setMilestones((currentMilestones) =>
-          currentMilestones.filter((milestone) => milestone.goalId !== id)
-        );
-
-        // Reload task and recurring-rule state so deleted goal links disappear
-        // immediately from every screen without requiring an app restart.
-        await refreshTasks();
-      } catch (error) {
-        console.error('Failed to delete goal:', error);
-        throw error;
-      }
-    },
-    [refreshTasks]
-  );
-
-  const addMilestone = useCallback(
-    async (
-      goalId: number,
-      title: string,
-      targetDate?: string | null,
-      notes?: string | null
-    ) => {
-      try {
-        const milestone = await insertGoalMilestone(
-          goalId,
-          title,
-          targetDate,
-          notes
-        );
-        setMilestones((current) => [...current, milestone]);
-      } catch (error) {
-        console.error('Failed to add milestone:', error);
-        throw error;
-      }
-    },
-    []
-  );
-
-  const editMilestone = useCallback(
-    async (
-      id: number,
-      title: string,
-      targetDate?: string | null,
-      notes?: string | null
-    ) => {
-      try {
-        const updated = await updateGoalMilestone(
-          id,
-          title,
-          targetDate,
-          notes
-        );
-        setMilestones((current) =>
-          current.map((milestone) =>
-            milestone.id === id
-              ? { ...milestone, ...updated }
-              : milestone
-          )
-        );
-      } catch (error) {
-        console.error('Failed to edit milestone:', error);
-        throw error;
-      }
-    },
-    []
-  );
-
-  const toggleMilestone = useCallback(
-    async (id: number) => {
-      const milestone = milestones.find((item) => item.id === id);
-      if (!milestone) return;
-
-      const completed = !milestone.completed;
-
-      try {
-        const completedAt = await updateGoalMilestoneCompletion(
-          id,
-          completed
-        );
-        setMilestones((current) =>
-          current.map((item) =>
-            item.id === id
-              ? { ...item, completed, completedAt }
-              : item
-          )
-        );
-      } catch (error) {
-        console.error('Failed to toggle milestone:', error);
-        throw error;
-      }
-    },
-    [milestones]
-  );
-
-  const deleteMilestone = useCallback(async (id: number) => {
-    try {
-      await deleteGoalMilestoneById(id);
-      setMilestones((current) =>
-        current.filter((milestone) => milestone.id !== id)
-      );
-    } catch (error) {
-      console.error('Failed to delete milestone:', error);
-      throw error;
+  const saveChange = useCallback(function saveChange<T>(
+    key: string,
+    write: () => Promise<T>,
+    afterSave: (record: T) => void | Promise<void>
+  ): Promise<void> {
+    if (!mountedRef.current) {
+      return Promise.reject(new Error('The goal provider is not available.'));
     }
-  }, []);
+    // A second action on the same record is blocked immediately.
+    // Changes to different records can wait safely in the operation queue.
+    if (pendingWritesRef.current.has(key)) {
+      return Promise.reject(new Error('This goal or milestone is already being saved.'));
+    }
+    pendingWritesRef.current.add(key);
+    setIsSaving(true);
 
-  const value = useMemo(
-    () => ({
-      goals,
-      milestones,
-      isLoading,
-      refreshGoals,
-      addGoal,
-      editGoal,
-      completeGoal,
-      reopenGoal,
-      deleteGoal,
-      addMilestone,
-      editMilestone,
-      toggleMilestone,
-      deleteMilestone,
-    }),
-    [
-      goals,
-      milestones,
-      isLoading,
-      refreshGoals,
-      addGoal,
-      editGoal,
-      completeGoal,
-      reopenGoal,
-      deleteGoal,
-      addMilestone,
-      editMilestone,
-      toggleMilestone,
-      deleteMilestone,
-    ]
-  );
+    return enqueue(async () => {
+      let saved = false;
+      try {
+        if (!mountedRef.current) {
+          throw new Error('The goal provider is not available.');
+        }
+        setError(null);
+        const record = await write();
+        saved = true;
+        await afterSave(record);
+      } catch (cause) {
+        const failure = saved
+          ? new Error(
+              'The change was saved, but a related view could not be refreshed. ' +
+              'Refresh the app before submitting again.'
+            )
+          : asError(cause);
+        if (mountedRef.current) setError(failure);
+        throw failure;
+      } finally {
+        pendingWritesRef.current.delete(key);
+        if (mountedRef.current) {
+          setIsSaving(pendingWritesRef.current.size > 0);
+        }
+      }
+    });
+  }, [enqueue]);
+
+  const addGoal = useCallback((
+    title: string,
+    startDateKey?: string,
+    endDateKey?: string,
+    reward?: string | null,
+    planningDetails: GoalPlanningDetails = {},
+    cycleId: number | null = null
+  ): Promise<void> => {
+    if (!title.trim()) return Promise.resolve();
+    const defaults = createDefaultGoalDateRange();
+    return saveChange('goal:create', () => createApiGoal({
+      title,
+      startDate: startDateKey ?? defaults.startDateKey,
+      endDate: endDateKey ?? defaults.endDateKey,
+      cycleId,
+      reward: reward ?? null,
+      purpose: planningDetails.purpose ?? null,
+      successDefinition: planningDetails.successDefinition ?? null,
+      notes: planningDetails.notes ?? null,
+    }), putGoal);
+  }, [putGoal, saveChange]);
+
+  const editGoal = useCallback((
+    id: number,
+    title: string,
+    startDateKey: string,
+    endDateKey: string,
+    reward?: string | null,
+    planningDetails: GoalPlanningDetails = {}
+  ) => saveChange(`goal:${id}`, () => updateApiGoal(id, {
+    title,
+    startDate: startDateKey,
+    endDate: endDateKey,
+    reward: reward ?? null,
+    purpose: planningDetails.purpose ?? null,
+    successDefinition: planningDetails.successDefinition ?? null,
+    notes: planningDetails.notes ?? null,
+  }), putGoal), [putGoal, saveChange]);
+
+  const completeGoal = useCallback((
+    id: number,
+    reflection: GoalCompletionReflection = {}
+  ): Promise<void> => {
+    if (goalsRef.current.find((goal) => goal.id === id)?.completed) {
+      return Promise.resolve();
+    }
+    // The backend computes completion totals from its own task/milestone links.
+    return saveChange(`goal:${id}`, () => completeApiGoal(id, reflection), (record) => {
+      putGoal(record);
+      celebrate('goal', record.title);
+    });
+  }, [celebrate, putGoal, saveChange]);
+
+  const reopenGoal = useCallback((id: number): Promise<void> => {
+    const goal = goalsRef.current.find((record) => record.id === id);
+    if (goal && !goal.completed) return Promise.resolve();
+    return saveChange(`goal:${id}`, () => reopenApiGoal(id), putGoal);
+  }, [putGoal, saveChange]);
+
+  const deleteGoal = useCallback((id: number) => saveChange(
+    `goal:${id}`,
+    () => deleteApiGoal(id),
+    async () => {
+      storeGoals(goalsRef.current.filter((goal) => goal.id !== id));
+      storeMilestones(milestonesRef.current.filter((milestone) => milestone.goalId !== id));
+      // PostgreSQL clears linked task, schedule, and template goal references.
+      // TaskContext will reload those records through its API clients too.
+      await refreshTasks();
+    }
+  ), [refreshTasks, saveChange, storeGoals, storeMilestones]);
+
+  const addMilestone = useCallback((
+    goalId: number,
+    title: string,
+    targetDate?: string | null,
+    notes?: string | null
+  ) => saveChange(`milestone:create:${goalId}`, () => createApiGoalMilestone({
+    goalId,
+    title,
+    targetDate: targetDate ?? null,
+    notes: notes ?? null,
+  }), putMilestone), [putMilestone, saveChange]);
+
+  const editMilestone = useCallback((
+    id: number,
+    title: string,
+    targetDate?: string | null,
+    notes?: string | null
+  ) => saveChange(`milestone:${id}`, () => updateApiGoalMilestone(id, {
+    title,
+    targetDate: targetDate ?? null,
+    notes: notes ?? null,
+  }), putMilestone), [putMilestone, saveChange]);
+
+  const toggleMilestone = useCallback((id: number) => saveChange(
+    `milestone:${id}`,
+    async () => {
+      const milestone = milestonesRef.current.find((record) => record.id === id);
+      if (!milestone) throw new Error('Refresh milestones before changing this record.');
+      return updateApiGoalMilestone(id, { completed: !milestone.completed });
+    },
+    putMilestone
+  ), [putMilestone, saveChange]);
+
+  const deleteMilestone = useCallback((id: number) => saveChange(
+    `milestone:${id}`,
+    () => deleteApiGoalMilestone(id),
+    () => storeMilestones(milestonesRef.current.filter((milestone) => milestone.id !== id))
+  ), [saveChange, storeMilestones]);
+
+  const value = useMemo(() => ({
+    goals, milestones, isLoading, isSaving, error, refreshGoals,
+    addGoal, editGoal, completeGoal, reopenGoal, deleteGoal,
+    addMilestone, editMilestone, toggleMilestone, deleteMilestone,
+  }), [goals, milestones, isLoading, isSaving, error, refreshGoals,
+    addGoal, editGoal, completeGoal, reopenGoal, deleteGoal,
+    addMilestone, editMilestone, toggleMilestone, deleteMilestone]);
 
   return <GoalContext.Provider value={value}>{children}</GoalContext.Provider>;
 }
 
 export function useGoals() {
   const context = useContext(GoalContext);
-
   if (!context) {
     throw new Error('useGoals must be used inside GoalProvider');
   }
-
   return context;
 }

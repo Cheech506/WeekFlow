@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
 import { router, type Href } from 'expo-router';
+import { useEffect, useRef, useState } from 'react';
 import {
   Pressable,
   ScrollView,
@@ -9,40 +9,20 @@ import {
 } from 'react-native';
 
 import CycleIdentityFields from '@/components/CycleIdentityFields';
-import FirstCycleOnboarding from '@/components/FirstCycleOnboarding';
 import CycleReviewPanel from '@/components/CycleReviewPanel';
+import { EmptyStateCard } from '@/components/EmptyStateCard';
+import FirstCycleOnboarding from '@/components/FirstCycleOnboarding';
 import GoalAnalyticsCard from '@/components/GoalAnalyticsCard';
 import GoalCompletionPanel from '@/components/GoalCompletionPanel';
 import GoalDashboardOverview from '@/components/GoalDashboardOverview';
 import GoalMilestoneManager from '@/components/GoalMilestoneManager';
 import PastCycleFolder from '@/components/PastCycleFolder';
-import { EmptyStateCard } from '@/components/EmptyStateCard';
 import { ScreenIntro } from '@/components/ScreenIntro';
 import { Text, View } from '@/components/Themed';
 import { useCycle } from '@/context/CycleContext';
 import { useGoals } from '@/context/GoalContext';
 import { useTasks } from '@/context/TaskContext';
 import { useWeeklyReviews } from '@/context/WeeklyReviewContext';
-import {
-  createDefaultGoalDateRange,
-  getGoalDateKey,
-  validateGoalDateRange,
-} from '@/lib/goalUtils';
-import {
-  MAX_GOAL_NOTES_LENGTH,
-  MAX_GOAL_PURPOSE_LENGTH,
-  MAX_GOAL_SUCCESS_DEFINITION_LENGTH,
-} from '@/lib/goalPlanningUtils';
-import { MAX_GOAL_REWARD_LENGTH } from '@/lib/goalRewardUtils';
-import { calculateGoalDashboardSnapshot } from '@/lib/dashboardUtils';
-import {
-  calculateGoalAnalytics,
-  type GoalCompletionReflection,
-} from '@/lib/goalReviewUtils';
-import {
-  formatDateKey,
-  getLocalDateKey,
-} from '@/lib/dateUtils';
 import {
   getPlanningCycleDisplayName,
 } from '@/lib/cycleIdentityUtils';
@@ -53,6 +33,26 @@ import {
   getTimestampDateKey,
   isDateKeyWithinCycle,
 } from '@/lib/cycleUtils';
+import { calculateGoalDashboardSnapshot } from '@/lib/dashboardUtils';
+import {
+  formatDateKey,
+  getLocalDateKey,
+} from '@/lib/dateUtils';
+import {
+  MAX_GOAL_NOTES_LENGTH,
+  MAX_GOAL_PURPOSE_LENGTH,
+  MAX_GOAL_SUCCESS_DEFINITION_LENGTH,
+} from '@/lib/goalPlanningUtils';
+import {
+  calculateGoalAnalytics,
+  type GoalCompletionReflection,
+} from '@/lib/goalReviewUtils';
+import { MAX_GOAL_REWARD_LENGTH } from '@/lib/goalRewardUtils';
+import {
+  createDefaultGoalDateRange,
+  getGoalDateKey,
+  validateGoalDateRange,
+} from '@/lib/goalUtils';
 
 function formatGoalDate(value: string) {
   const date = new Date(value);
@@ -126,6 +126,16 @@ function getGoalDateFeedback(
 }
 
 export default function TwelveWeekGoalsScreen() {
+  const [screenError, setScreenError] = useState<string | null>(null);
+  const [deletingGoalIds, setDeletingGoalIds] = useState<number[]>([]);
+  const pendingDeletes = useRef(new Set<number>());
+  const mounted = useRef(true);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+
   const { width } = useWindowDimensions();
 
   const isDesktop = width >= 1100;
@@ -186,7 +196,7 @@ export default function TwelveWeekGoalsScreen() {
   /*
    * Each goal keeps its own local expanded/collapsed state.
    * This is intentionally UI-only state, so opening the linked-task
-   * list never writes to SQLite or changes the goal itself.
+   * list never sends a request or changes the goal itself.
    */
   const [expandedLinkedTaskGoals, setExpandedLinkedTaskGoals] =
     useState<Record<number, boolean>>({});
@@ -423,9 +433,21 @@ export default function TwelveWeekGoalsScreen() {
        * before cycle folders existed. Refresh goal state immediately so those
        * goals appear in the new folder without requiring an app restart.
        */
-      await refreshGoals();
       setCycleMessage('');
       setIsEditingCycle(false);
+      try {
+        await refreshGoals();
+      } catch (error) {
+        // The cycle write succeeded. A failed follow-up read must not imply
+        // that starting the same cycle again is necessary.
+        if (mounted.current) {
+          setScreenError(
+            'The planning cycle was created, but goals could not be refreshed. ' +
+            'Refresh WeekFlow data before making another change. ' +
+            (error instanceof Error ? error.message : '')
+          );
+        }
+      }
     } catch (error) {
       setCycleMessage(
         error instanceof Error
@@ -597,6 +619,32 @@ export default function TwelveWeekGoalsScreen() {
     }
   }
 
+  async function handleDeleteGoal(goalId: number) {
+    if (!mounted.current || pendingDeletes.current.has(goalId)) return;
+    pendingDeletes.current.add(goalId);
+    setDeletingGoalIds([...pendingDeletes.current]);
+    setScreenError(null);
+
+    try {
+      await deleteGoal(goalId);
+      if (mounted.current) {
+        if (editingGoalId === goalId) cancelEditingGoal();
+        setCompletingGoalId((current) => current === goalId ? null : current);
+      }
+    } catch (error) {
+      if (mounted.current) {
+        setScreenError(
+          error instanceof Error
+            ? error.message
+            : 'The goal could not be deleted. Check the server before trying again.'
+        );
+      }
+    } finally {
+      pendingDeletes.current.delete(goalId);
+      if (mounted.current) setDeletingGoalIds([...pendingDeletes.current]);
+    }
+  }
+
   function handleCompleteGoal(goalId: number) {
     if (editingGoalId === goalId) {
       cancelEditingGoal();
@@ -731,6 +779,14 @@ export default function TwelveWeekGoalsScreen() {
         subtitle="See where your cycle, today, weekly commitments, and goals stand."
         style={isDesktop ? styles.fullWidthPanel : undefined}
       />
+
+      {screenError ? (
+        <View style={isDesktop ? styles.fullWidthPanel : undefined}>
+          <Text accessibilityRole="alert" style={styles.dateErrorText}>
+            {screenError}
+          </Text>
+        </View>
+      ) : null}
 
       <View
         style={[
@@ -1375,6 +1431,7 @@ export default function TwelveWeekGoalsScreen() {
                   <View style={styles.goalActions}>
                     <Pressable
                       style={styles.editButton}
+                      disabled={deletingGoalIds.includes(goal.id)}
                       onPress={() =>
                         startEditingGoal(goal.id)
                       }
@@ -1386,6 +1443,7 @@ export default function TwelveWeekGoalsScreen() {
 
                     <Pressable
                       style={styles.completeButton}
+                      disabled={deletingGoalIds.includes(goal.id)}
                       onPress={() =>
                         handleCompleteGoal(goal.id)
                       }
@@ -1397,10 +1455,13 @@ export default function TwelveWeekGoalsScreen() {
 
                     <Pressable
                       style={styles.deleteButton}
-                      onPress={() => deleteGoal(goal.id)}
+                      disabled={deletingGoalIds.includes(goal.id)}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Delete goal: ${goal.title}`}
+                      onPress={() => void handleDeleteGoal(goal.id)}
                     >
                       <Text style={styles.deleteButtonText}>
-                        Delete
+                        {deletingGoalIds.includes(goal.id) ? 'Deleting…' : 'Delete'}
                       </Text>
                     </Pressable>
                   </View>

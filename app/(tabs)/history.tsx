@@ -1,13 +1,13 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Pressable,
   ScrollView,
   StyleSheet,
 } from 'react-native';
 
+import { EmptyStateCard } from '@/components/EmptyStateCard';
 import HistoryFilters from '@/components/HistoryFilters';
 import PastCycleFolder from '@/components/PastCycleFolder';
-import { EmptyStateCard } from '@/components/EmptyStateCard';
 import { ScreenIntro } from '@/components/ScreenIntro';
 import { Text, View } from '@/components/Themed';
 import { useBrainDumps } from '@/context/BrainDumpContext';
@@ -16,16 +16,6 @@ import { useCycleReviews } from '@/context/CycleReviewContext';
 import { useGoals } from '@/context/GoalContext';
 import { useTasks } from '@/context/TaskContext';
 import { getPlanningCycleDisplayName } from '@/lib/cycleIdentityUtils';
-import {
-  brainDumpMatchesHistoryFilters,
-  createDefaultHistoryFilters,
-  getTaskHistoryCycleId,
-  goalMatchesHistoryFilters,
-  resolveHistoryDateRange,
-  taskMatchesHistoryFilters,
-  timestampMatchesHistoryRange,
-  type HistoryFilterState,
-} from '@/lib/historyFilters';
 import {
   formatDateKey,
   getLocalDateKey,
@@ -37,6 +27,16 @@ import {
   hasGoalCompletionReflection,
   resolveGoalCompletionSnapshot,
 } from '@/lib/goalReviewUtils';
+import {
+  brainDumpMatchesHistoryFilters,
+  createDefaultHistoryFilters,
+  getTaskHistoryCycleId,
+  goalMatchesHistoryFilters,
+  resolveHistoryDateRange,
+  taskMatchesHistoryFilters,
+  timestampMatchesHistoryRange,
+  type HistoryFilterState,
+} from '@/lib/historyFilters';
 
 type HistoryGroupKey =
   | 'today'
@@ -258,6 +258,43 @@ function HistoryDetailField({
 }
 
 export default function HistoryScreen() {
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [pendingActionKeys, setPendingActionKeys] = useState<string[]>([]);
+  const pendingActions = useRef(new Set<string>());
+  const mounted = useRef(true);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+
+  async function runHistoryAction(key: string, action: () => Promise<unknown>) {
+    // Restore and delete share a note key, preventing conflicting requests.
+    if (!mounted.current || pendingActions.current.has(key)) return;
+    pendingActions.current.add(key);
+    setPendingActionKeys([...pendingActions.current]);
+    setActionError(null);
+
+    try {
+      await action();
+    } catch (error) {
+      if (mounted.current) {
+        setActionError(
+          error instanceof Error
+            ? error.message
+            : 'The request could not be completed. Check the server before trying again.'
+        );
+      }
+    } finally {
+      pendingActions.current.delete(key);
+      if (mounted.current) setPendingActionKeys([...pendingActions.current]);
+    }
+  }
+
+  function isActionPending(key: string) {
+    return pendingActionKeys.includes(key);
+  }
+
   const [filters, setFilters] = useState<HistoryFilterState>(
     createDefaultHistoryFilters
   );
@@ -520,6 +557,17 @@ export default function HistoryScreen() {
         subtitle="Look back at completed tasks, finished goals, cycle reports, reflections, and thoughts you cleared from your head."
       />
 
+      {actionError ? (
+        <Text accessibilityRole="alert" style={styles.actionError}>
+          {actionError}
+        </Text>
+      ) : null}
+      {pendingActionKeys.length > 0 ? (
+        <Text accessibilityRole="status" style={styles.sectionSubtitle}>
+          Updating history…
+        </Text>
+      ) : null}
+
       <View style={styles.progressCard}>
         <Text style={styles.progressTitle}>
           Accomplishments
@@ -774,7 +822,13 @@ export default function HistoryScreen() {
 
                               <Pressable
                                 style={styles.restoreButton}
-                                onPress={() => reopenGoal(goal.id)}
+                                disabled={isActionPending(`goal:${goal.id}`)}
+                                accessibilityRole="button"
+                                accessibilityLabel={`Reopen goal: ${goal.title}`}
+                                onPress={() => void runHistoryAction(
+                                  `goal:${goal.id}`,
+                                  () => reopenGoal(goal.id)
+                                )}
                               >
                                 <Text style={styles.restoreButtonText}>
                                   Reopen
@@ -1070,11 +1124,13 @@ export default function HistoryScreen() {
                           >
                             <Pressable
                               style={styles.restoreButton}
-                              onPress={() =>
-                                restoreBrainDump(
-                                  brainDump.id
-                                )
-                              }
+                              disabled={isActionPending(`note:${brainDump.id}`)}
+                              accessibilityRole="button"
+                              accessibilityLabel={`Restore note: ${brainDump.body}`}
+                              onPress={() => void runHistoryAction(
+                                `note:${brainDump.id}`,
+                                () => restoreBrainDump(brainDump.id)
+                              )}
                             >
                               <Text
                                 style={
@@ -1087,11 +1143,13 @@ export default function HistoryScreen() {
 
                             <Pressable
                               style={styles.deleteButton}
-                              onPress={() =>
-                                deleteBrainDump(
-                                  brainDump.id
-                                )
-                              }
+                              disabled={isActionPending(`note:${brainDump.id}`)}
+                              accessibilityRole="button"
+                              accessibilityLabel={`Delete archived note: ${brainDump.body}`}
+                              onPress={() => void runHistoryAction(
+                                `note:${brainDump.id}`,
+                                () => deleteBrainDump(brainDump.id)
+                              )}
                             >
                               <Text
                                 style={
@@ -1119,6 +1177,10 @@ export default function HistoryScreen() {
 }
 
 const styles = StyleSheet.create({
+  actionError: {
+    color: '#b91c1c',
+    marginBottom: 16,
+  },
   page: {
     flex: 1,
   },

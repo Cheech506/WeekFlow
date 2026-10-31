@@ -1,11 +1,12 @@
 import {
   createContext,
-  type ReactNode,
   useCallback,
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
+  type ReactNode,
 } from 'react';
 
 import { useBrainDumps } from '@/context/BrainDumpContext';
@@ -14,167 +15,233 @@ import { useCycle } from '@/context/CycleContext';
 import { useGoals } from '@/context/GoalContext';
 import { useTasks } from '@/context/TaskContext';
 import { useWeeklyReviews } from '@/context/WeeklyReviewContext';
-import { exportCycleReport } from '@/lib/cycleReportExport';
 import {
-  getCycleGoalOutcomes,
-  getCycleReviews,
-  finalizeCycleReviewAndStartNextCycle,
-  saveCycleReviewDraft,
-  type StoredCycleGoalOutcome,
-  type StoredCycleReview,
-} from '@/lib/cycleReviewStorage';
+  fetchApiCycleGoalOutcomes,
+  type ApiCycleGoalOutcome,
+} from '@/lib/api/cycleGoalOutcomeApi';
+import {
+  fetchApiCycleReviews,
+  finalizeApiCycleReview,
+  saveApiCycleReviewDraft,
+  type ApiCycleReview,
+  type ApiCycleReviewDetail,
+} from '@/lib/api/cycleReviewApi';
+import { exportCycleReport } from '@/lib/cycleReportExport';
+import type { StoredCycleGoalOutcome, StoredCycleReview } from '@/lib/cycleReviewStorage';
 import {
   buildCycleReportMarkdown,
   calculateCycleReviewSnapshot,
-  normalizeCycleReviewReflection,
   type CycleGoalOutcomeInput,
   type CycleReviewReflectionInput,
   type NextCyclePlanInput,
 } from '@/lib/cycleReviewUtils';
 
 export type {
-  StoredCycleGoalOutcome,
-  StoredCycleReview,
   CycleGoalOutcomeInput,
-  CycleReviewReflectionInput,
-  NextCyclePlanInput,
+  CycleReviewReflectionInput, NextCyclePlanInput, StoredCycleGoalOutcome, StoredCycleReview
+};
+
+type ReviewInput = {
+  cycleId: number;
+  reflection: CycleReviewReflectionInput;
+  nextCycle: NextCyclePlanInput;
+  outcomes: CycleGoalOutcomeInput[];
 };
 
 type CycleReviewContextValue = {
-  cycleReviews: StoredCycleReview[];
-  goalOutcomes: StoredCycleGoalOutcome[];
+  cycleReviews: ApiCycleReview[];
+  goalOutcomes: ApiCycleGoalOutcome[];
   isLoading: boolean;
+  isSaving: boolean;
+  error: Error | null;
   refreshCycleReviews: () => Promise<void>;
-  saveReviewDraft: (input: {
-    cycleId: number;
-    reflection: CycleReviewReflectionInput;
-    nextCycle: NextCyclePlanInput;
-    outcomes: CycleGoalOutcomeInput[];
-  }) => Promise<void>;
-  finalizeReview: (input: {
-    cycleId: number;
-    reflection: CycleReviewReflectionInput;
-    nextCycle: NextCyclePlanInput;
-    outcomes: CycleGoalOutcomeInput[];
-  }) => Promise<void>;
-  exportReport: (
-    cycleId: number,
-    cycleLabel: string
-  ) => Promise<string>;
+  saveReviewDraft: (input: ReviewInput) => Promise<void>;
+  finalizeReview: (input: ReviewInput) => Promise<void>;
+  exportReport: (cycleId: number, cycleLabel: string) => Promise<string>;
 };
 
-const CycleReviewContext =
-  createContext<CycleReviewContextValue | null>(null);
+const CycleReviewContext = createContext<CycleReviewContextValue | null>(null);
 
-export function CycleReviewProvider({
-  children,
-}: {
-  children: ReactNode;
-}) {
-  const [cycleReviews, setCycleReviews] = useState<StoredCycleReview[]>([]);
-  const [goalOutcomes, setGoalOutcomes] = useState<
-    StoredCycleGoalOutcome[]
-  >([]);
+function asError(cause: unknown): Error {
+  return cause instanceof Error ? cause : new Error('The cycle review request failed.');
+}
+
+function captureInput(input: ReviewInput): ReviewInput {
+  return {
+    cycleId: input.cycleId,
+    reflection: { ...input.reflection },
+    nextCycle: {
+      ...input.nextCycle,
+      firstWeekCommitments: [...(input.nextCycle.firstWeekCommitments ?? [])],
+    },
+    outcomes: input.outcomes.map(outcome => ({ ...outcome })),
+  };
+}
+
+export function CycleReviewProvider({ children }: { children: ReactNode }) {
+  const [cycleReviews, setCycleReviews] = useState<ApiCycleReview[]>([]);
+  const [goalOutcomes, setGoalOutcomes] = useState<ApiCycleGoalOutcome[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
   const { celebrate } = useCelebrations();
+  const { cycles, refreshCycles, isLoading: cyclesLoading, isSaving: cyclesSaving, error: cyclesError } = useCycle();
+  const { goals, milestones, refreshGoals, isLoading: goalsLoading, isSaving: goalsSaving, error: goalsError } = useGoals();
+  const { tasks, isLoading: tasksLoading, isSaving: tasksSaving, error: tasksError } = useTasks();
+  const { brainDumps, isLoading: notesLoading, isSaving: notesSaving, error: notesError } = useBrainDumps();
+  const { reviews: weeklyReviews, refreshWeeklyReviews,
+    isLoading: weeklyLoading, isSaving: weeklySaving, error: weeklyError } = useWeeklyReviews();
+  const mountedRef = useRef(false);
+  const reviewsRef = useRef<ApiCycleReview[]>([]);
+  const outcomesRef = useRef<ApiCycleGoalOutcome[]>([]);
+  const operationQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const pendingWritesRef = useRef(new Set<number>());
+  const celebratedReviewsRef = useRef(new Set<number>());
 
-  const { cycles, refreshCycles } = useCycle();
-  const { goals, milestones, refreshGoals } = useGoals();
-  const { tasks } = useTasks();
-  const { brainDumps } = useBrainDumps();
-  const {
-    reviews: weeklyReviews,
-    refreshWeeklyReviews,
-  } = useWeeklyReviews();
-
-  const refreshCycleReviews = useCallback(async () => {
-    setIsLoading(true);
-
-    try {
-      const [storedReviews, storedOutcomes] = await Promise.all([
-        getCycleReviews(),
-        getCycleGoalOutcomes(),
-      ]);
-      setCycleReviews(storedReviews);
-      setGoalOutcomes(storedOutcomes);
-    } finally {
-      setIsLoading(false);
-    }
+  const enqueue = useCallback((operation: () => Promise<void>): Promise<void> => {
+    const result = operationQueueRef.current.then(operation);
+    operationQueueRef.current = result.catch(() => undefined);
+    return result;
   }, []);
 
+  const storeReviews = useCallback((records: ApiCycleReview[]) => {
+    reviewsRef.current = records;
+    if (mountedRef.current) setCycleReviews(records);
+  }, []);
+  const storeOutcomes = useCallback((records: ApiCycleGoalOutcome[]) => {
+    outcomesRef.current = records;
+    if (mountedRef.current) setGoalOutcomes(records);
+  }, []);
+
+  const putDetail = useCallback((detail: ApiCycleReviewDetail) => {
+    const current = reviewsRef.current;
+    storeReviews(current.some(review => review.id === detail.review.id)
+      ? current.map(review => review.id === detail.review.id ? detail.review : review)
+      : [detail.review, ...current]);
+    // The complete draft replaces this report's selections, including outcomes=[].
+    storeOutcomes([
+      ...outcomesRef.current.filter(outcome => outcome.cycleReviewId !== detail.review.id),
+      ...detail.outcomes,
+    ]);
+  }, [storeReviews, storeOutcomes]);
+
+  const readCycleReviewData = useCallback(async () => {
+    const [reviews, outcomes] = await Promise.all([
+      fetchApiCycleReviews(), fetchApiCycleGoalOutcomes(),
+    ]);
+    if (mountedRef.current) {
+      storeReviews(reviews);
+      storeOutcomes(outcomes);
+    }
+  }, [storeReviews, storeOutcomes]);
+
+  const refreshCycleReviews = useCallback(() => enqueue(async () => {
+    if (!mountedRef.current) return;
+    setIsLoading(true);
+    setError(null);
+    try {
+      await readCycleReviewData();
+    } catch (cause) {
+      const failure = asError(cause);
+      if (mountedRef.current) setError(failure);
+      throw failure;
+    } finally {
+      if (mountedRef.current) setIsLoading(false);
+    }
+  }), [enqueue, readCycleReviewData]);
+
   useEffect(() => {
-    void refreshCycleReviews().catch((error) => {
-      console.warn('Failed to load cycle review data:', error);
+    mountedRef.current = true;
+    void refreshCycleReviews().catch(failure => {
+      console.warn('Failed to load cycle review data:', failure);
     });
+    return () => { mountedRef.current = false; };
   }, [refreshCycleReviews]);
 
-  const buildSnapshot = useCallback(
-    (cycleId: number) => {
-      const cycle = cycles.find((item) => item.id === cycleId);
+  const buildSnapshot = useCallback((cycleId: number) => {
+    // Never freeze empty or stale analytics because a related provider failed
+    // to load, is still loading, or is in the middle of another save.
+    if (cyclesLoading || goalsLoading || tasksLoading || notesLoading || weeklyLoading ||
+        cyclesSaving || goalsSaving || tasksSaving || notesSaving || weeklySaving ||
+        cyclesError || goalsError || tasksError || notesError || weeklyError) {
+      throw new Error('Refresh the app and wait for related data to finish loading and saving before saving this review.');
+    }
+    const cycle = cycles.find(item => item.id === cycleId);
+    if (!cycle) throw new Error('The planning cycle could not be found.');
+    return calculateCycleReviewSnapshot(cycle, goals, milestones, tasks, weeklyReviews, brainDumps);
+  }, [cycles, goals, milestones, tasks, weeklyReviews, brainDumps,
+    cyclesLoading, goalsLoading, tasksLoading, notesLoading, weeklyLoading,
+    cyclesSaving, goalsSaving, tasksSaving, notesSaving, weeklySaving,
+    cyclesError, goalsError, tasksError, notesError, weeklyError]);
 
-      if (!cycle) {
-        throw new Error('The planning cycle could not be found.');
+  const saveChange = useCallback((cycleId: number, operation: () => Promise<void>): Promise<void> => {
+    if (!mountedRef.current) return Promise.reject(new Error('The cycle review provider is not available.'));
+    if (pendingWritesRef.current.has(cycleId)) {
+      return Promise.reject(new Error('This cycle review is already being saved.'));
+    }
+    pendingWritesRef.current.add(cycleId);
+    setIsSaving(true);
+    return enqueue(async () => {
+      try {
+        if (!mountedRef.current) throw new Error('The cycle review provider is not available.');
+        setError(null);
+        await operation();
+      } catch (cause) {
+        const failure = asError(cause);
+        if (mountedRef.current) setError(failure);
+        throw failure;
+      } finally {
+        pendingWritesRef.current.delete(cycleId);
+        if (mountedRef.current) setIsSaving(pendingWritesRef.current.size > 0);
+      }
+    });
+  }, [enqueue]);
+
+  const saveReviewDraft = useCallback((input: ReviewInput) => {
+    const captured = captureInput(input);
+    return saveChange(captured.cycleId, async () => {
+      const detail = await saveApiCycleReviewDraft({ ...captured, snapshot: buildSnapshot(captured.cycleId) });
+      putDetail(detail);
+    });
+  }, [buildSnapshot, putDetail, saveChange]);
+
+  const finalizeReview = useCallback((input: ReviewInput) => {
+    const captured = captureInput(input);
+    return saveChange(captured.cycleId, async () => {
+      const existing = reviewsRef.current.find(review => review.cycleId === captured.cycleId);
+      let reviewId: number;
+      if (existing?.finalizedAt) {
+        // A manual retry reads the backend's already-finalized result without
+        // resaving the draft, rebuilding its snapshot, or creating a successor.
+        reviewId = existing.id;
+      } else {
+        const draft = await saveApiCycleReviewDraft({ ...captured, snapshot: buildSnapshot(captured.cycleId) });
+        putDetail(draft);
+        reviewId = draft.review.id;
       }
 
-      return calculateCycleReviewSnapshot(
-        cycle,
-        goals,
-        milestones,
-        tasks,
-        weeklyReviews,
-        brainDumps
-      );
-    }, [brainDumps, cycles, goals, milestones, tasks, weeklyReviews]
-  );
+      // No automatic retries. If this fails, the acknowledged draft stays in
+      // state and the original API error retains its uncertain-write details.
+      const result = await finalizeApiCycleReview(reviewId);
+      putDetail(result);
+      if (!result.alreadyFinalized && !celebratedReviewsRef.current.has(result.review.id)) {
+        celebratedReviewsRef.current.add(result.review.id);
+        const completedCycle = cycles.find(cycle => cycle.id === captured.cycleId);
+        celebrate('cycle', completedCycle?.name ?? 'Planning cycle');
+      }
 
-  const saveReviewDraft = useCallback(
-    async (input: {
-      cycleId: number;
-      reflection: CycleReviewReflectionInput;
-      nextCycle: NextCyclePlanInput;
-      outcomes: CycleGoalOutcomeInput[];
-    }) => {
-      await saveCycleReviewDraft({
-        ...input,
-        snapshot: buildSnapshot(input.cycleId),
-      });
-      await refreshCycleReviews();
-    },
-    [buildSnapshot, refreshCycleReviews]
-  );
-
-  const finalizeReview = useCallback(
-    async (input: {
-      cycleId: number;
-      reflection: CycleReviewReflectionInput;
-      nextCycle: NextCyclePlanInput;
-      outcomes: CycleGoalOutcomeInput[];
-    }) => {
-      const completedCycle = cycles.find((cycle) => cycle.id === input.cycleId);
-
-      await finalizeCycleReviewAndStartNextCycle({
-        ...input,
-        snapshot: buildSnapshot(input.cycleId),
-      });
-
-      await Promise.all([
-        refreshCycles(),
-        refreshGoals(),
-        refreshCycleReviews(),
-        refreshWeeklyReviews(),
+      // Wait for every refresh to settle before releasing this provider's queue.
+      // Do not enqueue refreshCycleReviews inside its own running operation.
+      const refreshed = await Promise.allSettled([
+        refreshCycles(), refreshGoals(), refreshWeeklyReviews(), readCycleReviewData(),
       ]);
-
-      celebrate('cycle', completedCycle?.name ?? '12-Week Cycle');
-    }, [
-      buildSnapshot,
-      celebrate,
-      cycles,
-      refreshCycleReviews,
-      refreshCycles,
-      refreshGoals,
-      refreshWeeklyReviews,
-    ]
-  );
+      if (refreshed.some(value => value.status === 'rejected')) {
+        throw new Error('The cycle was finalized, but some related data could not be refreshed. ' +
+          'Refresh the app before submitting again.');
+      }
+    });
+  }, [buildSnapshot, celebrate, cycles, putDetail, readCycleReviewData,
+    refreshCycles, refreshGoals, refreshWeeklyReviews, saveChange]);
 
   const exportReport = useCallback(
     async (cycleId: number, cycleLabel: string) => {
@@ -189,7 +256,7 @@ export function CycleReviewProvider({
         cycle,
         cycleLabel,
         review: {
-          reflection: normalizeCycleReviewReflection({
+          reflection: {
             biggestAccomplishment: review.biggestAccomplishment,
             biggestChallenge: review.biggestChallenge,
             whatWorkedWell: review.whatWorkedWell,
@@ -197,7 +264,7 @@ export function CycleReviewProvider({
             whatStopDoing: review.whatStopDoing,
             whatContinueDoing: review.whatContinueDoing,
             whatLearned: review.whatLearned,
-          }),
+          },
           snapshot: {
             goalTotal: review.goalTotal,
             goalCompleted: review.goalCompleted,
@@ -241,40 +308,18 @@ export function CycleReviewProvider({
     }, [cycleReviews, cycles, goalOutcomes, goals, weeklyReviews]
   );
 
-  const value = useMemo(
-    () => ({
-      cycleReviews,
-      goalOutcomes,
-      isLoading,
-      refreshCycleReviews,
-      saveReviewDraft,
-      finalizeReview,
-      exportReport,
-    }),
-    [
-      cycleReviews,
-      goalOutcomes,
-      isLoading,
-      refreshCycleReviews,
-      saveReviewDraft,
-      finalizeReview,
-      exportReport,
-    ]
-  );
 
-  return (
-    <CycleReviewContext.Provider value={value}>
-      {children}
-    </CycleReviewContext.Provider>
-  );
+  const value = useMemo(() => ({
+    cycleReviews, goalOutcomes, isLoading, isSaving, error,
+    refreshCycleReviews, saveReviewDraft, finalizeReview, exportReport,
+  }), [cycleReviews, goalOutcomes, isLoading, isSaving, error,
+    refreshCycleReviews, saveReviewDraft, finalizeReview, exportReport]);
+
+  return <CycleReviewContext.Provider value={value}>{children}</CycleReviewContext.Provider>;
 }
 
 export function useCycleReviews() {
   const context = useContext(CycleReviewContext);
-
-  if (!context) {
-    throw new Error('useCycleReviews must be used inside CycleReviewProvider');
-  }
-
+  if (!context) throw new Error('useCycleReviews must be used inside CycleReviewProvider');
   return context;
 }

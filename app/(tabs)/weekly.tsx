@@ -9,12 +9,12 @@ import {
 
 import { ActiveTaskFilters } from '@/components/ActiveTaskFilters';
 import { GuidedWeeklyReviewCard } from '@/components/GuidedWeeklyReviewCard';
+import { ScreenIntro } from '@/components/ScreenIntro';
 import { TaskCardActionsMenu } from '@/components/TaskCardActionsMenu';
 import { TaskDatePicker } from '@/components/TaskDatePicker';
+import { Text, View } from '@/components/Themed';
 import { UnfinishedTaskDecisionsCard } from '@/components/UnfinishedTaskDecisionsCard';
 import { WeeklyCommitmentsCard } from '@/components/WeeklyCommitmentsCard';
-import { ScreenIntro } from '@/components/ScreenIntro';
-import { Text, View } from '@/components/Themed';
 import { useBrainDumps } from '@/context/BrainDumpContext';
 import { useCycle } from '@/context/CycleContext';
 import { useGoals } from '@/context/GoalContext';
@@ -25,12 +25,10 @@ import {
   filterActiveTasks,
 } from '@/lib/activeTaskFilters';
 import {
-  addDays,
   formatDateKey,
   getLocalDateKey,
   getWeekDays,
   isDateKeyOverdue,
-  parseLocalDateKey,
 } from '@/lib/dateUtils';
 import { calculateProgressStats } from '@/lib/progressStats';
 import {
@@ -55,6 +53,7 @@ function getColumnCount(width: number) {
 type DatePickerRequest = {
   task: Task;
   source: 'taskCard' | 'weeklyDecision';
+  weekStart: string;
   originalDueDate: string | null;
 };
 
@@ -229,14 +228,17 @@ export default function WeeklyScreen() {
   async function handleScheduleDate(dateKey: string) {
     if (!datePickerRequest) return;
 
-    const { task, source, originalDueDate } = datePickerRequest;
+    const { task, source, weekStart, originalDueDate } = datePickerRequest;
 
     try {
-      await scheduleTask(task.id, dateKey);
-
-      if (source === 'weeklyDecision' && originalDueDate) {
+      if (source === 'weeklyDecision') {
+        if (!originalDueDate) {
+          throw new Error('The task needs its original scheduled date for this decision.');
+        }
+        // The backend moves the task and records its history together.
+        // Keep the review week captured when the date picker was opened.
         await recordTaskDecision({
-          weekStart: firstDate,
+          weekStart,
           taskId: task.id,
           taskTitle: task.title,
           originalDueDate,
@@ -245,6 +247,9 @@ export default function WeeklyScreen() {
           recurringRuleId: task.recurringRuleId,
           recurrenceOccurrenceDate: task.recurrenceOccurrenceDate,
         });
+      } else {
+        // Ordinary task-card rescheduling does not create a weekly decision.
+        await scheduleTask(task.id, dateKey);
       }
 
       setDatePickerRequest(null);
@@ -280,29 +285,18 @@ export default function WeeklyScreen() {
     if (!task.dueDate) return;
 
     const originalDueDate = task.dueDate;
-    let resolvedDueDate: string | null = null;
 
     try {
-      if (action === 'nextWeek') {
-        const parsedDate = parseLocalDateKey(originalDueDate);
-        if (!parsedDate) {
-          throw new Error('The task has an invalid scheduled date.');
-        }
-        resolvedDueDate = getLocalDateKey(addDays(parsedDate, 7));
-        await scheduleTask(task.id, resolvedDueDate);
-      } else if (action === 'inbox') {
-        await moveTaskToInbox(task.id);
-      } else if (action === 'delete') {
-        await deleteTask(task.id);
-      }
-
+      // Send the live task ID even for delete. Python reads the task's current
+      // title and recurring identity, applies the action, and saves its history
+      // in one transaction. The API client calculates nextWeek as +7 days.
       await recordTaskDecision({
         weekStart: firstDate,
-        taskId: action === 'delete' ? null : task.id,
+        taskId: task.id,
         taskTitle: task.title,
         originalDueDate,
         action,
-        resolvedDueDate,
+        resolvedDueDate: null,
         recurringRuleId: task.recurringRuleId,
         recurrenceOccurrenceDate: task.recurrenceOccurrenceDate,
       });
@@ -544,6 +538,7 @@ export default function WeeklyScreen() {
           setDatePickerRequest({
             task,
             source: 'weeklyDecision',
+            weekStart: firstDate,
             originalDueDate: task.dueDate,
           })
         }
@@ -714,6 +709,7 @@ export default function WeeklyScreen() {
                             setDatePickerRequest({
                               task,
                               source: 'taskCard',
+                              weekStart: firstDate,
                               originalDueDate: task.dueDate,
                             })
                           }

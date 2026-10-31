@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Pressable,
   ScrollView,
@@ -7,10 +7,10 @@ import {
 } from 'react-native';
 
 import { ActiveTaskFilters } from '@/components/ActiveTaskFilters';
-import { TaskCardActionsMenu } from '@/components/TaskCardActionsMenu';
-import { TaskDatePicker } from '@/components/TaskDatePicker';
 import { EmptyStateCard } from '@/components/EmptyStateCard';
 import { ScreenIntro } from '@/components/ScreenIntro';
+import { TaskCardActionsMenu } from '@/components/TaskCardActionsMenu';
+import { TaskDatePicker } from '@/components/TaskDatePicker';
 import { Text, View } from '@/components/Themed';
 import { useBrainDumps } from '@/context/BrainDumpContext';
 import { useGoals } from '@/context/GoalContext';
@@ -49,6 +49,16 @@ export default function DailyScreen() {
   );
   const [datePickerTask, setDatePickerTask] =
     useState<Task | null>(null);
+
+  const [archivingNoteId, setArchivingNoteId] = useState<number | null>(null);
+  const [archiveError, setArchiveError] = useState<string | null>(null);
+  const archivePending = useRef(false);
+  const mounted = useRef(true);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
 
   const isDesktop = width >= 1100;
 
@@ -103,6 +113,29 @@ export default function DailyScreen() {
 
     await scheduleTask(datePickerTask.id, dateKey);
     setDatePickerTask(null);
+  }
+
+  async function handleArchiveBrainDump(id: number) {
+    // A ref blocks duplicate taps before React renders the disabled button.
+    if (archivePending.current) return;
+    archivePending.current = true;
+    setArchivingNoteId(id);
+    setArchiveError(null);
+
+    try {
+      await archiveBrainDump(id);
+    } catch (error) {
+      if (mounted.current) {
+        setArchiveError(
+          error instanceof Error
+            ? error.message
+            : 'The note could not be archived.'
+        );
+      }
+    } finally {
+      archivePending.current = false;
+      if (mounted.current) setArchivingNoteId(null);
+    }
   }
 
   return (
@@ -507,6 +540,12 @@ export default function DailyScreen() {
           tasks—just stuff you wanted out of your head.
         </Text>
 
+        {archiveError ? (
+          <Text accessibilityRole="alert" style={styles.archiveError}>
+            {archiveError}
+          </Text>
+        ) : null}
+
         <View style={styles.brainDumpList}>
           {activeBrainDumps.length === 0 ? (
             <EmptyStateCard
@@ -529,9 +568,15 @@ export default function DailyScreen() {
 
                 <Pressable
                   style={styles.archiveButton}
-                  onPress={() => archiveBrainDump(brainDump.id)}
+                  disabled={archivingNoteId !== null}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Archive note: ${brainDump.body}`}
+                  accessibilityState={{ disabled: archivingNoteId !== null }}
+                  onPress={() => void handleArchiveBrainDump(brainDump.id)}
                 >
-                  <Text style={styles.archiveButtonText}>Archive</Text>
+                  <Text style={styles.archiveButtonText}>
+                    {archivingNoteId === brainDump.id ? 'Archiving…' : 'Archive'}
+                  </Text>
                 </Pressable>
               </View>
             ))
@@ -544,6 +589,10 @@ export default function DailyScreen() {
 }
 
 const styles = StyleSheet.create({
+  archiveError: {
+    color: '#b91c1c',
+    marginBottom: 12,
+  },
   page: { flex: 1 },
   content: {
     width: '100%',

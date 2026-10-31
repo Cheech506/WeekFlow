@@ -122,6 +122,81 @@ def prepare_task_identity_changes(
     return released_source_ids
 
 
+def match_generated_occurrences(
+    items: list[Any],
+    stored_tasks: list[Any],
+    rows_by_source: dict[Any, Any],
+    internal_ids: dict[str, dict[int, int]],
+    source_maps: dict[str, dict[int, int | None]],
+) -> set[int]:
+    """Recognize identical unfinished occurrences generated on both sides.
+
+    SQLite and the API can independently generate the same schedule/date with
+    different task IDs. If the server task has no backup identity yet, reuse
+    it only when its content and native parent links agree with the file.
+    Never replace an existing backup identity, merge completed history, or
+    resolve ambiguous owners. Genuine conflicts remain protected by the DB.
+
+    The caller already holds collection locks. Metadata and any later changes
+    commit together; a failure rolls everything back. PostgreSQL IDs and all
+    foreign keys pointing to the reused task remain unchanged.
+    """
+
+    native_slots: dict[tuple[Any, Any], list[Any]] = {}
+    source_slots: dict[tuple[Any, Any], list[Any]] = {}
+    for row in stored_tasks:
+        if row.source_task_id is not None or row.completed or row.completed_at is not None:
+            continue
+        if row.recurring_rule_id is not None:
+            native_slots.setdefault((row.recurring_rule_id, row.recurrence_occurrence_date), []).append(row)
+        if row.source_recurring_rule_id is not None:
+            source_slots.setdefault((row.source_recurring_rule_id, row.recurrence_occurrence_date), []).append(row)
+
+    claimed: set[int] = set()
+    compared_fields = (
+        "title", "day", "due_date", "notes", "priority", "completed", "completed_at",
+    )
+    for item in items:
+        if item.source_task_id in rows_by_source or item.source_recurring_rule_id is None:
+            continue
+        if item.completed or item.completed_at is not None:
+            continue
+        rule_id = internal_ids["recurring_rules"][item.source_recurring_rule_id]
+        candidates = {
+            row.id: row
+            for row in (
+                native_slots.get((rule_id, item.recurrence_occurrence_date), [])
+                + source_slots.get((item.source_recurring_rule_id, item.recurrence_occurrence_date), [])
+            )
+        }
+        if len(candidates) != 1:
+            continue
+        row = next(iter(candidates.values()))
+        if row.source_task_id is not None:
+            continue
+        effective_rule = row.recurring_rule_id
+        if effective_rule is None:
+            effective_rule = internal_ids["recurring_rules"].get(row.source_recurring_rule_id)
+        if effective_rule != rule_id or row.source_recurring_rule_id not in (None, item.source_recurring_rule_id):
+            continue
+        goal_id = internal_ids["goals"][item.source_goal_id] if item.source_goal_id is not None else None
+        effective_goal = row.goal_id
+        if effective_goal is None and row.source_goal_id is not None:
+            effective_goal = internal_ids["goals"].get(row.source_goal_id)
+        if effective_goal != goal_id or any(getattr(row, field) != getattr(item, field) for field in compared_fields):
+            continue
+
+        # This is the existing occurrence, not a new task. Its previously empty
+        # metadata now remembers the incoming identity for subsequent imports.
+        row.source_task_id = item.source_task_id
+        rows_by_source[item.source_task_id] = row
+        internal_ids["tasks"][item.source_task_id] = row.id
+        source_maps["tasks"][row.id] = item.source_task_id
+        claimed.add(item.source_task_id)
+
+    return claimed
+
+
 def refresh_backup(
     backup: WeekFlowBackupImportRequest,
     db: Session,
@@ -179,7 +254,11 @@ def refresh_backup(
                 )
 
             released_task_ids: set[int] = set()
+            matched_task_ids: set[int] = set()
             if name == "tasks":
+                matched_task_ids = match_generated_occurrences(
+                    items, stored[name], rows_by_source, internal_ids, source_maps
+                )
                 released_task_ids = prepare_task_identity_changes(
                     items, rows_by_source, internal_ids, db
                 )
@@ -231,7 +310,7 @@ def refresh_backup(
                 )
 
                 changed = (
-                    name == "tasks" and identity in released_task_ids
+                    name == "tasks" and (identity in released_task_ids or identity in matched_task_ids)
                 ) or any(
                     getattr(row, attribute) != value
                     for attribute, value in values.items()

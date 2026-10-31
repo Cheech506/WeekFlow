@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Pressable,
   ScrollView,
@@ -8,11 +8,11 @@ import {
 } from 'react-native';
 
 import { ActiveTaskFilters } from '@/components/ActiveTaskFilters';
+import { EmptyStateCard } from '@/components/EmptyStateCard';
 import InboxOverviewCard from '@/components/InboxOverviewCard';
+import { ScreenIntro } from '@/components/ScreenIntro';
 import { TaskDatePicker } from '@/components/TaskDatePicker';
 import { TaskWeeklyCommitmentButton } from '@/components/TaskWeeklyCommitmentButton';
-import { EmptyStateCard } from '@/components/EmptyStateCard';
-import { ScreenIntro } from '@/components/ScreenIntro';
 import { Text, View } from '@/components/Themed';
 import {
   type BrainDump,
@@ -26,16 +26,10 @@ import {
   useTasks,
 } from '@/context/TaskContext';
 import {
+  type ActiveTaskFilterState,
   createDefaultActiveTaskFilters,
   filterActiveTasks,
-  type ActiveTaskFilterState,
 } from '@/lib/activeTaskFilters';
-import {
-  calculateInboxOverview,
-  createInboxQuickFilterState,
-  getSelectedInboxQuickFilter,
-  type InboxQuickFilter,
-} from '@/lib/inboxOverviewUtils';
 import {
   addDays,
   DAY_NAMES,
@@ -44,6 +38,12 @@ import {
   getUpcomingDays,
   parseLocalDateKey,
 } from '@/lib/dateUtils';
+import {
+  calculateInboxOverview,
+  createInboxQuickFilterState,
+  getSelectedInboxQuickFilter,
+  type InboxQuickFilter,
+} from '@/lib/inboxOverviewUtils';
 
 type RepeatChoice = 'none' | RecurrenceFrequency;
 type RepeatEndPreset =
@@ -213,6 +213,43 @@ function getRecurringRuleDescription(rule: RecurringRule) {
 
 export default function InboxScreen() {
   const { width } = useWindowDimensions();
+
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [pendingActionKeys, setPendingActionKeys] = useState<string[]>([]);
+  const pendingActions = useRef(new Set<string>());
+  const mounted = useRef(true);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+
+  async function runInboxAction(key: string, action: () => Promise<unknown>) {
+    // Share a key for actions on the same record, so rapid taps cannot
+    // send conflicting requests before the disabled buttons render.
+    if (!mounted.current || pendingActions.current.has(key)) return;
+    pendingActions.current.add(key);
+    setPendingActionKeys([...pendingActions.current]);
+    setActionError(null);
+    try {
+      await action();
+    } catch (error) {
+      if (mounted.current) {
+        setActionError(
+          error instanceof Error
+            ? error.message
+            : 'The request could not be completed. Check the server before trying again.'
+        );
+      }
+    } finally {
+      pendingActions.current.delete(key);
+      if (mounted.current) setPendingActionKeys([...pendingActions.current]);
+    }
+  }
+
+  function isActionPending(key: string) {
+    return pendingActionKeys.includes(key);
+  }
 
   const isDesktop = width >= 1100;
   const isWideDesktop = width >= 1400;
@@ -619,8 +656,12 @@ export default function InboxScreen() {
   }
 
   async function handleAddBrainDump() {
-    await addBrainDump(brainDumpText);
-    setBrainDumpText('');
+    const submittedText = brainDumpText;
+    await addBrainDump(submittedText);
+    if (mounted.current) {
+      // Do not erase another draft typed while the request was pending.
+      setBrainDumpText((current) => current === submittedText ? '' : current);
+    }
   }
 
   async function handleTurnBrainDumpIntoTask(id: number) {
@@ -990,6 +1031,14 @@ export default function InboxScreen() {
         style={isDesktop ? styles.fullWidthPanel : undefined}
       />
 
+      {actionError ? (
+        <View style={[styles.section, isDesktop && styles.fullWidthPanel]}>
+          <Text accessibilityRole="alert" style={styles.errorText}>
+            {actionError}
+          </Text>
+        </View>
+      ) : null}
+
       <View style={isDesktop ? styles.fullWidthPanel : undefined}>
         <InboxOverviewCard
           snapshot={inboxOverview}
@@ -1018,7 +1067,7 @@ export default function InboxScreen() {
             placeholder="Quick add something..."
             value={taskText}
             onChangeText={setTaskText}
-            onSubmitEditing={handleAddTask}
+            onSubmitEditing={() => void runInboxAction('task:create', handleAddTask)}
             returnKeyType="done"
           />
 
@@ -1374,12 +1423,15 @@ export default function InboxScreen() {
 
           <Pressable
             style={styles.addButton}
-            onPress={handleAddTask}
+            disabled={isActionPending('task:create')}
+            onPress={() => void runInboxAction('task:create', handleAddTask)}
           >
             <Text style={styles.addButtonText}>
-              {repeatChoice === 'none'
-                ? 'Add to Inbox'
-                : 'Create Recurring Task'}
+              {isActionPending('task:create')
+                ? 'Saving…'
+                : repeatChoice === 'none'
+                  ? 'Add to Inbox'
+                  : 'Create Recurring Task'}
             </Text>
           </Pressable>
 
@@ -2132,9 +2184,11 @@ export default function InboxScreen() {
                           !rule.active &&
                             styles.resumeButton,
                         ]}
-                        onPress={() =>
-                          toggleRecurringRule(rule.id)
-                        }
+                        disabled={isActionPending(`rule:${rule.id}`)}
+                        onPress={() => void runInboxAction(
+                          `rule:${rule.id}`,
+                          () => toggleRecurringRule(rule.id)
+                        )}
                       >
                         <Text style={styles.buttonText}>
                           {rule.active ? 'Pause' : 'Resume'}
@@ -2159,13 +2213,11 @@ export default function InboxScreen() {
                                 styles.smallButton,
                                 styles.stopOnlyButton,
                               ]}
-                              onPress={async () => {
-                                await deleteRecurringRule(
-                                  rule.id,
-                                  'stopOnly'
-                                );
-                                setConfirmDeleteRuleId(null);
-                              }}
+                              disabled={isActionPending(`rule:${rule.id}`)}
+                              onPress={() => void runInboxAction(`rule:${rule.id}`, async () => {
+                                await deleteRecurringRule(rule.id, 'stopOnly');
+                                if (mounted.current) setConfirmDeleteRuleId(null);
+                              })}
                             >
                               <Text style={styles.buttonText}>
                                 Stop Schedule Only
@@ -2177,13 +2229,11 @@ export default function InboxScreen() {
                                 styles.smallButton,
                                 styles.confirmDeleteButton,
                               ]}
-                              onPress={async () => {
-                                await deleteRecurringRule(
-                                  rule.id,
-                                  'deleteUnfinished'
-                                );
-                                setConfirmDeleteRuleId(null);
-                              }}
+                              disabled={isActionPending(`rule:${rule.id}`)}
+                              onPress={() => void runInboxAction(`rule:${rule.id}`, async () => {
+                                await deleteRecurringRule(rule.id, 'deleteUnfinished');
+                                if (mounted.current) setConfirmDeleteRuleId(null);
+                              })}
                             >
                               <Text style={styles.buttonText}>
                                 Delete Schedule + Unfinished Tasks
@@ -2252,10 +2302,11 @@ export default function InboxScreen() {
           />
           <Pressable
             style={styles.brainDumpButton}
-            onPress={handleAddBrainDump}
+            disabled={isActionPending('note:create')}
+            onPress={() => void runInboxAction('note:create', handleAddBrainDump)}
           >
             <Text style={styles.buttonText}>
-              Save Brain Dump
+              {isActionPending('note:create') ? 'Saving…' : 'Save Brain Dump'}
             </Text>
           </Pressable>
         </View>
@@ -2378,11 +2429,11 @@ export default function InboxScreen() {
                             styles.smallButton,
                             styles.editButton,
                           ]}
-                          onPress={() =>
-                            handleTurnBrainDumpIntoTask(
-                              brainDump.id
-                            )
-                          }
+                          disabled={isActionPending(`note:${brainDump.id}`)}
+                          onPress={() => void runInboxAction(
+                            `note:${brainDump.id}`,
+                            () => handleTurnBrainDumpIntoTask(brainDump.id)
+                          )}
                         >
                           <Text style={styles.buttonText}>
                             Turn Into Task
@@ -2393,9 +2444,11 @@ export default function InboxScreen() {
                             styles.smallButton,
                             styles.archiveButton,
                           ]}
-                          onPress={() =>
-                            archiveBrainDump(brainDump.id)
-                          }
+                          disabled={isActionPending(`note:${brainDump.id}`)}
+                          onPress={() => void runInboxAction(
+                            `note:${brainDump.id}`,
+                            () => archiveBrainDump(brainDump.id)
+                          )}
                         >
                           <Text style={styles.buttonText}>
                             Archive
@@ -2406,9 +2459,11 @@ export default function InboxScreen() {
                             styles.smallButton,
                             styles.deleteButton,
                           ]}
-                          onPress={() =>
-                            deleteBrainDump(brainDump.id)
-                          }
+                          disabled={isActionPending(`note:${brainDump.id}`)}
+                          onPress={() => void runInboxAction(
+                            `note:${brainDump.id}`,
+                            () => deleteBrainDump(brainDump.id)
+                          )}
                         >
                           <Text style={styles.buttonText}>
                             Delete
@@ -3288,9 +3343,11 @@ export default function InboxScreen() {
                           styles.smallButton,
                           styles.doneButton,
                         ]}
-                        onPress={() =>
-                          completeTask(task.id)
-                        }
+                        disabled={isActionPending(`task:${task.id}`)}
+                        onPress={() => void runInboxAction(
+                          `task:${task.id}`,
+                          () => completeTask(task.id)
+                        )}
                       >
                         <Text style={styles.buttonText}>
                           Done
@@ -3301,9 +3358,11 @@ export default function InboxScreen() {
                           styles.smallButton,
                           styles.deleteButton,
                         ]}
-                        onPress={() =>
-                          deleteTask(task.id)
-                        }
+                        disabled={isActionPending(`task:${task.id}`)}
+                        onPress={() => void runInboxAction(
+                          `task:${task.id}`,
+                          () => deleteTask(task.id)
+                        )}
                       >
                         <Text style={styles.buttonText}>
                           Delete
@@ -3321,8 +3380,11 @@ export default function InboxScreen() {
                         styles.dateButton,
                         task.dueDate === null && styles.dateButtonSelected,
                       ]}
-                      disabled={task.dueDate === null}
-                      onPress={() => moveTaskToInbox(task.id)}
+                      disabled={task.dueDate === null || isActionPending(`task:${task.id}`)}
+                      onPress={() => void runInboxAction(
+                        `task:${task.id}`,
+                        () => moveTaskToInbox(task.id)
+                      )}
                       accessibilityRole="button"
                       accessibilityState={{ selected: task.dueDate === null }}
                     >
@@ -3349,10 +3411,11 @@ export default function InboxScreen() {
                         styles.dateButton,
                         task.dueDate === todayKey && styles.dateButtonSelected,
                       ]}
-                      disabled={task.dueDate === todayKey}
-                      onPress={() =>
-                        scheduleTaskForDate(task, todayKey)
-                      }
+                      disabled={task.dueDate === todayKey || isActionPending(`task:${task.id}`)}
+                      onPress={() => void runInboxAction(
+                        `task:${task.id}`,
+                        () => scheduleTaskForDate(task, todayKey)
+                      )}
                     >
                       <Text style={[
                         styles.dateDay,
@@ -3374,10 +3437,11 @@ export default function InboxScreen() {
                         styles.dateButton,
                         task.dueDate === tomorrowKey && styles.dateButtonSelected,
                       ]}
-                      disabled={task.dueDate === tomorrowKey}
-                      onPress={() =>
-                        scheduleTaskForDate(task, tomorrowKey)
-                      }
+                      disabled={task.dueDate === tomorrowKey || isActionPending(`task:${task.id}`)}
+                      onPress={() => void runInboxAction(
+                        `task:${task.id}`,
+                        () => scheduleTaskForDate(task, tomorrowKey)
+                      )}
                     >
                       <Text style={[
                         styles.dateDay,

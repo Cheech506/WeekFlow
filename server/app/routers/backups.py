@@ -1,11 +1,15 @@
-"""API routes for WeekFlow backup migration tools."""
+"""API routes for server JSON backup export and migration imports."""
+
+from datetime import UTC
 
 from fastapi import (
     APIRouter,
     Depends,
     HTTPException,
+    Response,
     status,
 )
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.config import API_PREFIX
@@ -23,11 +27,60 @@ from app.services import (
     refresh_backup,
 )
 
+from app.services.backup_export import BackupExportError, export_backup
+
 
 router = APIRouter(
     prefix=f"{API_PREFIX}/backups",
     tags=["backups"],
 )
+
+
+@router.post(
+    "/export",
+    response_model=WeekFlowBackupImportRequest,
+    response_model_by_alias=True,
+    summary="Export WeekFlow JSON backup",
+    responses={
+        409: {"description": "Stored records could not form a complete valid backup."},
+        503: {"description": "The database could not complete the export."},
+    },
+)
+def export_complete_backup(
+    response: Response,
+    db: Session = Depends(get_db),
+) -> WeekFlowBackupImportRequest:
+    """Export all thirteen server collections in the portable JSON format.
+
+    The first export may assign missing backup identities in existing metadata
+    columns, which is why this is POST. PostgreSQL primary keys, user content,
+    and relationships stay unchanged. The service validates the entire backup
+    before committing those identities. This does not export device SQLite.
+    """
+
+    try:
+        backup = export_backup(db)
+    except BackupExportError as error:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"The JSON backup could not be created. {error}",
+            headers={"Cache-Control": "no-store"},
+        ) from error
+    except SQLAlchemyError as error:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The database could not complete the JSON export. Try again when the server is available.",
+            headers={"Cache-Control": "no-store"},
+        ) from error
+
+    stamp = backup.exported_at.astimezone(UTC).strftime("%Y-%m-%dT%H-%M-%S-%fZ")
+    response.headers["Content-Disposition"] = (
+        f'attachment; filename="weekflow-backup-{stamp}.json"'
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return backup
 
 
 @router.post(

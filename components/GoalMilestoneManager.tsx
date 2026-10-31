@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Pressable,
   StyleSheet,
@@ -7,11 +7,11 @@ import {
 
 import { Text, View } from '@/components/Themed';
 import { useGoals } from '@/context/GoalContext';
+import { formatDateKey } from '@/lib/dateUtils';
 import {
   MAX_MILESTONE_NOTES_LENGTH,
   MAX_MILESTONE_TITLE_LENGTH,
 } from '@/lib/goalPlanningUtils';
-import { formatDateKey } from '@/lib/dateUtils';
 
 type GoalMilestoneManagerProps = {
   goalId: number;
@@ -37,6 +37,41 @@ export default function GoalMilestoneManager({
   const [editTitle, setEditTitle] = useState('');
   const [editTargetDate, setEditTargetDate] = useState('');
   const [editNotes, setEditNotes] = useState('');
+  const [pendingKeys, setPendingKeys] = useState<string[]>([]);
+  const pendingActions = useRef(new Set<string>());
+  const mounted = useRef(true);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+
+  function isPending(key: string) {
+    return pendingKeys.includes(key);
+  }
+
+  async function runMilestoneAction(
+    key: string,
+    action: () => Promise<void>,
+    fallbackMessage: string
+  ) {
+    // All actions on one milestone use the same key. A ref also blocks
+    // rapid taps before React renders the disabled buttons.
+    if (!mounted.current || pendingActions.current.has(key)) return;
+    pendingActions.current.add(key);
+    setPendingKeys([...pendingActions.current]);
+    setMessage('');
+    try {
+      await action();
+    } catch (error) {
+      if (mounted.current) {
+        setMessage(error instanceof Error ? error.message : fallbackMessage);
+      }
+    } finally {
+      pendingActions.current.delete(key);
+      if (mounted.current) setPendingKeys([...pendingActions.current]);
+    }
+  }
 
   const goalMilestones = useMemo(
     () => milestones.filter((milestone) => milestone.goalId === goalId),
@@ -48,19 +83,14 @@ export default function GoalMilestoneManager({
   ).length;
 
   async function handleAddMilestone() {
-    try {
+    await runMilestoneAction('create', async () => {
       await addMilestone(goalId, title, targetDate, notes);
-      setTitle('');
-      setTargetDate('');
-      setNotes('');
-      setMessage('');
-    } catch (error) {
-      setMessage(
-        error instanceof Error
-          ? error.message
-          : 'The milestone could not be added.'
-      );
-    }
+      if (mounted.current) {
+        setTitle('');
+        setTargetDate('');
+        setNotes('');
+      }
+    }, 'The milestone could not be added.');
   }
 
   function beginEditing(id: number) {
@@ -83,16 +113,10 @@ export default function GoalMilestoneManager({
   }
 
   async function handleSaveMilestone(id: number) {
-    try {
+    await runMilestoneAction(`milestone:${id}`, async () => {
       await editMilestone(id, editTitle, editTargetDate, editNotes);
-      cancelEditing();
-    } catch (error) {
-      setMessage(
-        error instanceof Error
-          ? error.message
-          : 'The milestone could not be updated.'
-      );
-    }
+      if (mounted.current) cancelEditing();
+    }, 'The milestone could not be updated.');
   }
 
   return (
@@ -114,6 +138,13 @@ export default function GoalMilestoneManager({
 
       {isExpanded ? (
         <View style={styles.expandedContent}>
+          {message ? (
+            <Text accessibilityRole="alert" style={styles.errorText}>{message}</Text>
+          ) : null}
+          {pendingKeys.length > 0 ? (
+            <Text accessibilityRole="status" style={styles.emptyText}>Saving milestone…</Text>
+          ) : null}
+
           {goalMilestones.length === 0 ? (
             <Text style={styles.emptyText}>
               No milestones yet. Add major checkpoints for this goal.
@@ -127,6 +158,8 @@ export default function GoalMilestoneManager({
                       <Text style={styles.fieldLabel}>Milestone title</Text>
                       <TextInput
                         style={styles.input}
+                        accessibilityLabel="Edit milestone title"
+                        editable={!isPending(`milestone:${milestone.id}`)}
                         value={editTitle}
                         onChangeText={(value) => {
                           setEditTitle(value);
@@ -140,6 +173,8 @@ export default function GoalMilestoneManager({
                       </Text>
                       <TextInput
                         style={styles.input}
+                        accessibilityLabel="Edit milestone target date"
+                        editable={!isPending(`milestone:${milestone.id}`)}
                         value={editTargetDate}
                         onChangeText={(value) => {
                           setEditTargetDate(value);
@@ -153,6 +188,8 @@ export default function GoalMilestoneManager({
                       <Text style={styles.fieldLabel}>Optional notes</Text>
                       <TextInput
                         style={styles.notesInput}
+                        accessibilityLabel="Edit milestone notes"
+                        editable={!isPending(`milestone:${milestone.id}`)}
                         value={editNotes}
                         onChangeText={(value) => {
                           setEditNotes(value);
@@ -165,13 +202,15 @@ export default function GoalMilestoneManager({
                       <View style={styles.actionRow}>
                         <Pressable
                           style={styles.cancelButton}
+                          disabled={isPending(`milestone:${milestone.id}`)}
                           onPress={cancelEditing}
                         >
                           <Text style={styles.cancelButtonText}>Cancel</Text>
                         </Pressable>
                         <Pressable
                           style={styles.saveButton}
-                          onPress={() => handleSaveMilestone(milestone.id)}
+                          disabled={isPending(`milestone:${milestone.id}`)}
+                          onPress={() => void handleSaveMilestone(milestone.id)}
                         >
                           <Text style={styles.saveButtonText}>Save</Text>
                         </Pressable>
@@ -182,7 +221,15 @@ export default function GoalMilestoneManager({
                       <View style={styles.milestoneHeader}>
                         <Pressable
                           style={styles.checkButton}
-                          onPress={() => toggleMilestone(milestone.id)}
+                          disabled={isPending(`milestone:${milestone.id}`)}
+                          accessibilityRole="checkbox"
+                          accessibilityLabel={`Complete milestone: ${milestone.title}`}
+                          accessibilityState={{ checked: milestone.completed, disabled: isPending(`milestone:${milestone.id}`) }}
+                          onPress={() => void runMilestoneAction(
+                            `milestone:${milestone.id}`,
+                            () => toggleMilestone(milestone.id),
+                            'The milestone completion could not be changed.'
+                          )}
                         >
                           <Text style={styles.checkText}>
                             {milestone.completed ? '☑' : '☐'}
@@ -214,13 +261,21 @@ export default function GoalMilestoneManager({
                       <View style={styles.actionRow}>
                         <Pressable
                           style={styles.editButton}
+                          disabled={isPending(`milestone:${milestone.id}`)}
                           onPress={() => beginEditing(milestone.id)}
                         >
                           <Text style={styles.editButtonText}>Edit</Text>
                         </Pressable>
                         <Pressable
                           style={styles.deleteButton}
-                          onPress={() => deleteMilestone(milestone.id)}
+                          disabled={isPending(`milestone:${milestone.id}`)}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Delete milestone: ${milestone.title}`}
+                          onPress={() => void runMilestoneAction(
+                            `milestone:${milestone.id}`,
+                            () => deleteMilestone(milestone.id),
+                            'The milestone could not be deleted.'
+                          )}
                         >
                           <Text style={styles.deleteButtonText}>Delete</Text>
                         </Pressable>
@@ -239,6 +294,8 @@ export default function GoalMilestoneManager({
             <TextInput
               style={styles.input}
               placeholder="Example: Finish database backup lab"
+              accessibilityLabel="New milestone title"
+              editable={!isPending('create')}
               value={title}
               onChangeText={(value) => {
                 setTitle(value);
@@ -251,6 +308,8 @@ export default function GoalMilestoneManager({
             <TextInput
               style={styles.input}
               placeholder="YYYY-MM-DD"
+              accessibilityLabel="New milestone target date"
+              editable={!isPending('create')}
               value={targetDate}
               onChangeText={(value) => {
                 setTargetDate(value);
@@ -264,6 +323,8 @@ export default function GoalMilestoneManager({
             <TextInput
               style={styles.notesInput}
               placeholder="What does reaching this checkpoint involve?"
+              accessibilityLabel="New milestone notes"
+              editable={!isPending('create')}
               value={notes}
               onChangeText={(value) => {
                 setNotes(value);
@@ -273,11 +334,11 @@ export default function GoalMilestoneManager({
               maxLength={MAX_MILESTONE_NOTES_LENGTH}
             />
 
-            {message ? (
-              <Text style={styles.errorText}>{message}</Text>
-            ) : null}
-
-            <Pressable style={styles.addButton} onPress={handleAddMilestone}>
+            <Pressable
+              style={styles.addButton}
+              disabled={isPending('create')}
+              onPress={() => void handleAddMilestone()}
+            >
               <Text style={styles.addButtonText}>Add Milestone</Text>
             </Pressable>
           </View>

@@ -6,6 +6,7 @@ import { useEffect } from 'react';
 import { Pressable, Text } from 'react-native';
 import 'react-native-reanimated';
 
+import { ApiDataBoundary } from '@/components/ApiDataBoundary';
 import { CompletionCelebration } from '@/components/CompletionCelebration';
 import { useColorScheme } from '@/components/useColorScheme';
 import { BrainDumpProvider } from '@/context/BrainDumpContext';
@@ -23,7 +24,7 @@ export {
 
 export const unstable_settings = {
   // Ensure direct visits to secondary screens always have the tab route available.
-  initialRouteName: '(tabs)',
+  anchor: '(tabs)',
 };
 
 // Prevent the splash screen from auto-hiding before asset loading is complete.
@@ -58,8 +59,10 @@ function RootLayoutNav() {
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
       {/*
-       * Providers live above the Stack so both the main tabs and secondary
-       * screens such as Settings share one in-memory view of the SQLite data.
+       * Providers live above the Stack so the tabs and secondary screens share
+       * API-backed data. Device preferences remain inside CelebrationProvider.
+       * The boundary can read every data provider and handle initial loading
+       * before the screens display their summaries.
        */}
       <CelebrationProvider>
         <TaskProvider>
@@ -68,58 +71,60 @@ function RootLayoutNav() {
               <BrainDumpProvider>
                 <WeeklyReviewProvider>
                   <CycleReviewProvider>
-                    <Stack>
-                      <Stack.Screen
-                        name="(tabs)"
-                        options={{ headerShown: false }}
-                      />
-                      <Stack.Screen
-                        name="settings"
-                        options={({ navigation }) => ({
-                          title: 'WeekFlow',
-                          headerTitleStyle: { fontWeight: '800' },
-                          headerShadowVisible: false,
-                          headerBackVisible: false,
-                          headerLeft: ({ tintColor }) => (
-                            <Pressable
-                              accessibilityRole="button"
-                              accessibilityLabel="Return to WeekFlow"
-                              hitSlop={10}
-                              onPress={() => {
-                                /*
-                                 * Fast refresh or opening /settings directly can leave
-                                 * the stack without a previous screen. Fall back to the
-                                 * Goals tab instead of dispatching an invalid GO_BACK.
-                                 */
-                                if (navigation.canGoBack()) {
-                                  navigation.goBack();
-                                } else {
-                                  router.replace('/' as Href);
-                                }
-                              }}
-                              style={({ pressed }) => ({
-                                paddingHorizontal: 4,
-                                opacity: pressed ? 0.5 : 1,
-                              })}
-                            >
-                              <Text
-                                style={{
-                                  color: tintColor,
-                                  fontSize: 16,
-                                  fontWeight: '600',
+                    <ApiDataBoundary>
+                      <Stack>
+                        <Stack.Screen
+                          name="(tabs)"
+                          options={{ headerShown: false }}
+                        />
+                        <Stack.Screen
+                          name="settings"
+                          options={({ navigation }) => ({
+                            title: 'WeekFlow',
+                            headerTitleStyle: { fontWeight: '800' },
+                            headerShadowVisible: false,
+                            headerBackVisible: false,
+                            headerLeft: ({ tintColor }) => (
+                              <Pressable
+                                accessibilityRole="button"
+                                accessibilityLabel="Return to WeekFlow"
+                                hitSlop={10}
+                                onPress={() => {
+                                  /*
+                                   * Fast refresh or opening /settings directly can leave
+                                   * the stack without a previous screen. Fall back to the
+                                   * Goals tab instead of dispatching an invalid GO_BACK.
+                                   */
+                                  if (navigation.canGoBack()) {
+                                    navigation.goBack();
+                                  } else {
+                                    router.replace('/' as Href);
+                                  }
                                 }}
+                                style={({ pressed }) => ({
+                                  paddingHorizontal: 4,
+                                  opacity: pressed ? 0.5 : 1,
+                                })}
                               >
-                                ‹ Back
-                              </Text>
-                            </Pressable>
-                          ),
-                        })}
-                      />
-                      <Stack.Screen
-                        name="modal"
-                        options={{ presentation: 'modal' }}
-                      />
-                    </Stack>
+                                <Text
+                                  style={{
+                                    color: tintColor,
+                                    fontSize: 16,
+                                    fontWeight: '600',
+                                  }}
+                                >
+                                  ‹ Back
+                                </Text>
+                              </Pressable>
+                            ),
+                          })}
+                        />
+                        <Stack.Screen
+                          name="modal"
+                          options={{ presentation: 'modal' }}
+                        />
+                      </Stack>
+                    </ApiDataBoundary>
                   </CycleReviewProvider>
                 </WeeklyReviewProvider>
               </BrainDumpProvider>

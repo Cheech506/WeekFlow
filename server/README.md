@@ -2,9 +2,9 @@
 
 WeekFlow’s backend uses Python, FastAPI, Pydantic, SQLAlchemy, Psycopg, PostgreSQL, Alembic, and Docker Compose.
 
-The core data API supports tasks, planning cycles, goals, goal milestones, recurring schedules, skipped occurrences, weekly commitments, weekly reviews, weekly task decisions, cycle reviews and their goal outcomes, brain dumps, and task templates. Cycle goal outcomes are saved together with their parent review. It also generates missing recurring tasks transactionally, converts existing tasks into recurring schedules, revises a series from a selected occurrence while preserving earlier and completed task history, and detaches one unfinished occurrence while retaining its task and skipping its old recurring slot. Complete-backup tools validate, preview, import, and refresh all 13 supported record collections, including recurring schedules and review history.
+The core data API supports tasks, planning cycles, goals, goal milestones, recurring schedules, skipped occurrences, weekly commitments, weekly reviews, weekly task decisions, cycle reviews and their goal outcomes, brain dumps, and task templates. Cycle goal outcomes are saved together with their parent review. It also generates missing recurring tasks transactionally, converts existing tasks into recurring schedules, revises a series from a selected occurrence while preserving earlier and completed task history, and detaches one unfinished occurrence while retaining its task and skipping its old recurring slot. Complete-backup tools export, validate, preview, import, and refresh all 13 supported record collections, including recurring schedules and review history.
 
-**Current app storage:** WeekFlow still uses SQLite for everyday activity. The app’s Task API tools screen can read server tasks and copy or refresh the device’s current data into PostgreSQL. Real WeekFlow data has been imported and refreshed successfully. This migration does not switch the main app to PostgreSQL or enable automatic synchronization.
+**Current app storage:** The main app's six data providers now load and save everyday WeekFlow records through the Python API to PostgreSQL. React contexts hold the loaded records for the screens; PostgreSQL remains the persistent source of those records. SQLite is retained for device preferences, legacy migration utilities, and deferred offline foundations. It is not an automatic fallback for failed API requests. Live device verification and a full PostgreSQL test run are required before this integration batch is committed.
 
 ## Frontend API clients and integration status
 
@@ -28,15 +28,28 @@ The frontend now has typed clients for all 13 domain record collections, plus re
 | `cycleGoalOutcomeApi.ts` | Read outcome history and validate selections for a review draft |
 | `cycleReviewApi.ts` | Whole draft saves, report/detail reads, draft deletion, and finalization |
 | `taskMigrationApi.ts` | Existing task-only migration preview |
-| `backupMigrationApi.ts` | Existing complete-backup import and refresh tools |
+| `backupMigrationApi.ts` | Complete-backup import and confirmed JSON refresh |
+| `backupExportApi.ts` | Request and validate a complete current PostgreSQL JSON backup |
 
-Source IDs remain read-only migration metadata. Normal writes and parent links use native PostgreSQL IDs. Type-only imports from storage modules reuse the app's data shapes without executing SQLite queries.
+Normal create/PATCH endpoints reject source IDs; normal writes and parent links use native PostgreSQL IDs. Existing source metadata preserves imported identities. A server export assigns stable, positive, JavaScript-safe backup identities in missing source metadata fields for API-created records, without changing PostgreSQL primary keys, user content, links, or timestamps. Type-only imports from storage modules reuse the app's data shapes without executing SQLite queries.
 
-Clients make one request per operation and do not automatically retry writes, fall back to SQLite, or upload an outbox. A lost write response can mean PostgreSQL committed successfully; `ApiError.mutationMayHaveSucceeded` distinguishes this uncertainty from an ordinary rejected request. HTTP 409/422 responses remain visible errors.
+Each client HTTP call sends one request. A provider workflow can make several explicit calls, such as saving a schedule, generating occurrences, and refreshing lists. The transport does not automatically retry writes, fall back to SQLite, or upload an outbox. A lost write response can mean PostgreSQL committed successfully; `ApiError.mutationMayHaveSucceeded` distinguishes this uncertainty from an ordinary rejected request. HTTP 409/422 responses remain visible errors.
 
-The main providers still call the SQLite storage modules. Adding these clients does not switch everyday storage. Task-sync database, cache, outbox, and backend tracking-table foundations exist, but offline upload and reconciliation are deferred until the online app integration is working. The tracking tables do not provide a sync endpoint by themselves.
+The connected providers are `TaskContext`, `GoalContext`, `CycleContext`, `BrainDumpContext`, `WeeklyReviewContext`, and `CycleReviewContext`. They serialize their own operations, block overlapping writes to the same record, retain last-loaded data when a read fails, and expose loading, saving, and error state. Screens call context methods; the contexts call the typed clients; FastAPI handles the requests and commits PostgreSQL transactions.
 
-The next phase is to connect related providers and direct storage callers together, refresh affected app state after linked actions, and avoid mixing SQLite and PostgreSQL IDs. PostgreSQL will serve ordinary app operations; connection errors will remain visible during the initial online integration. Offline fallback is a later phase. The authoritative SQLite backup refresh must be guarded or retired at cutover so it cannot overwrite newer PostgreSQL changes.
+`ApiDataBoundary` wraps navigation inside these providers. It shows initial loading or connection errors before presenting the app, then keeps the screens mounted while showing later request errors and background progress. Its Refresh action reloads data without replaying the failed edit. Task refresh also explicitly generates missing recurring occurrences for a 30-day window using the device's local date. There is no background generation scheduler.
+
+Linked actions refresh affected providers: goal deletion reloads task, schedule, and template goal links; note conversion reloads tasks; weekly task decisions perform one backend action before reloading related state; cycle finalization reloads cycles, goals, weekly data, and reports. The Weekly screen no longer moves a task separately before recording its decision. Screen and milestone controls catch request failures, preserve failed forms, and guard the updated actions against duplicate taps.
+
+Settings displays counts from the API-backed providers. Its Server connection page performs a read-only task check and retains the last successful result if a later check fails. The page no longer offers SQLite migration preview/import/refresh buttons, which could overwrite newer PostgreSQL data with an old device copy.
+
+Settings has **Export JSON** and **Import JSON** buttons directly in its Backups section. Export requests the complete current PostgreSQL data, then starts a browser download on web or opens the phone's native share sheet. On a phone, save or share the file before dismissing the sheet to keep a copy. Import reads a selected WeekFlow JSON file, validates it locally, displays its export date and all collection counts, and requires explicit confirmation before updating PostgreSQL. Supported older device JSON backups are normalized to the current format; repaired missing goal links are disclosed before confirmation. Raw database files are not accepted. Device-level celebration preferences remain local and are not part of the server JSON export.
+
+The confirmed import creates new records and updates matching backup identities, including completion status. Existing PostgreSQL primary keys and server records absent from the file are retained. It is a merge/update import, not a full replacement restore. An older backup can overwrite newer values on matching records, so review the file date and confirmation before importing.
+
+After a successful import, Settings reloads all six providers and shows created, updated, and unchanged counts. Task reload also performs normal missing-occurrence generation. A failed reload does not repeat the acknowledged import. If the import result is uncertain after a lost connection, another import is blocked until the user reloads and explicitly acknowledges checking the server data; reloading itself does not establish whether the earlier import committed. Backup requests and imports are never automatically retried.
+
+Task-sync database, cache, outbox, and backend tracking-table foundations exist, but offline upload and reconciliation remain deferred. They do not provide a sync endpoint, an active upload queue, or an API/SQLite runtime switch.
 
 ## Requirements
 
@@ -104,7 +117,11 @@ EXPO_PUBLIC_API_BASE_URL=http://127.0.0.1:8000 npm run web
 
 This address is for a browser on the same computer as the API. The configured browser origins are `http://localhost:8081` and `http://127.0.0.1:8081`; a different frontend origin needs a corresponding CORS configuration change.
 
-Open Settings → Check server tasks to reach Task API tools. Keep both terminals open during a demo. Docker Compose starts PostgreSQL; Uvicorn starts the API; Expo starts the frontend. Press Control+C in a server terminal to stop that process.
+Open Settings → Check server connection for the read-only server check. Keep both processes running during a demo. Docker Compose starts PostgreSQL; Uvicorn starts the API; Expo starts the frontend. Press Control+C in a server terminal to stop that process.
+
+For Expo Go on a phone, `127.0.0.1` refers to the phone, not the API computer. Set `EXPO_PUBLIC_API_BASE_URL` on the computer running Expo to an API address reachable from the phone, bind Uvicorn to the intended trusted network interface, and restart Expo after changing the environment. If Expo runs on a different computer from the API, use the API computer's address. An Expo tunnel delivers the app's JavaScript; it does not tunnel the Python API. Remote API access needs its own network path, such as a private VPN. The current API has no authentication and should not be exposed publicly.
+
+When running Expo inside tmux, detach with Control+B, release both keys, then D. Detaching leaves the process running; Control+C stops it. Tmux does not restart a crashed process or keep the computer awake.
 
 ## Available endpoints
 
@@ -192,8 +209,13 @@ A new skip returns `201`; retrying an existing skip returns `200` and preserves 
 | `POST` | `/api/v1/tasks/{task_id}/convert-to-recurring` | Convert an existing unfinished standalone task into a schedule's first occurrence and generate upcoming tasks |
 | `POST` | `/api/v1/tasks/{task_id}/edit-recurring-from-occurrence` | Revise a series from the selected original occurrence date and rebuild later unfinished tasks |
 | `POST` | `/api/v1/tasks/{task_id}/detach-recurring` | Keep one unfinished occurrence as a standalone task and skip its old recurring slot atomically |
+| `POST` | `/api/v1/recurring-rules/{rule_id}/edit-series` | Edit a saved schedule and rebuild its unfinished occurrences from today forward |
 
-Conversion and series editing use the selected task's native PostgreSQL ID. Their requests supply the device's local `current_date` and may set `horizon_days` from 0 to 366, defaulting to 30. The inclusive generation window follows the same rules as the generation endpoint. These actions generate only for their own schedule. They do not start background generation or connect the main app to PostgreSQL.
+Conversion and series editing use the selected task's native PostgreSQL ID. Their requests supply the device's local `current_date` and may set `horizon_days` from 0 to 366, defaulting to 30. The inclusive generation window follows the same rules as the generation endpoint. These actions generate only for their own schedule. They do not start background generation; the app calls them through its API-backed task provider.
+
+**Edit a saved schedule.** The recurring schedule editor calls `POST /api/v1/recurring-rules/{rule_id}/edit-series` with the full schedule details, `start_date`, local `current_date`, and optional generation horizon. Unlike ordinary PATCH, this action updates earlier unfinished tasks' details without moving them and rebuilds unfinished occurrences whose original occurrence dates are today or later, including those currently moved to Inbox or beyond the generation horizon. New occurrences are generated only within the requested window. Completed history, schedule IDs, source identities, skip records, and pause state are preserved. Deleted tasks' weekly links become null while their saved history survives. The response contains `rule`, `generation`, `deleted_task_ids`, and `updated_task_ids`.
+
+Schedule editing locks related writes, validates the response, and commits once. Failure rolls back the complete operation. Retrying a confirmed edit can rebuild future tasks with new IDs, so the frontend does not automatically retry this action after an uncertain response.
 
 **Convert an existing task.** Call the conversion endpoint with a complete schedule form, for example:
 
@@ -387,6 +409,7 @@ Each successful use intentionally creates another task. Editing or deleting a te
 
 | Method | Path | Purpose |
 |---|---|---|
+| `POST` | `/api/v1/backups/export` | Export all current server collections as an importable JSON backup |
 | `POST` | `/api/v1/backups/import/preview` | Validate and compare a complete backup without changing data |
 | `POST` | `/api/v1/backups/import` | Import new records and reject changed existing records |
 | `POST` | `/api/v1/backups/import/refresh` | Create new records and update matching records from the backup |
@@ -406,14 +429,14 @@ For PATCH requests, omitted fields retain their current values. For example, `{"
 ## Native task relationships and history
 
 - `Task.id` is the PostgreSQL primary key. `goal_id` and `recurring_rule_id` reference PostgreSQL goals and schedules.
-- `source_task_id`, `source_goal_id`, and `source_recurring_rule_id` preserve the original SQLite identities for migration matching. They use `BIGINT` because SQLite IDs may exceed PostgreSQL’s regular `INTEGER` range.
+- `source_task_id`, `source_goal_id`, and `source_recurring_rule_id` preserve original SQLite identities or portable backup identities for matching across exports/imports. They use `BIGINT` because these identities may exceed PostgreSQL’s regular `INTEGER` range.
 - Imports map source identities to PostgreSQL parent IDs; they do not substitute SQLite IDs for PostgreSQL primary keys.
 - Creating a recurring task requires both `recurring_rule_id` and `recurrence_occurrence_date`. The occurrence inherits the schedule’s goal only at creation unless a goal, including explicit null, is supplied.
 - Each occurrence keeps its own goal link. Ordinary schedule PATCH does not retroactively reassign existing tasks. The explicit series-edit action revises the selected task and later unfinished occurrences while preserving earlier and completed history.
 - Changing a task’s due date preserves its original occurrence date. Ordinary PATCH requests cannot rewrite the recurring identity.
 - Unique constraints protect both source and native schedule/date identities from duplicate occurrences.
 - Deleting a recurring task records a skipped occurrence when its schedule exists. Creating that skipped occurrence again returns `409`.
-- A referenced recurring schedule cannot be deleted directly until its retained tasks are explicitly detached. Deleting an eligible goal keeps its tasks and clears their applicable goal links.
+- Schedule deletion uses the explicit `stopOnly` or `deleteUnfinished` workflow, detaching retained tasks before removing the schedule. Deleting an eligible goal keeps its tasks and clears their applicable goal links.
 
 Native relationships are authoritative when present. Legacy source-only imports remain supported, and import retries can fill missing native task links after their parents become available.
 
@@ -440,17 +463,32 @@ Supported frequencies match the app's existing calendar calculations:
 - `certainDays`: selected weekdays using Sunday=0 through Saturday=6.
 - `monthly`: the start date's day number, clamped to the last day of shorter months. A January 31 anchor generates on February's last day and returns to March 31.
 
-Generation locks the related tables, checks skip records and native/source occurrence identities, and creates only missing tasks. New tasks copy the schedule's current title, notes, priority, and goal, receive PostgreSQL primary keys, and start incomplete. Imported schedule and goal references remain available as source metadata; generated tasks have no SQLite `source_task_id`.
+Generation locks the related tables, checks skip records and native/source occurrence identities, and creates only missing tasks. New tasks copy the schedule's current title, notes, priority, and goal, receive PostgreSQL primary keys, and start incomplete. Imported schedule and goal references remain available as source metadata. Newly generated tasks start without a `source_task_id`; a later JSON export may assign a portable backup identity in that field.
 
 Existing tasks are preserved exactly, including completed tasks, tasks moved to another due date or Inbox, historical goal links, and legacy source-only occurrences. Repeating a request creates no duplicates. Extending its window creates only additional missing occurrences. Genuine source-identity or database conflicts return `409` and roll back the whole request, including tasks created earlier in the same call.
 
 The result reports `current_date`, `horizon_days`, `window_end`, `rules_checked`, `candidate_count`, `created_count`, `existing_count`, `skipped_count`, `created_task_ids`, and `database_changed`. Candidate totals equal created + existing + skipped. If a skip and historical task share the same occurrence, the candidate counts as skipped and the task remains unchanged.
 
-Generation runs when this endpoint is called. There is no automatic background scheduler or frontend storage switch in this change.
+Generation runs only when requested. The main task provider requests it on startup, on task refresh, and for relevant schedule actions. There is no automatic background scheduler.
 
-## Strict imports, previews, and refreshes
+## JSON exports, strict imports, previews, and refreshes
 
-All complete-backup endpoints accept validated WeekFlow version 12 backups. The 13 supported collections are tasks, goals, goal milestones, brain dumps, task templates, recurring rules, recurring exceptions, planning cycles, weekly reviews, weekly commitments, weekly task decisions, cycle reviews, and cycle goal outcomes.
+Exports produce WeekFlow version 12 backups. Complete-backup import, preview, and refresh endpoints accept validated version 12 backups. The 13 supported collections are tasks, goals, goal milestones, brain dumps, task templates, recurring rules, recurring exceptions, planning cycles, weekly reviews, weekly commitments, weekly task decisions, cycle reviews, and cycle goal outcomes.
+
+### Export and transfer between instances
+
+`POST /api/v1/backups/export` requires no request body. It returns a validated JSON document with camelCase backup fields, an export timestamp, and all 13 collections. The response includes a suggested `.json` attachment filename and `Cache-Control: no-store`.
+
+The export service locks the collections in one transaction so a concurrent phone or web edit cannot leave the file with mismatched parent/child snapshots. Existing imported identities are retained. Records created through the API receive missing backup identities once, using existing metadata columns. This is a POST action because the first export may save that metadata. PostgreSQL primary keys, content, relationships, and user-facing timestamps remain unchanged. The complete file is validated before the transaction commits; an export failure rolls back metadata assignments too. No schema migration is needed for this action.
+
+To transfer logical app data:
+
+1. Open Settings in the source instance and select **Export JSON**. Save the browser download or save/share the file from the phone's share sheet.
+2. Open the destination instance, configured for its own API/database, and select Settings → **Import JSON**.
+3. Choose the file, review its date, record counts, and any disclosed repairs, then select **Confirm import and update**.
+4. Check the result counts and refreshed data. The importer maps portable identities to destination PostgreSQL IDs; destination primary keys can differ from source primary keys.
+
+Phone and web clients pointing at the same API already share one instance. The JSON file includes application records, not PostgreSQL schema, roles, credentials, internal sync tracking, or device preferences. Importing a JSON file does not delete destination records that are absent from it. Existing uniqueness rules, including one active planning cycle, remain enforced; incompatible data returns a conflict rather than a partial import.
 
 ### Preview
 
@@ -464,9 +502,9 @@ The task-batch and complete-backup import endpoints create records with new sour
 
 The complete import inserts parents before children and maps their PostgreSQL foreign keys. It can also repair missing task relationships on otherwise matching records without replacing populated native task links.
 
-### Refresh from this device
+### Confirmed JSON import and refresh
 
-The Task API tools screen’s **Import and update from this device** action builds a complete backup from the device’s current SQLite data and calls `/api/v1/backups/import/refresh` after confirmation.
+Settings calls `POST /api/v1/backups/import/refresh` only after confirmation of an explicitly selected JSON file. This supports server exports and supported legacy device JSON backups after frontend normalization. The main app does not silently build or upload a SQLite backup from the Server connection page. A stale device backup must not be treated as the current server state.
 
 The backup is authoritative for matching records in this operation:
 
@@ -480,7 +518,7 @@ The backup is authoritative for matching records in this operation:
 
 Recurring identity changes release old occurrence keys and update existing tasks before new occurrences are inserted, within the same transaction. This handles a moved or replaced occurrence even when the backup lists its replacement first. It does not disable duplicate protection or delete conflicting tasks.
 
-The response reports created, updated, and unchanged counts, both overall and by collection. `already_imported_count` is displayed as **Unchanged** for refresh results. A full-backup record count includes the other collections and is therefore larger than the task count alone.
+The response reports created, updated, and unchanged counts, both overall and by collection. `already_imported_count` represents unchanged records in refresh results. A full-backup record count includes the other collections and is therefore larger than the task count alone.
 
 ## Run checks
 
@@ -492,11 +530,11 @@ python -m alembic check
 python -m pytest -q
 ```
 
-The backend suite currently collects **1,563 tests** (October 23, 2026). This includes **131** conversion/series-edit tests, **36** recurring-task detachment tests, **48** standalone generation API tests, and **55** task-sync tracking model/migration tests. Run the commands above against PostgreSQL to verify this checkout before committing; collection alone does not confirm execution passed.
+Run the backend suite against PostgreSQL to verify this checkout before committing. The integration adds `test_recurring_series_edit_api.py` with 48 tests for saved-schedule editing, rebuilding, history preservation, validation, and transaction rollback, and `test_backup_export_api.py` with 32 export checks. The export file includes eight PostgreSQL checks for metadata-only changes, rollback, current completion status, stable repeated exports, and transfer between isolated instances with different primary keys. Collection alone does not confirm execution passed; the frontend test results below are separate from a PostgreSQL backend test run.
 
 Coverage includes request validation, model constraints, task relationships, historical goal links, goal completion and deletion, planning cycles, milestones, migration backfills, backup previews, strict imports, refreshes, duplicate protection, recurrence date calculations, schedule and exception APIs, transactional occurrence generation, existing-task conversion, atomic occurrence detachment and skip preservation, series edits from original occurrence dates, retained historical goal links and task placements, rebuild-dependent weekly links, weekly commitment task links and completion, frozen review snapshots, atomic weekly task decisions, recurring deletion skips, cycle draft editing and finalization, goal carry-forward and replacement, preserved cycle history, brain dump archive/restore and conversion, independent template-created tasks, and rollback behavior.
 
-Backup write, refresh, task relationship, weekly-history write, recurrence and recurring task workflow, cycle review, brain dump, and task template API tests use isolated schemas inside the existing PostgreSQL database. Endpoint commits run within test-owned transactions, and teardown rolls back their data and schema. Schema inspection tests still check the migrated application tables. The FastAPI development server does not need to be running during pytest. A known FastAPI/Starlette deprecation warning may appear even when all tests pass.
+Backup export, write, refresh, task relationship, weekly-history write, recurrence and recurring task workflow, cycle review, brain dump, and task template API tests use isolated schemas inside the existing PostgreSQL database. Endpoint commits run within test-owned transactions, and teardown rolls back their data and schema. Export tests verify table names resolve inside the test schema before any endpoint runs. Schema inspection tests still check the migrated application tables. The FastAPI development server does not need to be running during pytest. A known FastAPI/Starlette deprecation warning may appear even when all tests pass.
 
 Useful focused checks:
 
@@ -504,9 +542,11 @@ Useful focused checks:
 python -m pytest tests/test_task_model.py tests/test_task_relationship_schemas.py tests/test_task_relationships_api.py -q
 python -m pytest tests/test_backup_refresh_api.py tests/test_backup_refresh_order.py -q
 python -m pytest tests/test_backup_import_write_api.py tests/test_weekly_history_models.py -q
+python -m pytest tests/test_backup_export_api.py -q
 python -m pytest tests/test_recurring_rules_api.py tests/test_recurring_exceptions_api.py -q
 python -m pytest tests/test_recurrence_dates.py tests/test_recurrence_generation_api.py -q
 python -m pytest tests/test_recurring_task_workflows_api.py tests/test_recurring_task_detach_api.py -q
+python -m pytest tests/test_recurring_series_edit_api.py -q
 python -m pytest tests/test_weekly_commitments_api.py tests/test_weekly_reviews_api.py tests/test_weekly_task_decisions_api.py -q
 python -m pytest tests/test_cycle_reviews_api.py tests/test_brain_dumps_api.py tests/test_task_templates_api.py -q
 ```
@@ -518,7 +558,7 @@ npm test -- --watchman=false
 npx tsc --noEmit
 ```
 
-On October 23, 2026, all **1,428 frontend tests across 49 suites** passed, and the frontend type check passed. Feature-client tests simulate HTTP responses; SQLite integration tests use disposable local databases. These do not replace a PostgreSQL backend test run or a live app integration check.
+On October 29, 2026, all **1,792 frontend tests across 67 suites** passed, and the frontend type check passed. The suite includes typed-client, provider, loading-boundary, screen, and milestone component checks for the API integration, including 22 export-client checks and 38 Settings checks for web download, native sharing, confirmed imports, refresh failures, and uncertain import handling. API requests and providers are mocked in these tests; legacy SQLite integration tests use disposable local databases. These results do not replace a PostgreSQL backend test run or a live app integration check.
 
 ## Stop and restart PostgreSQL
 
@@ -549,24 +589,32 @@ docker compose start db
 | `app/services/task_import.py` | Task-batch comparison, strict import, and relationship mapping |
 | `app/services/backup_import.py` | Complete-backup comparison plan and strict import |
 | `app/services/backup_refresh.py` | Transactional create/update refresh with stable PostgreSQL IDs |
+| `app/services/backup_export.py` | Complete server JSON snapshot, portable backup identities, and export validation |
 | `app/services/recurrence.py` | Calendar occurrence calculations and generation-window limits |
 | `app/services/recurrence_generation.py` | Standalone generation and a caller-owned transaction helper, with skip, duplicate, and history protection |
 | `app/services/recurring_task_workflows.py` | Atomic task conversion, series edits, and occurrence detachment with skip/history preservation |
+| `app/services/recurring_series_edit.py` | Transactional saved-schedule editing with earlier-task updates and future unfinished rebuilding |
 | `app/services/cycle_reviews.py` | Atomic draft saves and finalization, goal outcomes, successor cycles, and first commitments |
 | `alembic/versions/` | Versioned database structure changes |
 | `tests/` | Backend validation, database, migration, and API tests |
 | `../lib/api/` | Shared HTTP transport, feature clients, and migration clients with runtime response validation |
 | `../lib/taskSync*.ts` | Deferred offline cache, outbox, database, and type foundations |
 | `app/models/task_sync.py` | Persistent server identity, client-task mappings, and sync receipt table definitions |
-| `../app/server-tasks.tsx` | Task API tools, task preview, confirmed refresh, and server task reads |
+| `../context/` | API-backed domain providers and device-level celebration preferences |
+| `../components/ApiDataBoundary.tsx` | Initial API loading/error display and later refresh/error notices around navigation |
+| `../app/server-tasks.tsx` | Read-only server connection and task check |
+| `../app/settings.tsx` | API-backed inventory, data refresh, device preferences, web/native JSON export, and confirmed JSON import |
 
 ## Remaining work
 
-The planned core data APIs, three specialized recurring task actions, and typed frontend clients are implemented. The main app storage switch remains pending. Run the full PostgreSQL suite and Alembic check before committing this batch. Remaining work before completing the intended app migration includes:
+The core data APIs, typed frontend clients, main provider integration, and updated screen error handling are implemented. The added saved-schedule editing action preserves the previous app behavior while moving its transaction into PostgreSQL. Before committing this integration batch:
 
-- Connect the main app's storage operations to the PostgreSQL APIs, verify each feature, and complete the final data refresh and storage switch.
-- Add any agreed extensions to cycle duration; current cycles remain twelve weeks.
-- Complete the deferred offline fallback/upload and reconciliation behavior after online integration; the current foundations do not upload changes.
-- Add authentication according to the deployment scope.
+- Run the full PostgreSQL test suite and Alembic check.
+- Verify live create, edit, complete/reopen, archive/restore, delete, recurrence, and weekly/cycle review flows through the main app. Refresh or reopen the app to confirm PostgreSQL persistence.
+- Verify that a lost API connection shows an error, retains already loaded screens, and does not silently save to SQLite or replay a write after recovery.
+- Confirm the phone's API address is reachable independently of the Expo tunnel.
+- Verify live JSON download on web, saving/sharing from the phone, and confirmed import into the intended destination instance. Review the file before confirming changes to matching records.
 
-Successful backup migration verifies a copy of the data in PostgreSQL. It does not complete the frontend storage switch.
+Follow-up work includes full replacement restore, deferred offline fallback/upload and reconciliation, authentication for the intended deployment, and any agreed extension beyond twelve-week cycles. JSON export and merge/update import are implemented. The backup tools and offline tracking tables do not provide offline synchronization or authentication.
+
+A successful legacy backup import proves a copy reached PostgreSQL. The current frontend tests prove the mocked integration behavior; live feature checks and PostgreSQL backend tests remain separate verification steps.

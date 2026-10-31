@@ -3,10 +3,10 @@
 import { RECURRENCE_FREQUENCIES, type RecurrenceFrequency } from '../recurrenceUtils';
 import { ApiError, apiRequest, type ApiRequestOptions } from './apiClient';
 import {
-    decodeApiRecurringRule,
-    type ApiRecurrenceGenerationResult,
-    type ApiRecurringRule,
-    type CreateApiRecurringRuleInput,
+  decodeApiRecurringRule,
+  type ApiRecurrenceGenerationResult,
+  type ApiRecurringRule,
+  type CreateApiRecurringRuleInput,
 } from './recurringRuleApi';
 import { decodeApiTask, type ApiTask } from './taskApi';
 
@@ -29,6 +29,18 @@ export type EditApiRecurringFromOccurrenceInput = {
   weekdays: number[];
   currentDate: string;
   horizonDays?: number;
+};
+
+/** Full schedule edit; active/paused state remains owned by the server. */
+export type EditApiRecurringSeriesInput = EditApiRecurringFromOccurrenceInput & {
+  startDate: string;
+};
+
+export type ApiRecurringSeriesEditResult = {
+  rule: ApiRecurringRule;
+  generation: ApiRecurrenceGenerationResult;
+  deletedTaskIds: number[];
+  updatedTaskIds: number[];
 };
 
 export type ApiRecurringTaskWorkflowResult = {
@@ -79,8 +91,11 @@ function requireTaskId(id: unknown): asserts id is number {
 }
 
 /** Check the form and translate app field names into the backend's names. */
-function prepareRequest(input: unknown, converting: boolean): PreparedRequest {
-  const allowed = converting ? [...COMMON_FIELDS, 'startDate'] : COMMON_FIELDS;
+function prepareRequest(
+  input: unknown, converting: boolean, editingSeries = false
+): PreparedRequest {
+  const needsStartDate = converting || editingSeries;
+  const allowed = needsStartDate ? [...COMMON_FIELDS, 'startDate'] : COMMON_FIELDS;
   if (!isRecord(input) || Object.keys(input).some((key) => !allowed.includes(key))) {
     invalidInput('Recurring task action contains unsupported fields.');
   }
@@ -126,17 +141,17 @@ function prepareRequest(input: unknown, converting: boolean): PreparedRequest {
     priority, goal_id: goalId, frequency: input.frequency, end_date: endDate,
     weekdays: sortedWeekdays, current_date: currentDate, horizon_days: horizonDays,
   };
-  if (converting) {
+  if (needsStartDate) {
     if (!isDateKey(input.startDate)) invalidInput('startDate must be a real YYYY-MM-DD date.');
     if (endDate !== null && endDate < input.startDate) invalidInput('The end date cannot be before the start date.');
-    if (input.frequency === 'certainDays' &&
+    if (converting && input.frequency === 'certainDays' &&
         !sortedWeekdays.includes(new Date(`${input.startDate}T00:00:00Z`).getUTCDay())) {
       invalidInput('The first occurrence must fall on a selected weekday.');
     }
     body.start_date = input.startDate;
   }
-  // For a series edit the server reads the ORIGINAL occurrence date and the
-  // schedule's active state from the database. Neither belongs in this request.
+  // An occurrence edit reads its start date from the selected task. A full
+  // schedule edit supplies startDate. Both preserve the saved active state.
   return { body, currentDate, horizonDays, windowEnd };
 }
 
@@ -255,5 +270,62 @@ export async function detachApiRecurringTask(
       return task;
     },
     { ...options, method: 'POST', body: undefined }
+  );
+}
+
+/** Check a list of affected native task IDs without accepting duplicates. */
+function decodeAffectedTaskIds(value: unknown, label: string): number[] {
+  if (!Array.isArray(value) || !value.every(isPostgresId) ||
+      new Set(value).size !== value.length) {
+    throw new Error(`Invalid ${label} task IDs.`);
+  }
+  return [...value];
+}
+
+/** Match the saved schedule and all rebuild lists to the submitted action. */
+function decodeSeriesEdit(
+  value: unknown, ruleId: number, request: PreparedRequest
+): ApiRecurringSeriesEditResult {
+  if (!isRecord(value)) throw new Error('Expected a recurring schedule edit result.');
+  const rule = decodeApiRecurringRule(value.rule);
+  const generation = decodeGeneration(value.generation, request);
+  const deletedTaskIds = decodeAffectedTaskIds(value.deleted_task_ids, 'deleted');
+  const updatedTaskIds = decodeAffectedTaskIds(value.updated_task_ids, 'updated');
+  const created = new Set(generation.createdTaskIds);
+  const deleted = new Set(deletedTaskIds);
+
+  if (rule.id !== ruleId || rule.title !== request.body.title ||
+      rule.notes !== request.body.notes || rule.priority !== request.body.priority ||
+      rule.goalId !== request.body.goal_id || rule.frequency !== request.body.frequency ||
+      rule.startDate !== request.body.start_date || rule.endDate !== request.body.end_date ||
+      JSON.stringify([...rule.weekdays].sort((a, b) => a - b)) !== JSON.stringify(request.body.weekdays) ||
+      deletedTaskIds.some((id) => created.has(id)) ||
+      updatedTaskIds.some((id) => created.has(id) || deleted.has(id)) ||
+      (!rule.active && generation.candidateCount !== 0)) {
+    throw new Error('The saved schedule or affected task IDs do not agree with the edit.');
+  }
+
+  return { rule, generation, deletedTaskIds, updatedTaskIds };
+}
+
+/**
+ * Save a complete schedule edit, update earlier unfinished task details, and
+ * rebuild unfinished occurrences from the device's current date onward.
+ * Completed history and the saved active/paused state remain unchanged.
+ * Replacement tasks receive new IDs. Never automatically retry this action
+ * after an uncertain response; refresh before deciding to submit again.
+ */
+export async function editApiRecurringSeries(
+  ruleId: number,
+  input: EditApiRecurringSeriesInput,
+  options: RecurringTaskWorkflowApiOptions = {}
+): Promise<ApiRecurringSeriesEditResult> {
+  if (!isPostgresId(ruleId)) invalidInput('Schedule ID must be a native PostgreSQL ID.');
+  const request = prepareRequest(input, false, true);
+
+  return apiRequest(
+    `/api/v1/recurring-rules/${ruleId}/edit-series`,
+    (value) => decodeSeriesEdit(value, ruleId, request),
+    { ...options, method: 'POST', body: request.body }
   );
 }

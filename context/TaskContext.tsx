@@ -1,117 +1,61 @@
 import {
   createContext,
-  ReactNode,
   useCallback,
   useContext,
   useEffect,
   useRef,
   useState,
+  type ReactNode,
 } from 'react';
 
 import { useCelebrations } from '@/context/CelebrationContext';
-import { getLocalDateKey } from '@/lib/dateUtils';
 import {
-  deleteTaskTemplateById,
-  getTaskTemplates,
-  insertTaskTemplate,
-  updateTaskTemplateById,
-  type TaskTemplate,
-} from '@/lib/taskTemplateStorage';
+  createApiRecurringRule, deleteApiRecurringRule, fetchApiRecurringRules,
+  generateApiRecurringTasks, updateApiRecurringRule, type ApiRecurringRule,
+} from '@/lib/api/recurringRuleApi';
 import {
-  convertTaskToRecurringRule,
-  deleteRecurringRuleById,
-  ensureRecurringOccurrences,
-  getRecurringRules,
-  insertRecurringRule,
-  setRecurringRuleActive,
-  updateRecurringRuleById,
-  updateRecurringRuleFromOccurrence,
-  type CreateRecurringRuleInput,
-  type DeleteRecurringRuleMode,
-  type RecurrenceFrequency,
-  type RecurringRule,
-  type UpdateRecurringRuleFromOccurrenceInput,
-  type UpdateRecurringRuleInput,
+  convertApiTaskToRecurring, detachApiRecurringTask, editApiRecurringFromOccurrence,
+  editApiRecurringSeries,
+} from '@/lib/api/recurringTaskWorkflowApi';
+import { createApiTask, deleteApiTask, fetchApiTasks, updateApiTask, type ApiTask } from '@/lib/api/taskApi';
+import {
+  createApiTaskFromTemplate, createApiTaskTemplate, deleteApiTaskTemplate,
+  fetchApiTaskTemplates, updateApiTaskTemplate, type ApiTaskTemplate,
+} from '@/lib/api/taskTemplateApi';
+import { getLocalDateKey, getNextOccurrenceDateKey } from '@/lib/dateUtils';
+import type {
+  CreateRecurringRuleInput, DeleteRecurringRuleMode, RecurrenceFrequency,
+  RecurringRule, UpdateRecurringRuleFromOccurrenceInput, UpdateRecurringRuleInput,
 } from '@/lib/recurringStorage';
-import {
-  completeTaskById,
-  deleteTaskById,
-  getTasks,
-  insertTask,
-  moveTaskToDayById,
-  moveTaskToInboxById,
-  scheduleTaskByDate,
-  Task,
-  updateTaskById,
-} from '@/lib/taskStorage';
+import type { Task } from '@/lib/taskStorage';
+import type { TaskTemplate } from '@/lib/taskTemplateStorage';
 
 export type {
-  CreateRecurringRuleInput,
-  DeleteRecurringRuleMode,
-  RecurrenceFrequency,
-  RecurringRule,
-  UpdateRecurringRuleFromOccurrenceInput,
-  UpdateRecurringRuleInput,
-  Task,
-  TaskTemplate,
+  CreateRecurringRuleInput, DeleteRecurringRuleMode, RecurrenceFrequency,
+  RecurringRule, Task, TaskTemplate, UpdateRecurringRuleFromOccurrenceInput, UpdateRecurringRuleInput
 };
 
 type TaskContextValue = {
-  tasks: Task[];
-  recurringRules: RecurringRule[];
-  taskTemplates: TaskTemplate[];
+  tasks: ApiTask[];
+  recurringRules: ApiRecurringRule[];
+  taskTemplates: ApiTaskTemplate[];
   isLoading: boolean;
+  isSaving: boolean;
+  error: Error | null;
   refreshTasks: () => Promise<void>;
-  addTaskTemplate: (
-    title: string,
-    notes?: string,
-    priority?: number,
-    goalId?: number | null
-  ) => Promise<void>;
-  editTaskTemplate: (
-    id: number,
-    title: string,
-    notes?: string,
-    priority?: number,
-    goalId?: number | null
-  ) => Promise<void>;
+  addTaskTemplate: (title: string, notes?: string, priority?: number, goalId?: number | null) => Promise<void>;
+  editTaskTemplate: (id: number, title: string, notes?: string, priority?: number, goalId?: number | null) => Promise<void>;
   deleteTaskTemplate: (id: number) => Promise<void>;
   addTaskFromTemplate: (id: number) => Promise<void>;
-  addTask: (
-    title: string,
-    day: string,
-    notes?: string,
-    priority?: number,
-    goalId?: number | null,
-    dueDate?: string | null
-  ) => Promise<number | null>;
-  createRecurringTask: (
-    input: CreateRecurringRuleInput
-  ) => Promise<void>;
-  convertTaskToRecurring: (
-    taskId: number,
-    input: CreateRecurringRuleInput
-  ) => Promise<void>;
-  updateRecurringTask: (
-    id: number,
-    input: UpdateRecurringRuleInput
-  ) => Promise<void>;
-  updateRecurringTaskFromOccurrence: (
-    taskId: number,
-    input: UpdateRecurringRuleFromOccurrenceInput
-  ) => Promise<void>;
+  addTask: (title: string, day: string, notes?: string, priority?: number, goalId?: number | null, dueDate?: string | null) => Promise<number | null>;
+  createRecurringTask: (input: CreateRecurringRuleInput) => Promise<void>;
+  convertTaskToRecurring: (taskId: number, input: CreateRecurringRuleInput) => Promise<void>;
+  updateRecurringTask: (id: number, input: UpdateRecurringRuleInput) => Promise<void>;
+  updateRecurringTaskFromOccurrence: (taskId: number, input: UpdateRecurringRuleFromOccurrenceInput) => Promise<void>;
   toggleRecurringRule: (id: number) => Promise<void>;
-  deleteRecurringRule: (
-    id: number,
-    mode: DeleteRecurringRuleMode
-  ) => Promise<void>;
-  editTask: (
-    id: number,
-    title: string,
-    notes?: string,
-    priority?: number,
-    goalId?: number | null
-  ) => Promise<void>;
+  deleteRecurringRule: (id: number, mode: DeleteRecurringRuleMode) => Promise<void>;
+  detachTaskFromRecurring: (id: number) => Promise<void>;
+  editTask: (id: number, title: string, notes?: string, priority?: number, goalId?: number | null) => Promise<void>;
   completeTask: (id: number) => Promise<void>;
   deleteTask: (id: number) => Promise<void>;
   scheduleTask: (id: number, dueDate: string) => Promise<void>;
@@ -124,310 +68,316 @@ type TaskContextValue = {
   getCompletedTasks: () => Task[];
 };
 
-const TaskContext = createContext<TaskContextValue | undefined>(
-  undefined
-);
+const TaskContext = createContext<TaskContextValue | undefined>(undefined);
+
+function asError(cause: unknown): Error {
+  return cause instanceof Error ? cause : new Error('The task request failed.');
+}
+
+function fullScheduleInput(input: CreateRecurringRuleInput) {
+  return {
+    title: input.title,
+    notes: input.notes ?? '',
+    priority: input.priority ?? 0,
+    goalId: input.goalId ?? null,
+    frequency: input.frequency,
+    startDate: input.startDate,
+    endDate: input.endDate ?? null,
+    weekdays: [...(input.weekdays ?? [])],
+  };
+}
 
 export function TaskProvider({ children }: { children: ReactNode }) {
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const [recurringRules, setRecurringRules] = useState<
-    RecurringRule[]
-  >([]);
-  const [taskTemplates, setTaskTemplates] = useState<
-    TaskTemplate[]
-  >([]);
+  const [tasks, setTasks] = useState<ApiTask[]>([]);
+  const [recurringRules, setRecurringRules] = useState<ApiRecurringRule[]>([]);
+  const [taskTemplates, setTaskTemplates] = useState<ApiTaskTemplate[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
   const { celebrate } = useCelebrations();
+  const mountedRef = useRef(false);
+  const tasksRef = useRef<ApiTask[]>([]);
+  const rulesRef = useRef<ApiRecurringRule[]>([]);
+  const templatesRef = useRef<ApiTaskTemplate[]>([]);
+  const operationQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const pendingWritesRef = useRef(new Set<string>());
 
-  /*
-   * Expo SQLite on web uses a worker. Serializing refresh requests prevents
-   * overlapping provider refreshes from competing for that worker, especially
-   * immediately after a backup replaces the database contents.
-   */
-  const loadQueueRef = useRef<Promise<void>>(Promise.resolve());
-
-  const loadTasks = useCallback((): Promise<void> => {
-    const queuedLoad = loadQueueRef.current
-      .catch(() => undefined)
-      .then(async () => {
-        setIsLoading(true);
-
-        try {
-          await ensureRecurringOccurrences();
-
-          const [loadedTasks, loadedRules, loadedTemplates] =
-            await Promise.all([
-              getTasks(),
-              getRecurringRules(),
-              getTaskTemplates(),
-            ]);
-
-          setTasks(loadedTasks);
-          setRecurringRules(loadedRules);
-          setTaskTemplates(loadedTemplates);
-        } finally {
-          setIsLoading(false);
-        }
-      });
-
-    loadQueueRef.current = queuedLoad;
-    return queuedLoad;
+  const enqueue = useCallback(function enqueue<T>(operation: () => Promise<T>): Promise<T> {
+    const result = operationQueueRef.current.then(operation);
+    operationQueueRef.current = result.then(() => undefined, () => undefined);
+    return result;
   }, []);
 
+  const storeTasks = useCallback((records: ApiTask[]) => {
+    tasksRef.current = records;
+    if (mountedRef.current) setTasks(records);
+  }, []);
+  const storeRules = useCallback((records: ApiRecurringRule[]) => {
+    rulesRef.current = records;
+    if (mountedRef.current) setRecurringRules(records);
+  }, []);
+  const storeTemplates = useCallback((records: ApiTaskTemplate[]) => {
+    templatesRef.current = records;
+    if (mountedRef.current) setTaskTemplates(records);
+  }, []);
+  const putTask = useCallback((record: ApiTask) => {
+    const current = tasksRef.current;
+    storeTasks(current.some((task) => task.id === record.id)
+      ? current.map((task) => task.id === record.id ? record : task)
+      : [record, ...current]);
+  }, [storeTasks]);
+  const putTemplate = useCallback((record: ApiTaskTemplate) => {
+    const current = templatesRef.current;
+    storeTemplates(current.some((template) => template.id === record.id)
+      ? current.map((template) => template.id === record.id ? record : template)
+      : [record, ...current]);
+  }, [storeTemplates]);
+
+  const readTaskData = useCallback(async () => {
+    const [loadedTasks, loadedRules, loadedTemplates] = await Promise.all([
+      fetchApiTasks(), fetchApiRecurringRules(), fetchApiTaskTemplates(),
+    ]);
+    if (mountedRef.current) {
+      storeTasks(loadedTasks);
+      storeRules(loadedRules);
+      storeTemplates(loadedTemplates);
+    }
+  }, [storeTasks, storeRules, storeTemplates]);
+
+  const generateOccurrences = useCallback((recurringRuleId?: number) =>
+    generateApiRecurringTasks({
+      currentDate: getLocalDateKey(new Date()),
+      horizonDays: 30,
+      ...(recurringRuleId === undefined ? {} : { recurringRuleId }),
+    }), []);
+
+  const refreshTasks = useCallback(() => enqueue(async () => {
+    if (!mountedRef.current) return;
+    setIsLoading(true);
+    setError(null);
+    try {
+      // Replace SQLite's ensureRecurringOccurrences with server-side generation.
+      // The backend owns uniqueness, skip records, and recurring task links.
+      await generateOccurrences();
+      await readTaskData();
+    } catch (cause) {
+      const failure = asError(cause);
+      if (mountedRef.current) setError(failure);
+      throw failure;
+    } finally {
+      if (mountedRef.current) setIsLoading(false);
+    }
+  }), [enqueue, generateOccurrences, readTaskData]);
+
   useEffect(() => {
-    void loadTasks().catch((error) => {
-      // Keep startup failures visible without triggering Expo's red error overlay.
-      console.warn('Failed to load tasks:', error);
+    mountedRef.current = true;
+    void refreshTasks().catch((failure) => {
+      console.warn('Failed to load tasks, schedules, and templates:', failure);
     });
-  }, [loadTasks]);
+    return () => { mountedRef.current = false; };
+  }, [refreshTasks]);
 
-  async function addTaskTemplate(
-    title: string,
-    notes: string = '',
-    priority: number = 0,
-    goalId: number | null = null
-  ) {
-    await insertTaskTemplate(
-      title,
-      notes,
-      priority,
-      goalId
-    );
-    await loadTasks();
-  }
-
-  async function editTaskTemplate(
-    id: number,
-    title: string,
-    notes: string = '',
-    priority: number = 0,
-    goalId: number | null = null
-  ) {
-    await updateTaskTemplateById(
-      id,
-      title,
-      notes,
-      priority,
-      goalId
-    );
-    await loadTasks();
-  }
-
-  async function deleteTaskTemplate(id: number) {
-    await deleteTaskTemplateById(id);
-    await loadTasks();
-  }
-
-  async function addTaskFromTemplate(id: number) {
-    const template = taskTemplates.find(
-      (item) => item.id === id
-    );
-
-    if (!template) {
-      throw new Error('The task template could not be found.');
+  const saveChange = useCallback(function saveChange<T>(
+    key: string,
+    write: () => Promise<T>,
+    afterSave: (record: T) => void | Promise<void>
+  ): Promise<T> {
+    if (!mountedRef.current) {
+      return Promise.reject(new Error('The task provider is not available.'));
     }
+    if (pendingWritesRef.current.has(key)) {
+      return Promise.reject(new Error('This task, schedule, or template is already being saved.'));
+    }
+    pendingWritesRef.current.add(key);
+    setIsSaving(true);
+    return enqueue(async () => {
+      let saved = false;
+      try {
+        if (!mountedRef.current) throw new Error('The task provider is not available.');
+        setError(null);
+        const record = await write();
+        saved = true;
+        await afterSave(record);
+        return record;
+      } catch (cause) {
+        const failure = saved
+          ? new Error(
+              'The change was saved, but related task data could not be refreshed. ' +
+              'Refresh the app before submitting again.'
+            )
+          : asError(cause);
+        if (mountedRef.current) setError(failure);
+        throw failure;
+      } finally {
+        pendingWritesRef.current.delete(key);
+        if (mountedRef.current) setIsSaving(pendingWritesRef.current.size > 0);
+      }
+    });
+  }, [enqueue]);
 
-    await insertTask(
-      template.title,
-      'Inbox',
-      template.notes ?? '',
-      template.priority,
-      template.goalId
-    );
-    await loadTasks();
-  }
+  const addTaskTemplate = useCallback(async (
+    title: string, notes = '', priority = 0, goalId: number | null = null
+  ) => {
+    await saveChange('template:create', () => createApiTaskTemplate({ title, notes, priority, goalId }), putTemplate);
+  }, [putTemplate, saveChange]);
 
-  async function addTask(
-    title: string,
-    day: string,
-    notes: string = '',
-    priority: number = 0,
-    goalId: number | null = null,
-    dueDate: string | null = null
-  ) {
+  const editTaskTemplate = useCallback(async (
+    id: number, title: string, notes = '', priority = 0, goalId: number | null = null
+  ) => {
+    await saveChange(`template:${id}`, () => updateApiTaskTemplate(id, { title, notes, priority, goalId }), putTemplate);
+  }, [putTemplate, saveChange]);
+
+  const deleteTaskTemplate = useCallback(async (id: number) => {
+    await saveChange(`template:${id}`, () => deleteApiTaskTemplate(id),
+      () => storeTemplates(templatesRef.current.filter((template) => template.id !== id)));
+  }, [saveChange, storeTemplates]);
+
+  const addTaskFromTemplate = useCallback(async (id: number) => {
+    // One explicit request creates one task from the server's current template.
+    await saveChange(`template:${id}`, () => createApiTaskFromTemplate(id), putTask);
+  }, [putTask, saveChange]);
+
+  const addTask = useCallback(async (
+    title: string, day: string, notes = '', priority = 0,
+    goalId: number | null = null, dueDate: string | null = null
+  ): Promise<number | null> => {
     if (!title.trim()) return null;
-
-    const taskId = await insertTask(
-      title,
-      day,
-      notes,
-      priority,
-      goalId,
-      dueDate
-    );
-    await loadTasks();
-
-    return taskId;
-  }
-
-  async function createRecurringTask(
-    input: CreateRecurringRuleInput
-  ) {
-    await insertRecurringRule(input);
-    await loadTasks();
-  }
-
-  async function convertTaskToRecurring(
-    taskId: number,
-    input: CreateRecurringRuleInput
-  ) {
-    await convertTaskToRecurringRule(taskId, input);
-    await loadTasks();
-  }
-
-  async function updateRecurringTask(
-    id: number,
-    input: UpdateRecurringRuleInput
-  ) {
-    await updateRecurringRuleById(id, input);
-    await loadTasks();
-  }
-
-  async function updateRecurringTaskFromOccurrence(
-    taskId: number,
-    input: UpdateRecurringRuleFromOccurrenceInput
-  ) {
-    await updateRecurringRuleFromOccurrence(taskId, input);
-    await loadTasks();
-  }
-
-  async function toggleRecurringRule(id: number) {
-    const rule = recurringRules.find((item) => item.id === id);
-    if (!rule) return;
-
-    await setRecurringRuleActive(id, !rule.active);
-    await loadTasks();
-  }
-
-  async function deleteRecurringRule(
-    id: number,
-    mode: DeleteRecurringRuleMode
-  ) {
-    await deleteRecurringRuleById(id, mode);
-    await loadTasks();
-  }
-
-  async function editTask(
-    id: number,
-    title: string,
-    notes: string = '',
-    priority: number = 0,
-    goalId: number | null = null
-  ) {
-    if (!title.trim()) return;
-
-    await updateTaskById(
-      id,
-      title,
-      notes,
-      priority,
-      goalId
-    );
-    await loadTasks();
-  }
-
-  async function completeTask(id: number) {
-    const task = tasks.find((item) => item.id === id);
-
-    await completeTaskById(id);
-    await loadTasks();
-
-    // Celebrate only an actual incomplete -> complete transition. This avoids
-    // replaying feedback if a stale screen somehow submits the same task twice.
-    if (task && !task.completed) {
-      celebrate('task', task.title);
+    let resolvedDate = dueDate;
+    if (resolvedDate === null && day !== 'Inbox') {
+      resolvedDate = getNextOccurrenceDateKey(day);
+      if (resolvedDate === null) throw new Error(`Invalid weekday: ${day}`);
     }
-  }
+    const created = await saveChange('task:create', () => createApiTask({
+      title, notes, priority, goalId, dueDate: resolvedDate,
+    }), putTask);
+    return created.id;
+  }, [putTask, saveChange]);
 
-  async function deleteTask(id: number) {
-    await deleteTaskById(id);
-    await loadTasks();
-  }
+  const createRecurringTask = useCallback(async (input: CreateRecurringRuleInput) => {
+    const details = fullScheduleInput(input);
+    await saveChange('rule:create', () => createApiRecurringRule(details), async (rule) => {
+      await generateOccurrences(rule.id);
+      await readTaskData();
+    });
+  }, [generateOccurrences, readTaskData, saveChange]);
 
-  async function scheduleTask(id: number, dueDate: string) {
-    await scheduleTaskByDate(id, dueDate);
-    await loadTasks();
-  }
+  const convertTaskToRecurring = useCallback(async (taskId: number, input: CreateRecurringRuleInput) => {
+    const request = { ...fullScheduleInput(input), currentDate: getLocalDateKey(new Date()), horizonDays: 30 };
+    await saveChange(`task:${taskId}`, () => convertApiTaskToRecurring(taskId, request), async () => {
+      // Conversion already generates occurrences in its database transaction.
+      await readTaskData();
+    });
+  }, [readTaskData, saveChange]);
 
-  async function moveTaskToInbox(id: number) {
-    await moveTaskToInboxById(id);
-    await loadTasks();
-  }
+  const updateRecurringTask = useCallback(async (
+    id: number, input: UpdateRecurringRuleInput
+  ) => {
+    const request = {
+      ...fullScheduleInput(input),
+      currentDate: getLocalDateKey(new Date()),
+      horizonDays: 30,
+    };
+    await saveChange(`rule:${id}`, () => editApiRecurringSeries(id, request), async () => {
+      // The backend already saved the schedule and rebuilt its tasks together.
+      // Read the result without starting a second generation request.
+      await readTaskData();
+    });
+  }, [readTaskData, saveChange]);
 
-  async function moveTaskToDay(id: number, day: string) {
-    await moveTaskToDayById(id, day);
-    await loadTasks();
-  }
+  const updateRecurringTaskFromOccurrence = useCallback(async (
+    taskId: number, input: UpdateRecurringRuleFromOccurrenceInput
+  ) => {
+    const request = {
+      title: input.title, notes: input.notes ?? '', priority: input.priority ?? 0,
+      goalId: input.goalId ?? null, frequency: input.frequency,
+      endDate: input.endDate ?? null, weekdays: [...(input.weekdays ?? [])],
+      currentDate: getLocalDateKey(new Date()), horizonDays: 30,
+    };
+    await saveChange(`task:${taskId}`, () => editApiRecurringFromOccurrence(taskId, request), async () => {
+      await readTaskData();
+    });
+  }, [readTaskData, saveChange]);
 
-  function getActiveTasksByDate(dateKey: string) {
-    return tasks.filter(
-      (task) => task.dueDate === dateKey && !task.completed
-    );
-  }
+  const toggleRecurringRule = useCallback(async (id: number) => {
+    await saveChange(`rule:${id}`, async () => {
+      const rule = rulesRef.current.find((record) => record.id === id);
+      if (!rule) throw new Error('Refresh schedules before changing this record.');
+      return updateApiRecurringRule(id, { active: !rule.active });
+    }, async (rule) => {
+      if (rule.active) await generateOccurrences(rule.id);
+      await readTaskData();
+    });
+  }, [generateOccurrences, readTaskData, saveChange]);
 
-  function getActiveTasksByDay(day: string) {
-    return tasks.filter(
-      (task) => task.day === day && !task.completed
-    );
-  }
+  const deleteRecurringRule = useCallback(async (id: number, mode: DeleteRecurringRuleMode) => {
+    await saveChange(`rule:${id}`, () => deleteApiRecurringRule(id, mode), async () => {
+      await readTaskData();
+    });
+  }, [readTaskData, saveChange]);
 
-  function getOverdueTasks(currentDate: Date = new Date()) {
-    const todayKey = getLocalDateKey(currentDate);
+  const detachTaskFromRecurring = useCallback(async (id: number) => {
+    await saveChange(`task:${id}`, () => detachApiRecurringTask(id), putTask);
+  }, [putTask, saveChange]);
 
-    return tasks
-      .filter(
-        (task) =>
-          !task.completed &&
-          task.dueDate !== null &&
-          task.dueDate < todayKey
-      )
-      .sort((a, b) =>
-        (a.dueDate ?? '').localeCompare(b.dueDate ?? '')
-      );
-  }
+  const editTask = useCallback(async (
+    id: number, title: string, notes = '', priority = 0, goalId: number | null = null
+  ) => {
+    if (!title.trim()) return;
+    await saveChange(`task:${id}`, () => updateApiTask(id, { title, notes, priority, goalId }), putTask);
+  }, [putTask, saveChange]);
 
-  function getInboxTasks() {
-    return tasks.filter(
-      (task) => task.day === 'Inbox' && !task.completed
-    );
-  }
+  const completeTask = useCallback(async (id: number) => {
+    if (tasksRef.current.find((task) => task.id === id)?.completed) return;
+    await saveChange(`task:${id}`, () => updateApiTask(id, { completed: true }), (record) => {
+      putTask(record);
+      celebrate('task', record.title);
+    });
+  }, [celebrate, putTask, saveChange]);
 
-  function getCompletedTasks() {
-    return tasks.filter((task) => task.completed);
-  }
+  const deleteTask = useCallback(async (id: number) => {
+    // The backend records the skip and deletes a recurring occurrence atomically.
+    await saveChange(`task:${id}`, () => deleteApiTask(id),
+      () => storeTasks(tasksRef.current.filter((task) => task.id !== id)));
+  }, [saveChange, storeTasks]);
+
+  const scheduleTask = useCallback(async (id: number, dueDate: string) => {
+    await saveChange(`task:${id}`, () => updateApiTask(id, { dueDate }), putTask);
+  }, [putTask, saveChange]);
+
+  const moveTaskToInbox = useCallback(async (id: number) => {
+    // Rescheduling changes placement; original recurrence identity stays intact.
+    await saveChange(`task:${id}`, () => updateApiTask(id, { dueDate: null }), putTask);
+  }, [putTask, saveChange]);
+
+  const moveTaskToDay = useCallback(async (id: number, day: string) => {
+    const dueDate = getNextOccurrenceDateKey(day);
+    if (dueDate === null) throw new Error(`Invalid weekday: ${day}`);
+    await scheduleTask(id, dueDate);
+  }, [scheduleTask]);
+
+  const getActiveTasksByDate = useCallback((dateKey: string) =>
+    tasks.filter((task) => task.dueDate === dateKey && !task.completed), [tasks]);
+  const getActiveTasksByDay = useCallback((day: string) =>
+    tasks.filter((task) => task.day === day && !task.completed), [tasks]);
+  const getOverdueTasks = useCallback((currentDate = new Date()) => {
+    const today = getLocalDateKey(currentDate);
+    return tasks.filter((task) => !task.completed && task.dueDate !== null && task.dueDate < today)
+      .sort((a, b) => (a.dueDate ?? '').localeCompare(b.dueDate ?? ''));
+  }, [tasks]);
+  const getInboxTasks = useCallback(() =>
+    tasks.filter((task) => task.day === 'Inbox' && !task.completed), [tasks]);
+  const getCompletedTasks = useCallback(() => tasks.filter((task) => task.completed), [tasks]);
 
   return (
-    <TaskContext.Provider
-      value={{
-        tasks,
-        recurringRules,
-        taskTemplates,
-        isLoading,
-        refreshTasks: loadTasks,
-        addTaskTemplate,
-        editTaskTemplate,
-        deleteTaskTemplate,
-        addTaskFromTemplate,
-        addTask,
-        createRecurringTask,
-        convertTaskToRecurring,
-        updateRecurringTask,
-        updateRecurringTaskFromOccurrence,
-        toggleRecurringRule,
-        deleteRecurringRule,
-        editTask,
-        completeTask,
-        deleteTask,
-        scheduleTask,
-        moveTaskToInbox,
-        moveTaskToDay,
-        getActiveTasksByDate,
-        getActiveTasksByDay,
-        getOverdueTasks,
-        getInboxTasks,
-        getCompletedTasks,
-      }}
-    >
+    <TaskContext.Provider value={{
+      tasks, recurringRules, taskTemplates, isLoading, isSaving, error, refreshTasks,
+      addTaskTemplate, editTaskTemplate, deleteTaskTemplate, addTaskFromTemplate, addTask,
+      createRecurringTask, convertTaskToRecurring, updateRecurringTask,
+      updateRecurringTaskFromOccurrence, toggleRecurringRule, deleteRecurringRule,
+      detachTaskFromRecurring, editTask, completeTask, deleteTask,
+      scheduleTask, moveTaskToInbox, moveTaskToDay, getActiveTasksByDate,
+      getActiveTasksByDay, getOverdueTasks, getInboxTasks, getCompletedTasks,
+    }}>
       {children}
     </TaskContext.Provider>
   );
@@ -435,10 +385,6 @@ export function TaskProvider({ children }: { children: ReactNode }) {
 
 export function useTasks() {
   const context = useContext(TaskContext);
-
-  if (!context) {
-    throw new Error('useTasks must be used inside TaskProvider');
-  }
-
+  if (!context) throw new Error('useTasks must be used inside TaskProvider');
   return context;
 }

@@ -1,4 +1,5 @@
-import type { WeekFlowBackup } from '../backupValidation';
+import { parseWeekFlowBackup, type WeekFlowBackup } from '../backupValidation';
+import { apiRequest, type ApiRequestOptions } from './apiClient';
 
 const BACKUP_COLLECTION_NAMES = [
   'tasks',
@@ -216,4 +217,76 @@ export async function refreshBackupMigration(
   }
 
   return data;
+}
+
+
+/** Transport options for the confirmed JSON-to-PostgreSQL import flow. */
+export type BackupMigrationApiOptions = Pick<
+  ApiRequestOptions,
+  'baseUrl' | 'timeoutMs' | 'signal' | 'headers'
+>;
+
+const BACKUP_DATA_NAMES = {
+  tasks: 'tasks',
+  goals: 'goals',
+  goal_milestones: 'goalMilestones',
+  brain_dumps: 'brainDumps',
+  task_templates: 'taskTemplates',
+  recurring_rules: 'recurringRules',
+  recurring_exceptions: 'recurringExceptions',
+  planning_cycles: 'planningCycles',
+  weekly_reviews: 'weeklyReviews',
+  weekly_commitments: 'weeklyCommitments',
+  weekly_task_decisions: 'weeklyTaskDecisions',
+  cycle_reviews: 'cycleReviews',
+  cycle_goal_outcomes: 'cycleGoalOutcomes',
+} as const;
+
+/**
+ * Import a selected JSON backup through the configured API. The caller must
+ * obtain confirmation first: matching source records are updated from the file.
+ * Records absent from the file remain, and PostgreSQL primary keys are retained.
+ * This never restores SQLite or automatically retries a failed/uncertain write.
+ */
+export async function refreshApiBackup(
+  backup: WeekFlowBackup,
+  options: BackupMigrationApiOptions = {}
+): Promise<BackupRefreshResult> {
+  // Validate before sending anything. This also normalizes supported old files.
+  const validated = parseWeekFlowBackup(backup);
+  const expectedCounts = Object.fromEntries(BACKUP_COLLECTION_NAMES.map(name =>
+    [name, validated.data[BACKUP_DATA_NAMES[name]].length]
+  )) as BackupImportCounts;
+  const total = BACKUP_COLLECTION_NAMES.reduce((sum, name) => sum + expectedCounts[name], 0);
+  const exportedAt = Date.parse(validated.exportedAt);
+  const appVersion = validated.metadata.appVersion;
+
+  return apiRequest('/api/v1/backups/import/refresh', value => {
+    if (!isBackupRefreshResult(value)) {
+      throw new Error('The backup refresh returned an invalid response.');
+    }
+    // An acknowledgement must account for every collection in the selected file.
+    const sumCounts = (counts: BackupImportCounts) =>
+      BACKUP_COLLECTION_NAMES.reduce((sum, name) => sum + counts[name], 0);
+    const matches = value.total_records === total &&
+      Date.parse(value.exported_at) === exportedAt &&
+      value.app_version === appVersion &&
+      value.created_count === sumCounts(value.created_counts) &&
+      value.updated_count === sumCounts(value.updated_counts) &&
+      value.already_imported_count === sumCounts(value.already_imported_counts) &&
+      value.database_changed === (value.created_count + value.updated_count > 0) &&
+      BACKUP_COLLECTION_NAMES.every(name =>
+        value.created_counts[name] + value.updated_counts[name] +
+          value.already_imported_counts[name] === expectedCounts[name]
+      );
+    if (!matches) {
+      throw new Error('The backup refresh response does not match the selected file.');
+    }
+    return value;
+  }, {
+    timeoutMs: 120_000,
+    ...options,
+    method: 'POST',
+    body: validated,
+  });
 }
