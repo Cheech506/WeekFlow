@@ -1,4 +1,5 @@
 /** Shared HTTP transport for WeekFlow's feature API clients. */
+import type { AuthCredentials } from './authApi';
 
 export type ApiErrorKind =
   | 'configuration'
@@ -48,9 +49,78 @@ export type ApiRequestOptions = {
   /** Covers both receiving the response and reading its JSON body. */
   timeoutMs?: number;
   signal?: AbortSignal;
-  /** Allows future authentication, revision, or idempotency headers. */
+  /** Revision/idempotency headers; configured session headers cannot be overridden. */
   headers?: Record<string, string>;
 };
+
+/** Supplied by AuthProvider only after verifying the session with Python. */
+export type ApiAuthenticatedSession = {
+  baseUrl: string;
+  sessionId: string;
+  expiresAt: string;
+  credentials: AuthCredentials;
+};
+export type ApiSessionRejection = { baseUrl: string; sessionId: string };
+type ActiveSession = ApiAuthenticatedSession & { generation: number };
+const TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+let sessionGeneration = 0;
+let activeSession: ActiveSession | null = null;
+const sessionRequests = new Set<AbortController>();
+const rejectionListeners = new Set<(event: ApiSessionRejection) => void>();
+
+/**
+ * Replace the in-memory transport session. This does not log in, persist a
+ * token, or prove authentication. Replacing/clearing it cancels old requests.
+ */
+export function configureApiSession(session: ApiAuthenticatedSession | null): void {
+  let next: Omit<ActiveSession, 'generation'> | null = null;
+  if (session !== null) {
+    let address: URL;
+    try { address = new URL(session.baseUrl); }
+    catch { throw configurationError('The login session needs a valid HTTPS API address.'); }
+    const credentials = session.credentials;
+    if (address.protocol !== 'https:' || address.pathname !== '/' || address.username || address.password ||
+        address.search || address.hash || /[?#]/.test(session.baseUrl) ||
+        typeof session.sessionId !== 'string' || !UUID_PATTERN.test(session.sessionId) ||
+        typeof session.expiresAt !== 'string' || !Number.isFinite(Date.parse(session.expiresAt)) ||
+        Date.parse(session.expiresAt) <= Date.now() || !isRecord(credentials)) {
+      throw configurationError('The login session is not valid for authenticated requests.');
+    }
+    let copied: AuthCredentials;
+    if (credentials.clientType === 'native' && typeof credentials.token === 'string' &&
+        TOKEN_PATTERN.test(credentials.token) && Object.keys(credentials).every(key => ['clientType', 'token'].includes(key))) {
+      copied = { clientType: 'native', token: credentials.token };
+    } else if (credentials.clientType === 'web' && typeof credentials.csrfToken === 'string' &&
+        TOKEN_PATTERN.test(credentials.csrfToken) && Object.keys(credentials).every(key => ['clientType', 'csrfToken'].includes(key))) {
+      if (typeof window === 'undefined' || !window.location || window.location.protocol !== 'https:' ||
+          window.location.origin !== address.origin) {
+        throw configurationError('Open WeekFlow and its API through the same HTTPS address before signing in.');
+      }
+      copied = { clientType: 'web', csrfToken: credentials.csrfToken };
+    } else { throw configurationError('The login session contains invalid or mixed credentials.'); }
+    next = { baseUrl: address.origin, sessionId: session.sessionId, expiresAt: session.expiresAt, credentials: copied };
+  }
+  sessionGeneration += 1;
+  activeSession = next ? { ...next, generation: sessionGeneration } : null;
+  for (const controller of sessionRequests) controller.abort();
+  sessionRequests.clear();
+}
+
+/** Notify the provider when the current protected session receives HTTP 401. */
+export function subscribeToApiSessionRejection(listener: (event: ApiSessionRejection) => void): () => void {
+  rejectionListeners.add(listener);
+  return () => { rejectionListeners.delete(listener); };
+}
+
+function rejectCurrentSession(session: ActiveSession) {
+  if (activeSession?.generation !== session.generation) return;
+  configureApiSession(null);
+  for (const listener of rejectionListeners) {
+    try { listener({ baseUrl: session.baseUrl, sessionId: session.sessionId }); }
+    catch { /* UI listener errors must not replace the original HTTP failure. */ }
+  }
+}
 
 const DEFAULT_TIMEOUT_MS = 15_000;
 const MAX_TIMEOUT_MS = 300_000;
@@ -129,7 +199,7 @@ export async function apiRequest<T>(
   const baseUrl = normalizedBaseUrl(
     options.baseUrl ?? process.env.EXPO_PUBLIC_API_BASE_URL
   );
-  if (!path.startsWith('/') || path.startsWith('//') || path.includes('#')) {
+  if (!path.startsWith('/') || path.startsWith('//') || path.includes('#') || /[\\\r\n\t]/.test(path)) {
     throw configurationError('API paths must start with one slash and must not contain a fragment.');
   }
 
@@ -157,7 +227,47 @@ export async function apiRequest<T>(
     throw new ApiError('The request was cancelled before it was sent.', { kind: 'cancelled' });
   }
 
+  const target = new URL(`${baseUrl}${path}`);
+  const authRoute = target.pathname === '/api/v1/auth' || target.pathname.startsWith('/api/v1/auth/');
+  const protectedRoute = target.pathname.startsWith('/api/v1/') && !authRoute;
+  const session = protectedRoute ? activeSession : null;
+  const headers: Record<string, string> = {
+    Accept: 'application/json', ...options.headers,
+    ...(serializedBody !== undefined ? { 'Content-Type': 'application/json' } : {}),
+  };
+  if (session) {
+    if (target.origin !== session.baseUrl || baseUrl !== session.baseUrl || target.protocol !== 'https:') {
+      throw configurationError('This request does not match the signed-in WeekFlow server.');
+    }
+    if (Date.parse(session.expiresAt) <= Date.now()) {
+      rejectCurrentSession(session);
+      throw new ApiError('Your login session has expired. Sign in again.', { kind: 'http', status: 401 });
+    }
+    const reserved = ['authorization', 'cookie', 'x-csrf-token'];
+    if (Object.keys(options.headers ?? {}).some(key => reserved.includes(key.toLowerCase()))) {
+      throw configurationError('Session credentials must come from the authentication provider.');
+    }
+    if (session.credentials.clientType === 'native') {
+      headers.Authorization = `Bearer ${session.credentials.token}`;
+    } else {
+      if (typeof window === 'undefined' || !window.location || window.location.protocol !== 'https:' ||
+          window.location.origin !== session.baseUrl) {
+        throw configurationError('Browser requests must use the same HTTPS address as WeekFlow.');
+      }
+      if (isMutation) headers['X-CSRF-Token'] = session.credentials.csrfToken;
+    }
+  }
+  const explicitCredentials = Object.keys(headers).some(key => ['authorization', 'x-csrf-token', 'cookie'].includes(key.toLowerCase()));
+  const credentialRequest = !!session || authRoute || explicitCredentials;
+  if (credentialRequest && target.protocol !== 'https:') {
+    throw configurationError('Login credentials and authentication requests require HTTPS.');
+  }
+  const bearerRequest = session?.credentials.clientType === 'native' ||
+    target.pathname === '/api/v1/auth/native/login' ||
+    Object.keys(headers).some(key => key.toLowerCase() === 'authorization');
+
   const controller = new AbortController();
+  if (session) sessionRequests.add(controller);
   let timedOut = false;
   let sent = false;
   const cancel = () => controller.abort();
@@ -184,11 +294,11 @@ export async function apiRequest<T>(
       sent = true;
       response = await fetch(`${baseUrl}${path}`, {
         method,
-        headers: {
-          Accept: 'application/json',
-          ...options.headers,
-          ...(serializedBody !== undefined ? { 'Content-Type': 'application/json' } : {}),
-        },
+        headers,
+        // Native bearer requests do not use a browser cookie. Browsers keep
+        // their session cookie limited to the same HTTPS origin.
+        ...(credentialRequest ? { credentials: bearerRequest ? 'omit' as const : 'same-origin' as const,
+          redirect: 'error' as const } : {}),
         ...(serializedBody !== undefined ? { body: serializedBody } : {}),
         signal: controller.signal,
       });
@@ -200,6 +310,16 @@ export async function apiRequest<T>(
     }
     const interrupted = interruptedError();
     if (interrupted) throw interrupted;
+    let unexpectedAddress = response.redirected === true;
+    if (credentialRequest && response.url) {
+      try { unexpectedAddress ||= new URL(response.url).origin !== target.origin; }
+      catch { unexpectedAddress = true; }
+    }
+    if (credentialRequest && unexpectedAddress) {
+      throw new ApiError('The authentication request returned an unexpected address.', {
+        kind: 'invalid-response', status: response.status, mutationMayHaveSucceeded: isMutation,
+      });
+    }
 
     let payload: unknown = null;
     if (response.status !== 204) {
@@ -223,6 +343,12 @@ export async function apiRequest<T>(
 
     if (!response.ok) {
       const detail = errorDetail(payload);
+      if (session && response.status === 401) {
+        // Keep this request's HTTP 401, while cancelling other old-session
+        // requests. A late response cannot clear a newer configured session.
+        sessionRequests.delete(controller);
+        rejectCurrentSession(session);
+      }
       throw new ApiError(httpErrorMessage(response.status, detail), {
         kind: 'http',
         status: response.status,
@@ -241,6 +367,7 @@ export async function apiRequest<T>(
       });
     }
   } finally {
+    sessionRequests.delete(controller);
     clearTimeout(timer);
     options.signal?.removeEventListener('abort', cancel);
   }

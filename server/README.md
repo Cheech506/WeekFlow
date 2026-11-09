@@ -4,15 +4,18 @@ WeekFlow’s backend uses Python, FastAPI, Pydantic, SQLAlchemy, Psycopg, Postgr
 
 The core data API supports tasks, planning cycles, goals, goal milestones, recurring schedules, skipped occurrences, weekly commitments, weekly reviews, weekly task decisions, cycle reviews and their goal outcomes, brain dumps, and task templates. Cycle goal outcomes are saved together with their parent review. It also generates missing recurring tasks transactionally, converts existing tasks into recurring schedules, revises a series from a selected occurrence while preserving earlier and completed task history, and detaches one unfinished occurrence while retaining its task and skipping its old recurring slot. Complete-backup tools export, validate, preview, import, and refresh all 13 supported record collections, including recurring schedules and review history.
 
-**Current app storage:** The main app's six data providers now load and save everyday WeekFlow records through the Python API to PostgreSQL. React contexts hold the loaded records for the screens; PostgreSQL remains the persistent source of those records. SQLite is retained for device preferences, legacy migration utilities, and deferred offline foundations. It is not an automatic fallback for failed API requests. Live device verification and a full PostgreSQL test run are required before this integration batch is committed.
+**Current app storage:** The main app's six data providers use the Python API and PostgreSQL for everyday records. React contexts hold the loaded records for the screens. SQLite remains for device preferences, legacy migration tools, and deferred offline foundations; it is not an automatic fallback for failed API requests.
+
+**Authentication status:** Owner setup, password login, database-backed sessions, logout, login-attempt limits, and feature API protection are implemented. The frontend account form, session provider, native secure storage, browser cookie/CSRF handling, and authenticated startup boundary are connected. Saved login material is verified with the API before private data providers mount. First-run browser setup/login was confirmed through a shared private HTTPS address. The Settings sign-out control, remaining live phone/lifecycle checks, and full deployment packaging are follow-up work.
 
 ## Frontend API clients and integration status
 
-The frontend now has typed clients for all 13 domain record collections, plus recurring task actions and the existing migration tools. They live in `lib/api/` at the repository root. Shared transport sends requests to `EXPO_PUBLIC_API_BASE_URL`; feature clients validate request fields, translate camelCase app fields to snake_case API fields, and validate/map responses back into the existing UI shapes.
+The frontend has typed clients for all 13 domain record collections, recurring task actions, authentication, and the existing migration tools. They live in `lib/api/` at the repository root. Shared transport uses `EXPO_PUBLIC_API_BASE_URL` and receives a verified in-memory session from `AuthContext`. It adds native bearer credentials or CSRF headers for protected browser writes, scopes credentials to the configured HTTPS server, rejects credential overrides, and notifies the provider when that session receives HTTP 401. Feature clients validate request fields, translate camelCase app fields to snake_case API fields, and validate/map responses into UI shapes.
 
 | Client in `../lib/api/` | Responsibility |
 |---|---|
-| `apiClient.ts` | Shared transport, timeouts, cancellation, HTTP errors, and response validation |
+| `apiClient.ts` | Shared transport, scoped authentication headers, session rejection, cancellation, timeouts, HTTP errors, and response validation |
+| `authApi.ts` | Setup status, first-owner creation, browser/native login, session verification, and logout |
 | `taskApi.ts` | Task CRUD, native goal/schedule links, and task response decoding |
 | `planningCycleApi.ts` | Cycle CRUD, the current cycle, and shared cycle decoding |
 | `goalApi.ts` | Goal CRUD, completion reflections/totals, and reopening |
@@ -54,7 +57,7 @@ Task-sync database, cache, outbox, and backend tracking-table foundations exist,
 ## Requirements
 
 - Python 3.12
-- Docker Desktop with Docker Compose
+- Docker Engine or Docker Desktop with Docker Compose
 - For the Expo web app: Node.js 22 and the repository’s npm dependencies
 
 ## First-time setup
@@ -97,43 +100,139 @@ When they agree, Alembic reports `No new upgrade operations detected.` Alembic m
 
 The migrations include native task foreign keys for goals and recurring schedules. Existing SQLite source IDs are retained as migration references.
 
+Authentication adds three migrations: `a8e24d7b931c` creates accounts and sessions, `c91f2e6a4b70` creates first-run setup-code state, and `d7a4c92e6b13` creates shared login-attempt counters. The latest revision is `d7a4c92e6b13`. These migrations do not create an owner or a default password. Their downgrades refuse to discard stored authentication state.
+
+## Owner setup and authentication
+
+Each installation has one owner account and can have separate sessions on several devices. All application records belong to that installation; this is not a multi-user tenancy system. Independent installations need separate database/storage configuration. Different HTTP ports alone do not separate their records.
+
+### Create the owner in a terminal
+
+After applying migrations, run on the server:
+
+```bash
+python -m app.create_owner
+```
+
+The command prompts for the username, password, and password confirmation, with hidden password input. It requires an interactive terminal and refuses password arguments or piped input. Usernames are normalized to lowercase ASCII, are 3–64 characters, start with a letter or number, and otherwise permit letters, numbers, dots, underscores, and hyphens. New passwords are 15–128 characters; Unicode and spaces are preserved, and an all-whitespace password is rejected. Passwords are stored as salted Argon2id hashes through `pwdlib`, never as plaintext.
+
+An existing owner, including an inactive owner, is never replaced or reactivated by setup. Creating the owner does not log in a device; login creates a separate session.
+
+### Create the owner through the HTTPS setup endpoint
+
+For first-run setup through a client, obtain the one-time code in an interactive server terminal:
+
+```bash
+python -m app.issue_setup_code
+```
+
+The raw code is displayed locally after its database transaction succeeds. Only its hash is stored. It expires after 30 minutes; five incorrect code attempts cause a five-minute block. An active code is not silently replaced. If its raw value was lost, explicit local rotation invalidates it:
+
+```bash
+python -m app.issue_setup_code --rotate
+```
+
+The client submits `setup_code`, `username`, and `password` to `POST /api/v1/auth/setup` over HTTPS. Owner creation and code consumption commit together. Setup closes once the owner exists. There is no HTTP endpoint to issue or rotate codes. The first-run frontend form is implemented. Automatic container-start issuance remains future work; an operator currently issues the code in a trusted server terminal.
+
+Use either the terminal owner command or the one-time-code workflow for a new installation. Neither workflow replaces an existing owner.
+
+### Login and session behavior
+
+Browser and native login endpoints accept only `username` and `password`. Login accepts an existing password of 1–128 characters rather than applying the creation minimum again. Passwords are not trimmed or lowercased. Client type and session deadlines are selected by the server.
+
+- Browser login sets the `__Host-weekflow_session` cookie with `Secure`, `HttpOnly`, `SameSite=Strict`, and `Path=/`, with no Domain attribute. Its JSON response contains safe session information and a separate CSRF token, not the session token.
+- Phone/native login returns the session token and `token_type: "Bearer"` in its HTTPS JSON response. The frontend saves it with Expo SecureStore and sends it in `Authorization: Bearer <token>`. Native routes reject browser session cookies and browser provenance headers.
+- PostgreSQL stores only hashes of session and CSRF tokens. The session UUID identifies a record and is not a login credential.
+- The initial session lifetime is eight hours, with a 30-minute inactivity timeout. Valid use updates activity without extending the absolute deadline. Revoked sessions, inactive accounts, wrong client types, and sessions predating a password-change timestamp are rejected.
+- Browser requests that change protected data require the matching token in `X-CSRF-Token`. The server compares it against that session's stored hash. Mixing cookie and bearer credentials is rejected.
+- Logout revokes only the presented session. Browser logout clears its cookie; a native client must erase its saved token too. Other devices stay logged in.
+
+The login-limit service reserves capacity in PostgreSQL before checking a password. Each source has five reservations per 60-second fixed window, and the installation has 20 per five-minute fixed window. Correct passwords, wrong passwords, and abandoned reservations all consume capacity. A rejected request does not extend the window. A fixed-window boundary can permit a burst across adjacent windows; these are not exact rolling-window limits. A blocked login returns `429` with `Retry-After`. Counters are shared across workers and survive process restarts. The source comes from the server's trusted client address, not request JSON or manually parsed untrusted forwarded headers.
+
+### Access rules and transport
+
+`main.py` registers login and setup separately, then attaches all feature routers to `protected_api` with `Depends(require_authenticated_session)`. Database diagnostics and the documentation pages/schema use the same guard. `/` and `/health` remain public basic diagnostics. Setup and login have their own HTTPS, input, origin, credential, and attempt checks; session checking and logout still verify credentials internally.
+
+Authentication and protected requests require HTTPS. Browser pages and the API must share an HTTPS origin: scheme, hostname, and port. CORS configuration does not override the authentication origin rules. Browser credentials use cookies; native credentials use bearer headers. The dependency enforces CSRF for unsafe browser methods. A logout does not cancel a request that already passed authentication and is executing business work.
+
+API responses carry `Cache-Control: no-store` and other privacy headers. Authentication errors use fixed messages rather than returning raw validation inputs or credential-bearing exceptions. A `401` means the session is unavailable or invalid; `403` can indicate HTTPS, origin, or CSRF rejection; `429` means login capacity is exhausted; `503` means authentication/storage could not be confirmed. A connection loss during a commit can leave an uncertain outcome, so writes are not automatically retried.
+
+Keep the API behind the intended private HTTPS gateway and configure its proxy trust explicitly. Tailscale network access and application authentication are separate layers. PostgreSQL is published on loopback in the supplied Compose configuration. The Compose file starts the database only; it does not deploy a complete frontend/API stack.
+
 ## Start the API and Expo web app
 
-In a terminal in `server`:
+Start Uvicorn in a terminal in `server`, with a private HTTPS reverse proxy forwarding to its loopback listener:
 
 ```bash
 source .venv/bin/activate
-python -m uvicorn app.main:app --reload
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload --proxy-headers --forwarded-allow-ips 127.0.0.1
 ```
 
-The API runs at `http://127.0.0.1:8000`. Open `http://127.0.0.1:8000/docs` for interactive Swagger documentation. `/health` checks the API process; `/api/v1/database/health` checks its PostgreSQL connection.
+This example trusts forwarded scheme/client information only from a proxy connecting on IPv4 loopback. Use the actual trusted proxy address for another deployment. The router does not accept an arbitrary client-supplied `X-Forwarded-Proto` as proof of HTTPS. Do not use wildcard proxy trust for an exposed listener.
 
-In a second terminal at the WeekFlow repository root:
+`http://127.0.0.1:8000/health` remains a local process check. Protected API routes and authentication reject plain HTTP. `/docs`, `/redoc`, and `/openapi.json` require a valid session and are not public login pages. A browser session must also satisfy same-origin checks; opening a protected page without the required session/provenance can return `401` or `403`.
+
+At the WeekFlow repository root, configure the API's real private HTTPS address in `.env.local`, for example:
+
+```dotenv
+EXPO_PUBLIC_API_BASE_URL=https://your-private-weekflow-host
+```
+
+Replace the example host with your own reachable HTTPS address. `EXPO_PUBLIC_*` values are bundled client configuration, not secret storage; never place passwords or session tokens there. The current frontend uses its configured API address; automatic web-origin selection and a native server-address setup screen are still follow-up work. On a phone, `127.0.0.1` refers to that phone, not the API computer. An Expo tunnel delivers the frontend bundle and does not tunnel the Python API. Each device must be able to reach and resolve the chosen API address.
+
+Start the existing frontend development server from the repository root:
 
 ```bash
 nvm use 22
-EXPO_PUBLIC_API_BASE_URL=http://127.0.0.1:8000 npm run web
+npm run web
 ```
 
-This address is for a browser on the same computer as the API. The configured browser origins are `http://localhost:8081` and `http://127.0.0.1:8081`; a different frontend origin needs a corresponding CORS configuration change.
+Reload the frontend bundle after changing its configured API address. For this development setup, restart Expo when changing `.env.local`. Browser pages and the API must share the same HTTPS scheme, hostname, and port. Opening `http://localhost:8081` while the API uses a private HTTPS hostname intentionally shows a configuration error. Retained development CORS entries do not override the authentication origin rules.
 
-Open Settings → Check server connection for the read-only server check. Keep both processes running during a demo. Docker Compose starts PostgreSQL; Uvicorn starts the API; Expo starts the frontend. Press Control+C in a server terminal to stop that process.
+For the tested private development arrangement, run Expo on port 8081 and Uvicorn on IPv4 loopback port 8000, then configure Tailscale Serve in another terminal. On macOS:
 
-For Expo Go on a phone, `127.0.0.1` refers to the phone, not the API computer. Set `EXPO_PUBLIC_API_BASE_URL` on the computer running Expo to an API address reachable from the phone, bind Uvicorn to the intended trusted network interface, and restart Expo after changing the environment. If Expo runs on a different computer from the API, use the API computer's address. An Expo tunnel delivers the app's JavaScript; it does not tunnel the Python API. Remote API access needs its own network path, such as a private VPN. The current API has no authentication and should not be exposed publicly.
+```bash
+WF_TAILSCALE=/Applications/Tailscale.app/Contents/MacOS/Tailscale
+"$WF_TAILSCALE" serve --bg --set-path=/api/ http://127.0.0.1:8000/api
+"$WF_TAILSCALE" serve --bg --set-path=/health http://127.0.0.1:8000/health
+"$WF_TAILSCALE" serve --bg http://127.0.0.1:8081
+"$WF_TAILSCALE" serve status
+```
 
-When running Expo inside tmux, detach with Control+B, release both keys, then D. Detaching leaves the process running; Control+C stops it. Tmux does not restart a crashed process or keep the computer awake.
+On Linux, use `WF_TAILSCALE=tailscale` when the CLI is on PATH. These commands update this node's root, API, and health routes; inspect existing routes first if the node hosts other services. Serve removes its mount prefix, so the API target includes `/api` to preserve FastAPI's `/api/v1/...` paths. Open the HTTPS hostname printed by Serve and configure that same origin in `.env.local`. The commands above leave documentation paths on the frontend route; forward `/docs`, `/redoc`, and `/openapi.json` separately when using those protected backend pages.
+
+Tailscale is the currently tested private access method, not a requirement embedded in authentication. Other deployments can provide the same HTTPS frontend/API origin through a correctly configured reverse proxy such as Caddy. A packaged non-Tailscale deployment is not yet supplied. Plain HTTP is rejected by the current authentication flow.
+
+For first-run browser setup, issue the code with `python -m app.issue_setup_code` in a separate interactive server terminal, refresh the HTTPS account page, and select **Check setup again** if needed. Enter the code, username, password, and confirmation; account creation then leads to sign-in. The code is not printed through a web endpoint or included in application backups.
+
+Keep the database, API, HTTPS gateway, and frontend available during an end-to-end check. Docker Compose starts PostgreSQL; Uvicorn starts the API; Expo starts the frontend. Press Control+C to stop the foreground process. In tmux, detach with Control+B, release both keys, then D. Detaching preserves a running process, but tmux does not restart a crashed service or keep the computer awake.
 
 ## Available endpoints
 
-### Service information
+All domain endpoints listed below require a verified login session. Browser writes also require the matching CSRF header. Endpoint bodies and business rules remain as described; authentication is a shared prerequisite.
+
+### Authentication and setup
 
 | Method | Path | Purpose |
 |---|---|---|
-| `GET` | `/` | Basic service information |
-| `GET` | `/health` | Check that the API process is running |
-| `GET` | `/api/v1/info` | Application and API versions |
-| `GET` | `/api/v1/database/health` | Check the PostgreSQL connection |
-| `GET` | `/docs` | Interactive API documentation |
+| `GET` | `/api/v1/auth/setup/status` | Read non-secret owner/setup readiness |
+| `POST` | `/api/v1/auth/setup` | Create the owner using a locally issued one-time code |
+| `POST` | `/api/v1/auth/web/login` | Log in a browser; set the HttpOnly cookie and return its CSRF token |
+| `POST` | `/api/v1/auth/native/login` | Log in a native client and return its bearer token |
+| `GET` | `/api/v1/auth/session` | Read the current verified session identity |
+| `POST` | `/api/v1/auth/logout` | Revoke the current session; no request body |
+
+### Service information
+
+| Method | Path | Access and purpose |
+|---|---|---|
+| `GET` | `/` | Public basic service information |
+| `GET` | `/health` | Public API process check |
+| `GET` | `/api/v1/info` | Authenticated application and API versions |
+| `GET` | `/api/v1/database/health` | Authenticated PostgreSQL connection check |
+| `GET` | `/docs` | Authenticated Swagger UI |
+| `GET` | `/redoc` | Authenticated ReDoc |
+| `GET` | `/openapi.json` | Authenticated OpenAPI schema |
 
 ### Tasks
 
@@ -418,9 +517,9 @@ Successful creates return `201`, reads and updates normally return `200`, and de
 
 ## How task requests work
 
-`JSON request → Pydantic validation → FastAPI route → SQLAlchemy session → Psycopg → PostgreSQL → response schema → JSON response`
+`HTTPS request with session credentials → shared authentication dependency → task endpoint → SQLAlchemy/Psycopg → PostgreSQL → response schema → JSON response`
 
-Pydantic checks the request’s fields and types. The route applies application rules and adds or edits a SQLAlchemy model in a database session. SQLAlchemy prepares SQL and bound values; Psycopg sends them to PostgreSQL. A commit saves the transaction, while a rollback undoes its writes. Response schemas describe the data returned to the client.
+FastAPI uses Pydantic to validate request fields and types. The shared dependency verifies the session before the task endpoint runs; browser mutations also need CSRF protection. The route applies application rules and adds or edits a SQLAlchemy model in a database session. SQLAlchemy prepares SQL and bound values; Psycopg sends them to PostgreSQL. A commit saves the transaction, while a rollback undoes its writes. Response schemas describe the data returned to the client.
 
 The server calculates `day` from `due_date`; a task without a due date belongs in `Inbox`. PostgreSQL generates task IDs, and the server manages completion timestamps. Ordinary creates and updates reject the `source_*` migration fields.
 
@@ -488,7 +587,7 @@ To transfer logical app data:
 3. Choose the file, review its date, record counts, and any disclosed repairs, then select **Confirm import and update**.
 4. Check the result counts and refreshed data. The importer maps portable identities to destination PostgreSQL IDs; destination primary keys can differ from source primary keys.
 
-Phone and web clients pointing at the same API already share one instance. The JSON file includes application records, not PostgreSQL schema, roles, credentials, internal sync tracking, or device preferences. Importing a JSON file does not delete destination records that are absent from it. Existing uniqueness rules, including one active planning cycle, remain enforced; incompatible data returns a conflict rather than a partial import.
+Phone and web clients pointing at the same API already share one instance. The JSON file includes application records, not PostgreSQL schema, roles, credentials, internal sync tracking, or device preferences. It excludes accounts, login sessions, setup-code state, and login-attempt counters; a destination installation creates its own owner independently. Importing a JSON file does not delete destination records that are absent from it. Existing uniqueness rules, including one active planning cycle, remain enforced; incompatible data returns a conflict rather than a partial import.
 
 ### Preview
 
@@ -526,21 +625,39 @@ Start PostgreSQL and apply migrations if needed, then run from `server`:
 
 ```bash
 source .venv/bin/activate
+python -m pip check
+python -m alembic current
 python -m alembic check
-python -m pytest -q
+python -m pytest -q --tb=short
 ```
 
-Run the backend suite against PostgreSQL to verify this checkout before committing. The integration adds `test_recurring_series_edit_api.py` with 48 tests for saved-schedule editing, rebuilding, history preservation, validation, and transaction rollback, and `test_backup_export_api.py` with 32 export checks. The export file includes eight PostgreSQL checks for metadata-only changes, rollback, current completion status, stable repeated exports, and transfer between isolated instances with different primary keys. Collection alone does not confirm execution passed; the frontend test results below are separate from a PostgreSQL backend test run.
+The applied head should be `d7a4c92e6b13`; Alembic should report `No new upgrade operations detected.` On November 8, 2026, all **2,526 backend tests passed**. The verification applied all 17 migration upgrades to a generated private PostgreSQL schema before the full suite, then removed that schema. Read-only checks of the configured database confirmed the applied head and no model drift, and `pip check` passed. This is backend verification, not a live frontend login test.
 
-Coverage includes request validation, model constraints, task relationships, historical goal links, goal completion and deletion, planning cycles, milestones, migration backfills, backup previews, strict imports, refreshes, duplicate protection, recurrence date calculations, schedule and exception APIs, transactional occurrence generation, existing-task conversion, atomic occurrence detachment and skip preservation, series edits from original occurrence dates, retained historical goal links and task placements, rebuild-dependent weekly links, weekly commitment task links and completion, frozen review snapshots, atomic weekly task decisions, recurring deletion skips, cycle draft editing and finalization, goal carry-forward and replacement, preserved cycle history, brain dump archive/restore and conversion, independent template-created tasks, and rollback behavior.
+`tests/conftest.py` supplies an authenticated test identity only for explicitly named legacy business test modules, including those that reuse their shared fixtures. This keeps task, goal, cycle, and backup tests focused on their behavior after authentication. It does not run in the server process. Authentication and assembled-app test modules are excluded from that override and combine HTTP boundary checks with real PostgreSQL login, session, CSRF, logout, task-write, and export flows.
 
-Backup export, write, refresh, task relationship, weekly-history write, recurrence and recurring task workflow, cycle review, brain dump, and task template API tests use isolated schemas inside the existing PostgreSQL database. Endpoint commits run within test-owned transactions, and teardown rolls back their data and schema. Export tests verify table names resolve inside the test schema before any endpoint runs. Schema inspection tests still check the migrated application tables. The FastAPI development server does not need to be running during pytest. A known FastAPI/Starlette deprecation warning may appear even when all tests pass.
+Authentication coverage includes Argon2 hashing and upgrades, strict input/output schemas, one-owner constraints, terminal setup, one-time code expiry and consumption, failed-attempt persistence, concurrent owner claims, token hashing and purpose separation, absolute/idle expiry, account/client checks, CSRF, session revocation, shared login limits, concurrent reservations, protected feature/docs routing, safe errors, cookie flags, and commit uncertainty. The assembled-app suite checks every non-public API operation without credentials and exercises authenticated task and backup requests.
 
-Useful focused checks:
+Business coverage includes request validation, model constraints, native task relationships, preserved history, goal completion/deletion, cycles and milestones, migration backfills, backup preview/import/refresh/export, duplicate protection, recurrence calendars and generation, task conversion/detachment/series editing, weekly commitments/reviews/decisions, cycle draft saves/finalization, goal outcomes, brain dumps, templates, and transaction rollback.
+
+Database tests use rollback-owned transactions, temporary tables, or generated private schemas. Concurrent setup and throttle tests commit only their generated private schemas so independent connections can share state, then drop those schemas after workers finish. The FastAPI development server does not need to be running during pytest. The known FastAPI/Starlette `httpx` deprecation warning can appear even when all tests pass.
+
+Useful focused authentication checks:
+
+```bash
+python -m pytest tests/test_passwords.py tests/test_accounts.py tests/test_session_tokens.py -q --tb=short
+python -m pytest tests/test_auth_models.py tests/test_owner_setup_code_model.py tests/test_auth_login_throttle_model.py -q --tb=short
+python -m pytest tests/test_owner_setup_code_migration.py tests/test_auth_login_throttle_migration.py -q --tb=short
+python -m pytest tests/test_create_owner.py tests/test_issue_setup_code.py tests/test_owner_setup.py -q --tb=short
+python -m pytest tests/test_sessions.py tests/test_login_throttle.py -q --tb=short
+python -m pytest tests/test_owner_setup_schemas.py tests/test_auth_schemas.py -q --tb=short
+python -m pytest tests/test_owner_setup_api.py tests/test_auth_api.py tests/test_main_auth.py -q --tb=short
+```
+
+Useful focused business checks:
 
 ```bash
 python -m pytest tests/test_task_model.py tests/test_task_relationship_schemas.py tests/test_task_relationships_api.py -q
-python -m pytest tests/test_backup_refresh_api.py tests/test_backup_refresh_order.py -q
+python -m pytest tests/test_backup_refresh_api.py tests/test_backup_refresh_order.py tests/test_backup_refresh_generated_tasks.py -q
 python -m pytest tests/test_backup_import_write_api.py tests/test_weekly_history_models.py -q
 python -m pytest tests/test_backup_export_api.py -q
 python -m pytest tests/test_recurring_rules_api.py tests/test_recurring_exceptions_api.py -q
@@ -551,14 +668,14 @@ python -m pytest tests/test_weekly_commitments_api.py tests/test_weekly_reviews_
 python -m pytest tests/test_cycle_reviews_api.py tests/test_brain_dumps_api.py tests/test_task_templates_api.py -q
 ```
 
-Run the complete frontend suite and type checker from the WeekFlow repository root:
+Run the frontend suite and type checker from the repository root when changing client code:
 
 ```bash
 npm test -- --watchman=false
 npx tsc --noEmit
 ```
 
-On October 29, 2026, all **1,792 frontend tests across 67 suites** passed, and the frontend type check passed. The suite includes typed-client, provider, loading-boundary, screen, and milestone component checks for the API integration, including 22 export-client checks and 38 Settings checks for web download, native sharing, confirmed imports, refresh failures, and uncertain import handling. API requests and providers are mocked in these tests; legacy SQLite integration tests use disposable local databases. These results do not replace a PostgreSQL backend test run or a live app integration check.
+The current authentication checkpoint passed **2,151 frontend tests across 74 suites**, plus `npx tsc --noEmit`. Authentication tests cover API contracts, storage isolation, provider state transitions, failed/uncertain requests, expiry, logout cleanup, browser-tab changes, the authentication boundary, and root-layout gating. Tests simulate HTTP/native storage and use disposable SQLite databases for legacy integration cases. The browser first-run setup/login was separately confirmed by the operator through private HTTPS; those results do not establish that all phone, lifecycle, deployment, and dependency-audit checks are complete.
 
 ## Stop and restart PostgreSQL
 
@@ -580,12 +697,22 @@ docker compose start db
 
 | Location | Responsibility |
 |---|---|
-| `app/main.py` | FastAPI application, router registration, CORS, and health endpoints |
+| `app/main.py` | Public auth/setup registration, shared feature-session guard, protected docs/diagnostics, CORS, and privacy headers |
 | `app/config.py` | Application settings and `POSTGRES_*` environment configuration |
 | `app/database.py` | SQLAlchemy engine, sessions, shared model base, and connection check |
 | `app/models/` | PostgreSQL table definitions and relationships |
 | `app/schemas/` | Pydantic request, response, and backup validation |
-| `app/routers/` | Core data and workflow HTTP endpoints, including weekly/cycle history, brain dumps, templates, and backups |
+| `app/routers/` | Domain/workflow endpoints plus owner setup, browser/native login, session checking, and logout |
+| `app/models/account.py`, `auth_session.py`, `owner_setup_code.py`, `auth_login_throttle.py` | Owner credentials, login records, one-time setup state, and shared request counters |
+| `app/schemas/auth.py`, `owner_setup.py` | Strict authentication inputs and separate safe/browser/native outputs |
+| `app/create_owner.py` | Interactive owner creation with hidden password prompts |
+| `app/issue_setup_code.py` | Local one-time setup-code issuance and explicit rotation |
+| `app/services/passwords.py` | Argon2 password hashing, verification, and rehash support |
+| `app/services/accounts.py` | Username normalization and one-owner account creation |
+| `app/services/owner_setup.py` | Atomic code issuance/claiming, expiry/blocking, and first-owner creation |
+| `app/services/session_tokens.py` | Random token generation, purpose-separated hashing, and digest verification |
+| `app/services/sessions.py` | Password login, committed sessions, activity/expiry/client/CSRF checks, and logout |
+| `app/services/login_throttle.py` | Atomic attempt reservations and the throttled login entry point |
 | `app/services/task_import.py` | Task-batch comparison, strict import, and relationship mapping |
 | `app/services/backup_import.py` | Complete-backup comparison plan and strict import |
 | `app/services/backup_refresh.py` | Transactional create/update refresh with stable PostgreSQL IDs |
@@ -596,25 +723,49 @@ docker compose start db
 | `app/services/recurring_series_edit.py` | Transactional saved-schedule editing with earlier-task updates and future unfinished rebuilding |
 | `app/services/cycle_reviews.py` | Atomic draft saves and finalization, goal outcomes, successor cycles, and first commitments |
 | `alembic/versions/` | Versioned database structure changes |
-| `tests/` | Backend validation, database, migration, and API tests |
+| `tests/` | Backend business, authentication, migration, concurrency, and assembled-app protection tests |
 | `../lib/api/` | Shared HTTP transport, feature clients, and migration clients with runtime response validation |
 | `../lib/taskSync*.ts` | Deferred offline cache, outbox, database, and type foundations |
 | `app/models/task_sync.py` | Persistent server identity, client-task mappings, and sync receipt table definitions |
 | `../context/` | API-backed domain providers and device-level celebration preferences |
+| `../context/AuthContext.tsx` | Account/session state machine, server verification, login/setup/logout actions, expiry, and transport configuration |
+| `../lib/authSessionStorage.ts` | Server-scoped SecureStore bearer material and browser CSRF/session metadata |
+| `../components/AuthScreen.tsx` | Account setup/login form, safe errors, password masking, and submission guards |
+| `../components/AuthBoundary.tsx` | Account screen before verification; private provider tree after authentication |
+| `../app/_layout.tsx` | Fonts/theme, authentication provider/boundary, and private data/navigation composition |
 | `../components/ApiDataBoundary.tsx` | Initial API loading/error display and later refresh/error notices around navigation |
 | `../app/server-tasks.tsx` | Read-only server connection and task check |
 | `../app/settings.tsx` | API-backed inventory, data refresh, device preferences, web/native JSON export, and confirmed JSON import |
 
+## Authentication walkthrough
+
+Use this order when explaining the implementation or reviewing the files together:
+
+1. **`app/_layout.tsx` arranges the app.** It loads fonts, supplies the theme, mounts `AuthProvider`, and places `AuthBoundary` above the six data providers. `AuthenticatedApp` contains the private provider/navigation tree.
+2. **`AuthContext.tsx` decides the current account state.** It checks setup status and moves between `checking`, `setup`, `login`, `authenticated`, and `error`. It holds safe identity/status for screens and keeps credential material outside the public context value.
+3. **`AuthBoundary.tsx` controls what mounts.** Setup/login/error states render `AuthScreen`. Only an authenticated state with a verified identity mounts the private app. Logout or expiry removes that tree. A replacement session gets a fresh tree so old private screen/context state does not carry across.
+4. **`AuthScreen.tsx` collects the form.** It calls the provider actions rather than handling database access. It masks passwords, checks confirmation, blocks repeated taps, and clears submitted secrets. It does not persist passwords or decide whether login credentials are valid.
+5. **`authApi.ts` speaks the authentication HTTP contract.** It picks the browser/native route, sends only supported fields, and validates safe response shapes. `apiClient.ts` supplies shared request/error/cancellation behavior. Authentication endpoints use their explicit transport; protected feature requests use the provider's verified session.
+6. **The Python router receives the request.** Pydantic schemas validate request fields. The router selects the service, checks transport/origin requirements, and returns an allowed response. `main.py` registers public setup/login separately and places feature endpoints behind the shared session dependency.
+7. **Services perform the account/session work.** `passwords.py` hashes/verifies passwords with Argon2id. `login_throttle.py` reserves attempt capacity in PostgreSQL. `sessions.py` checks credentials, creates/revokes sessions, and enforces client type, expiry, inactivity, and browser CSRF. `owner_setup.py` consumes the one-time setup code atomically with first-owner creation.
+8. **Models describe the stored tables.** PostgreSQL holds the owner, password hash, session-token/CSRF hashes, setup-code state, and shared attempt counters. A session UUID identifies a row; the separate random session token is the credential. Alembic migrations create/version those tables. Replacing a Python file alone does not change existing database structure.
+9. **The client restores a login carefully.** Phone bearer tokens are kept in SecureStore. The browser's session token remains in an HttpOnly cookie; localStorage holds the separate CSRF value, session reference, and deadline. Entries are scoped to the server address. On startup, the provider checks the saved material with Python and matches the session ID before opening the app.
+10. **Every protected request is checked again by Python.** The frontend boundary controls display and lifecycle. The backend session dependency authorizes access even if someone skips the normal UI and calls an endpoint directly. After authentication, domain API requests follow the existing router → service/model → SQLAlchemy → PostgreSQL flow. `ApiDataBoundary` then handles ordinary data loading/errors.
+
+For a presentation: **“WeekFlow uses a single-owner account and database-backed sessions. The client verifies its session before loading private data, and the backend independently checks protected requests. HTTPS protects the connection; Tailscale supplies private network access in our tested deployment.”**
+
 ## Remaining work
 
-The core data APIs, typed frontend clients, main provider integration, and updated screen error handling are implemented. The added saved-schedule editing action preserves the previous app behavior while moving its transaction into PostgreSQL. Before committing this integration batch:
+The core data APIs, provider integration, backend authentication, frontend account flow, secure native persistence, authenticated shared transport, and root gate are implemented. This checkpoint records owner setup and session-authenticated app startup. Remaining work includes:
 
-- Run the full PostgreSQL test suite and Alembic check.
-- Verify live create, edit, complete/reopen, archive/restore, delete, recurrence, and weekly/cycle review flows through the main app. Refresh or reopen the app to confirm PostgreSQL persistence.
-- Verify that a lost API connection shows an error, retains already loaded screens, and does not silently save to SQLite or replay a write after recovery.
-- Confirm the phone's API address is reachable independently of the Expo tunnel.
-- Verify live JSON download on web, saving/sharing from the phone, and confirmed import into the intended destination instance. Review the file before confirming changes to matching records.
+- Add the Settings sign-out button using the implemented provider action, and verify the complete visible logout workflow.
+- Finish live phone/browser checks for repeat login, reload/app restart, idle/absolute expiry, logout, rejected direct access, cross-device feature updates, and JSON transfer with authentication enabled.
+- Migrate or retire remaining legacy helpers that use direct `fetch` instead of the shared authenticated transport. Settings JSON export/refresh already use shared transport; do not assume all old migration helpers support native authentication.
+- Review the reported npm dependency-audit findings before a production deployment. Successful installation/tests do not classify those findings.
+- Add password change/recovery, broader session-management actions, and operational cleanup of expired sessions/counters.
+- Package a built frontend, API, gateway, and PostgreSQL with durable restart, trusted proxy settings, least-privilege database access, and operator backup/recovery documentation. Current Compose runs PostgreSQL only; Expo/Uvicorn are development processes.
+- Keep Tailscale optional in deployment design. Add the packaged standard-HTTPS deployment, automatic browser-origin configuration, and a native server-address setup experience as separate work. Automatic container-start setup-code issuance is not implemented.
 
-Follow-up work includes full replacement restore, deferred offline fallback/upload and reconciliation, authentication for the intended deployment, and any agreed extension beyond twelve-week cycles. JSON export and merge/update import are implemented. The backup tools and offline tracking tables do not provide offline synchronization or authentication.
+Keep backend PostgreSQL tests, migration checks, dependency checks, frontend tests/type checking, and live checks as distinct validation evidence. Portable application JSON backups exclude owner accounts, sessions, setup codes, and login counters.
 
-A successful legacy backup import proves a copy reached PostgreSQL. The current frontend tests prove the mocked integration behavior; live feature checks and PostgreSQL backend tests remain separate verification steps.
+Other follow-up work includes full replacement restore, deferred offline fallback/upload and reconciliation, and any agreed extension beyond twelve-week cycles. JSON export and merge/update import are implemented. The offline tracking tables do not provide an active synchronization feature.

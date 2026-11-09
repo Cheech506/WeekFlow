@@ -7,7 +7,6 @@
     "icon": "./assets/images/icon.png",
     "scheme": "weekflow",
     "userInterfaceStyle": "automatic",
-    
     "ios": {
       "supportsTablet": true
     },
@@ -26,29 +25,30 @@
       "favicon": "./assets/images/favicon.png"
     },
     "plugins": [
-  [
-    "expo-router",
-    {
-      "headers": {
-        "Cross-Origin-Embedder-Policy": "credentialless",
-        "Cross-Origin-Opener-Policy": "same-origin"
-      }
-    }
-  ],
-  "expo-web-browser",
-  "expo-sqlite",
-  "expo-font",
-  "expo-sharing",
-  [
-    "expo-splash-screen",
-    {
-      "image": "./assets/images/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
-    }
-  ],
-  "expo-status-bar"
-],
+      [
+        "expo-router",
+        {
+          "headers": {
+            "Cross-Origin-Embedder-Policy": "credentialless",
+            "Cross-Origin-Opener-Policy": "same-origin"
+          }
+        }
+      ],
+      "expo-web-browser",
+      "expo-sqlite",
+      "expo-font",
+      "expo-sharing",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/images/splash-icon.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#ffffff"
+        }
+      ],
+      "expo-status-bar",
+      "expo-secure-store"
+    ],
     "experiments": {
       "typedRoutes": true
     }

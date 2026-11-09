@@ -1,10 +1,14 @@
 """SQLAlchemy models for WeekFlow."""
 
+from app.models.account import Account
+from app.models.auth_login_throttle import AuthLoginThrottle
+from app.models.auth_session import AuthSession
 from app.models.brain_dump import BrainDump
 from app.models.cycle_goal_outcome import CycleGoalOutcome
 from app.models.cycle_review import CycleReview
 from app.models.goal import Goal
 from app.models.goal_milestone import GoalMilestone
+from app.models.owner_setup_code import OwnerSetupCode
 from app.models.planning_cycle import PlanningCycle
 from app.models.recurring_occurrence_exception import (
     RecurringOccurrenceException,
@@ -22,11 +26,15 @@ from app.models.weekly_review import WeeklyReview
 from app.models.weekly_task_decision import WeeklyTaskDecision
 
 __all__ = [
+    "Account",
+    "AuthLoginThrottle",
+    "AuthSession",
     "BrainDump",
     "CycleGoalOutcome",
     "CycleReview",
     "Goal",
     "GoalMilestone",
+    "OwnerSetupCode",
     "PlanningCycle",
     "RecurringOccurrenceException",
     "RecurringRule",
