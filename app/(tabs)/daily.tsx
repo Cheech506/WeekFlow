@@ -25,6 +25,20 @@ import {
 } from '@/lib/dateUtils';
 import { calculateProgressStats } from '@/lib/progressStats';
 
+const DAILY_CARD_GAP = 12;
+const DAILY_CARD_MIN_WIDTH = 320;
+const DAILY_CARD_MAX_WIDTH = 420;
+
+function getDailyTaskCardWidth(availableWidth: number, maxColumns: number): number {
+  const available = Math.max(0, availableWidth);
+  const columns = Math.max(1, Math.min(maxColumns, Math.floor(
+    (available + DAILY_CARD_GAP) / (DAILY_CARD_MIN_WIDTH + DAILY_CARD_GAP)
+  )));
+  return Math.max(0, Math.min(DAILY_CARD_MAX_WIDTH, Math.floor(
+    (available - DAILY_CARD_GAP * (columns - 1)) / columns
+  )));
+}
+
 function getPriorityLabel(priority: number) {
   if (priority === 2) return 'High';
   if (priority === 1) return 'Medium';
@@ -61,6 +75,13 @@ export default function DailyScreen() {
   }, []);
 
   const isDesktop = width >= 1100;
+  const [overdueGridWidth, setOverdueGridWidth] = useState<number | null>(null);
+  const [todayGridWidth, setTodayGridWidth] = useState<number | null>(null);
+  const pageWidth = Math.max(0, width - 40);
+  // Measure each grid so section padding and browser scrollbars are included.
+  const overdueCardWidth = getDailyTaskCardWidth(overdueGridWidth ?? pageWidth - 36, 4);
+  const todayCardWidth = getDailyTaskCardWidth(todayGridWidth ??
+    (isDesktop ? pageWidth * 0.64 : pageWidth), 2);
 
   const {
     tasks,
@@ -212,10 +233,8 @@ export default function DailyScreen() {
           </Text>
 
           <View
-            style={[
-              styles.overdueList,
-              isDesktop && styles.cardGrid,
-            ]}
+            onLayout={event => setOverdueGridWidth(event.nativeEvent.layout.width)}
+            style={[styles.overdueList, styles.cardGrid, styles.overdueGrid]}
           >
             {filteredOverdueTasks.map((task) => {
               const linkedGoal = goals.find(
@@ -227,7 +246,7 @@ export default function DailyScreen() {
                   key={task.id}
                   style={[
                     styles.overdueCard,
-                    isDesktop && styles.halfWidthCard,
+                    { width: overdueCardWidth },
                   ]}
                 >
                   <View style={styles.overdueTopRow}>
@@ -465,7 +484,10 @@ export default function DailyScreen() {
           Tasks scheduled for today's actual calendar date show here.
         </Text>
 
-        <View style={styles.taskList}>
+        <View
+          onLayout={event => setTodayGridWidth(event.nativeEvent.layout.width)}
+          style={[styles.taskList, styles.cardGrid, styles.todayGrid]}
+        >
           {activeTasks.length === 0 ? (
             <EmptyStateCard
               icon="checkmark-circle-outline"
@@ -485,7 +507,7 @@ export default function DailyScreen() {
               );
 
               return (
-                <View key={task.id} style={styles.taskCard}>
+                <View key={task.id} style={[styles.taskCard, { width: todayCardWidth }]}>
                   <View style={styles.taskTextWrap}>
                     <Text style={styles.taskTitle}>{task.title}</Text>
 
@@ -596,7 +618,6 @@ const styles = StyleSheet.create({
   page: { flex: 1 },
   content: {
     width: '100%',
-    maxWidth: 1440,
     alignSelf: 'center',
     padding: 20,
     paddingBottom: 40,
@@ -618,8 +639,16 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     alignItems: 'flex-start',
+    columnGap: DAILY_CARD_GAP,
   },
-  halfWidthCard: { width: '49%' },
+  overdueGrid: {
+    width: '100%',
+    maxWidth: DAILY_CARD_MAX_WIDTH * 4 + DAILY_CARD_GAP * 3,
+  },
+  todayGrid: {
+    width: '100%',
+    maxWidth: DAILY_CARD_MAX_WIDTH * 2 + DAILY_CARD_GAP,
+  },
   progressCard: {
     padding: 18,
     borderRadius: 16,

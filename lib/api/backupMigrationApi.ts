@@ -136,10 +136,12 @@ export async function importBackupMigration(
   return data;
 }
 
-/** Summary returned after adding and updating a complete SQLite backup. */
+/** Import summary; removed recurring tasks are separate from input record counts. */
 export type BackupRefreshResult = BackupImportResult & {
   updated_count: number;
   updated_counts: BackupImportCounts;
+  /** Absent on older API versions, which did not reconcile skips. */
+  removed_recurring_tasks_count?: number;
   refresh_completed: true;
 };
 
@@ -150,10 +152,12 @@ function isBackupRefreshResult(
     return false;
   }
 
-  const { updated_count, updated_counts, refresh_completed } = value;
+  const { updated_count, updated_counts, refresh_completed, removed_recurring_tasks_count } = value;
 
   return (
     isBackupImportResult(value) &&
+    (removed_recurring_tasks_count === undefined ||
+      isNonNegativeInteger(removed_recurring_tasks_count)) &&
     isNonNegativeInteger(updated_count) &&
     isBackupImportCounts(updated_counts) &&
     refresh_completed === true &&
@@ -167,7 +171,8 @@ function isBackupRefreshResult(
 /**
  * Add new records and update matching records to their SQLite values.
  * PostgreSQL primary keys stay unchanged. The screen must confirm this
- * action before calling it. Records absent from the backup are retained.
+ * action before calling it. Records absent from the backup are retained, except unfinished recurring
+ * tasks whose original schedule/date is explicitly marked skipped.
  */
 export async function refreshBackupMigration(
   baseUrl: string,
@@ -245,7 +250,8 @@ const BACKUP_DATA_NAMES = {
 /**
  * Import a selected JSON backup through the configured API. The caller must
  * obtain confirmation first: matching source records are updated from the file.
- * Records absent from the file remain, and PostgreSQL primary keys are retained.
+ * Missing records remain except unfinished occurrences explicitly marked skipped.
+ * Retained records keep their PostgreSQL primary keys.
  * This never restores SQLite or automatically retries a failed/uncertain write.
  */
 export async function refreshApiBackup(
@@ -274,7 +280,7 @@ export async function refreshApiBackup(
       value.created_count === sumCounts(value.created_counts) &&
       value.updated_count === sumCounts(value.updated_counts) &&
       value.already_imported_count === sumCounts(value.already_imported_counts) &&
-      value.database_changed === (value.created_count + value.updated_count > 0) &&
+      value.database_changed === (value.created_count + value.updated_count + (value.removed_recurring_tasks_count ?? 0) > 0) &&
       BACKUP_COLLECTION_NAMES.every(name =>
         value.created_counts[name] + value.updated_counts[name] +
           value.already_imported_counts[name] === expectedCounts[name]

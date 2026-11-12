@@ -1,0 +1,25 @@
+{
+	# Keep this demo gateway separate from Caddy's usual admin port.
+	admin 127.0.0.1:2029
+	auto_https disable_redirects
+
+	# Trust the generated local certificate explicitly on the Mac and simulator.
+	skip_install_trust
+}
+
+https://localhost:8443 {
+	# Accept connections only from this Mac.
+	bind 127.0.0.1
+	tls internal
+
+	# Preserve the full API path when forwarding to Python.
+	@backend path /api /api/* /health /docs /docs/* /redoc /openapi.json
+	handle @backend {
+		reverse_proxy 127.0.0.1:8000
+	}
+
+	# Serve the frontend and Metro's WebSocket connections through HTTPS.
+	handle {
+		reverse_proxy [::1]:8081
+	}
+}

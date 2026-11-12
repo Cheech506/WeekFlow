@@ -7,6 +7,7 @@ import { Platform, Pressable, ScrollView, StyleSheet, Switch } from 'react-nativ
 import { ScreenIntro } from '@/components/ScreenIntro';
 import { Text, View } from '@/components/Themed';
 import { useColorScheme } from '@/components/useColorScheme';
+import { useAuth } from '@/context/AuthContext';
 import { useBrainDumps } from '@/context/BrainDumpContext';
 import { useCelebrations } from '@/context/CelebrationContext';
 import { useCycle } from '@/context/CycleContext';
@@ -108,6 +109,7 @@ function pluralize(count: number, singular: string, plural = `${singular}s`) {
 }
 
 export default function SettingsScreen() {
+  const auth = useAuth();
   const taskData = useTasks();
   const goalData = useGoals();
   const cycleData = useCycle();
@@ -122,6 +124,9 @@ export default function SettingsScreen() {
   const { reviews: weeklyReviews, commitments: weeklyCommitments,
     taskDecisions: weeklyTaskDecisions, refreshWeeklyReviews } = weeklyData;
   const { cycleReviews, goalOutcomes, refreshCycleReviews } = reportData;
+  const [isSigningOut, setIsSigningOut] = useState(false);
+  const [signOutMessage, setSignOutMessage] = useState<string | null>(null);
+  const signOutInProgressRef = useRef(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [refreshMessage, setRefreshMessage] = useState<StatusMessage | null>(null);
   const [isSavingPreference, setIsSavingPreference] = useState(false);
@@ -139,7 +144,9 @@ export default function SettingsScreen() {
   const mountedRef = useRef(false);
   const providersBusy = [taskData, goalData, cycleData, noteData, weeklyData, reportData]
     .some(provider => provider.isLoading || provider.isSaving);
-  const busy = isRefreshing || providersBusy || backupPhase !== 'idle';
+  const busy = isSigningOut || isRefreshing || providersBusy || backupPhase !== 'idle';
+  const signOutDisabled = busy || isSavingPreference || auth.isSubmitting ||
+    auth.status !== 'authenticated' || auth.identity === null;
   const dark = useColorScheme() === 'dark';
   const cardColor = { backgroundColor: dark ? '#1f2937' : '#eff6ff', borderColor: dark ? '#374151' : '#dbeafe' };
   const mutedColor = { color: dark ? '#d1d5db' : '#4b5563' };
@@ -159,7 +166,7 @@ export default function SettingsScreen() {
   }, [refreshTasks, refreshGoals, refreshBrainDumps, refreshCycles, refreshWeeklyReviews, refreshCycleReviews]);
 
   const refreshSettingsData = useCallback(async () => {
-    if (refreshInProgressRef.current || backupInProgressRef.current || providersBusy || !mountedRef.current) return;
+    if (signOutInProgressRef.current || refreshInProgressRef.current || backupInProgressRef.current || providersBusy || !mountedRef.current) return;
     refreshInProgressRef.current = true;
     setIsRefreshing(true);
     setRefreshMessage(null);
@@ -183,7 +190,7 @@ export default function SettingsScreen() {
   }, [providersBusy, reloadServerData]);
 
   function backupActionBlocked() {
-    return backupInProgressRef.current || refreshInProgressRef.current || providersBusy || !mountedRef.current;
+    return signOutInProgressRef.current || backupInProgressRef.current || refreshInProgressRef.current || providersBusy || !mountedRef.current;
   }
 
   async function handleExportJson() {
@@ -382,7 +389,7 @@ export default function SettingsScreen() {
   ]);
 
   async function handleCelebrationToggle(enabled: boolean) {
-    if (preferenceInProgressRef.current || isLoadingCelebrationPreference || !mountedRef.current) return;
+    if (signOutInProgressRef.current || preferenceInProgressRef.current || isLoadingCelebrationPreference || !mountedRef.current) return;
     preferenceInProgressRef.current = true;
     setIsSavingPreference(true);
     setPreferenceMessage(null);
@@ -402,6 +409,29 @@ export default function SettingsScreen() {
     }
   }
 
+  async function handleSignOut() {
+    // Refs also prevent two taps in the same render from sending two requests.
+    if (signOutInProgressRef.current || backupInProgressRef.current ||
+      refreshInProgressRef.current || preferenceInProgressRef.current ||
+      providersBusy || auth.isSubmitting || auth.status !== 'authenticated' ||
+      auth.identity === null || !mountedRef.current) return;
+    signOutInProgressRef.current = true;
+    setIsSigningOut(true);
+    setSignOutMessage(null);
+    try {
+      // AuthContext revokes the session and clears stored login material.
+      // AuthBoundary then removes private screens; Settings does not navigate.
+      await auth.signOut();
+    } catch {
+      // Normal logout failures appear in AuthBoundary. This handles an
+      // unexpected failure that leaves Settings mounted without exposing it.
+      if (mountedRef.current) setSignOutMessage('Sign out could not be completed. Please try again.');
+    } finally {
+      signOutInProgressRef.current = false;
+      if (mountedRef.current) setIsSigningOut(false);
+    }
+  }
+
   const appVersion = Constants.expoConfig?.version ?? '1.0.0';
   const expoSdk = Constants.expoConfig?.sdkVersion ?? 'Not reported';
 
@@ -411,12 +441,29 @@ export default function SettingsScreen() {
       <ScreenIntro title="Settings" subtitle="Manage your WeekFlow data and preferences." />
 
       <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Account</Text>
+        {auth.identity && <Text style={styles.preferenceTitle}>Signed in as {auth.identity.username}</Text>}
+        <Text style={[styles.description, mutedColor]}>
+          Sign out on this device. Your WeekFlow data will stay saved on the server.
+        </Text>
+        <Pressable accessibilityRole="button" accessibilityLabel="Sign out of WeekFlow"
+          accessibilityState={{ disabled: signOutDisabled, busy: isSigningOut }} disabled={signOutDisabled}
+          onPress={() => { void handleSignOut(); }} style={[styles.button, signOutDisabled && styles.disabled]}>
+          <Text style={styles.buttonText}>{isSigningOut ? 'Signing out…' : 'Sign out'}</Text>
+        </Pressable>
+        {signOutMessage && <Text accessibilityRole="alert" accessibilityLiveRegion="polite"
+          style={styles.error}>{signOutMessage}</Text>}
+      </View>
+
+      <View style={styles.section}>
         <Text style={styles.sectionTitle}>Server connection</Text>
         <Text style={[styles.description, mutedColor]}>
           Your tasks, goals, schedules, and reviews are saved on your connected WeekFlow server.
         </Text>
-        <Pressable accessibilityRole="button" onPress={() => router.push('/server-tasks' as Href)}
-          style={styles.button}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Check server connection"
+          accessibilityState={{ disabled: isSigningOut }} disabled={isSigningOut}
+          onPress={() => { if (!signOutInProgressRef.current) router.push('/server-tasks' as Href); }}
+          style={[styles.button, isSigningOut && styles.disabled]}>
           <Text style={styles.buttonText}>Check server connection</Text>
         </Pressable>
       </View>
@@ -460,7 +507,7 @@ export default function SettingsScreen() {
             </Text>
           </View>
           <Switch accessibilityLabel="Completion celebrations" value={celebrationsEnabled}
-            disabled={isLoadingCelebrationPreference || isSavingPreference}
+            disabled={isSigningOut || isLoadingCelebrationPreference || isSavingPreference}
             onValueChange={enabled => { void handleCelebrationToggle(enabled); }} />
         </View>
         {preferenceMessage ? (
@@ -517,7 +564,9 @@ export default function SettingsScreen() {
             <Text style={[styles.description, { color: dark ? '#fbbf24' : '#92400e' }]}>
               Matching server records will use this file’s values, including completion status.
               An older file can overwrite newer changes. Existing PostgreSQL IDs stay the same;
-              records absent from this file are kept. Choosing the file has not imported anything.
+              records absent from this file are kept, except unfinished recurring tasks
+              explicitly marked skipped. Completed history is preserved when applying skips.
+              Choosing the file has not imported anything.
             </Text>
             <View style={styles.backupActions}>
               <Pressable accessibilityRole="button" accessibilityLabel="Confirm JSON import to PostgreSQL"
@@ -545,6 +594,9 @@ export default function SettingsScreen() {
             <Text>Created: {importResult.created_count}</Text>
             <Text>Updated: {importResult.updated_count}</Text>
             <Text>Unchanged: {importResult.already_imported_count}</Text>
+            {(importResult.removed_recurring_tasks_count ?? 0) > 0 && (
+              <Text>{`Removed skipped recurring tasks: ${importResult.removed_recurring_tasks_count}`}</Text>
+            )}
             <Text style={[styles.description, mutedColor]}>The JSON file was not changed. Existing PostgreSQL IDs were preserved.</Text>
           </View>
         )}
@@ -587,7 +639,7 @@ export default function SettingsScreen() {
 
 const styles = StyleSheet.create({
   page: { flex: 1 },
-  content: { width: '100%', maxWidth: 1100, alignSelf: 'center', padding: 20, paddingBottom: 48, gap: 28 },
+  content: { width: '100%', alignSelf: 'center', padding: 20, paddingBottom: 48, gap: 28 },
   section: { gap: 12, backgroundColor: 'transparent' },
   sectionTitle: { fontSize: 22, fontWeight: '800' },
   description: { fontSize: 14, lineHeight: 21 },

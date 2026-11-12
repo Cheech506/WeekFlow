@@ -139,6 +139,13 @@ def refresh_conflict_message(error: BackupImportConflictError) -> str:
         "No changes were saved."
     )
 
+    if error.conflict_identities.get("skipped_recurring_tasks"):
+        return message + (
+            " The file contains unfinished recurring tasks for occurrences"
+            " already marked skipped. Restore those occurrences explicitly"
+            " before importing them, or use a backup made after deletion."
+        )
+
     # The service chains the SQLAlchemy IntegrityError after rollback.
     database_error = getattr(error.__cause__, "orig", None)
     diagnostics = getattr(database_error, "diag", None)

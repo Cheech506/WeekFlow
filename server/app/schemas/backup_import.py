@@ -609,4 +609,6 @@ class BackupRefreshResult(BackupImportResult):
 
     updated_count: NonNegativeInt
     updated_counts: BackupImportCounts
+    # Destination tasks removed by explicit skips are not input-file records.
+    removed_recurring_tasks_count: NonNegativeInt = 0
     refresh_completed: Literal[True] = True

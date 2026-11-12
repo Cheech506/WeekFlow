@@ -6,7 +6,7 @@ The core data API supports tasks, planning cycles, goals, goal milestones, recur
 
 **Current app storage:** The main app's six data providers use the Python API and PostgreSQL for everyday records. React contexts hold the loaded records for the screens. SQLite remains for device preferences, legacy migration tools, and deferred offline foundations; it is not an automatic fallback for failed API requests.
 
-**Authentication status:** Owner setup, password login, database-backed sessions, logout, login-attempt limits, and feature API protection are implemented. The frontend account form, session provider, native secure storage, browser cookie/CSRF handling, and authenticated startup boundary are connected. Saved login material is verified with the API before private data providers mount. First-run browser setup/login was confirmed through a shared private HTTPS address. The Settings sign-out control, remaining live phone/lifecycle checks, and full deployment packaging are follow-up work.
+**Authentication status:** Owner setup, password login, database-backed sessions, logout, login-attempt limits, and feature API protection are implemented. The frontend account form, session provider, native secure storage, browser cookie/CSRF handling, and authenticated startup boundary are connected. Saved login material is verified with the API before private data providers mount. First-run browser setup/login was confirmed through a shared private HTTPS address. Settings includes a sign-out control that ends the current device session. Remaining live phone/lifecycle checks and full deployment packaging are follow-up work.
 
 ## Frontend API clients and integration status
 
@@ -48,11 +48,23 @@ Settings displays counts from the API-backed providers. Its Server connection pa
 
 Settings has **Export JSON** and **Import JSON** buttons directly in its Backups section. Export requests the complete current PostgreSQL data, then starts a browser download on web or opens the phone's native share sheet. On a phone, save or share the file before dismissing the sheet to keep a copy. Import reads a selected WeekFlow JSON file, validates it locally, displays its export date and all collection counts, and requires explicit confirmation before updating PostgreSQL. Supported older device JSON backups are normalized to the current format; repaired missing goal links are disclosed before confirmation. Raw database files are not accepted. Device-level celebration preferences remain local and are not part of the server JSON export.
 
-The confirmed import creates new records and updates matching backup identities, including completion status. Existing PostgreSQL primary keys and server records absent from the file are retained. It is a merge/update import, not a full replacement restore. An older backup can overwrite newer values on matching records, so review the file date and confirmation before importing.
+The confirmed import creates new records and updates matching backup identities, including completion status. Existing PostgreSQL primary keys are preserved on retained records. Server records absent from the file are normally kept; explicit recurring skip markers remove matching unfinished occurrences that are absent from the incoming task list. Completed task history is preserved when applying skips. It is a merge/update import, not a full replacement restore. An older backup can overwrite newer values on matching records, so review the file date and confirmation before importing.
 
-After a successful import, Settings reloads all six providers and shows created, updated, and unchanged counts. Task reload also performs normal missing-occurrence generation. A failed reload does not repeat the acknowledged import. If the import result is uncertain after a lost connection, another import is blocked until the user reloads and explicitly acknowledges checking the server data; reloading itself does not establish whether the earlier import committed. Backup requests and imports are never automatically retried.
+After a successful import, Settings reloads all six providers and shows created, updated, and unchanged counts. When tasks were removed by skips, it also displays **Removed skipped recurring tasks** with the actual removal count. This counts removed destination tasks, not all skip markers in the file. Task reload also performs normal missing-occurrence generation. A failed reload does not repeat the acknowledged import. If the import result is uncertain after a lost connection, another import is blocked until the user reloads and explicitly acknowledges checking the server data; reloading itself does not establish whether the earlier import committed. Backup requests and imports are never automatically retried.
 
 Task-sync database, cache, outbox, and backend tracking-table foundations exist, but offline upload and reconciliation remain deferred. They do not provide a sync endpoint, an active upload queue, or an API/SQLite runtime switch.
+
+## Responsive frontend layout
+
+The Dashboard, Inbox, Daily, Weekly, History, and Settings pages use the available page width with consistent outer padding. Wider browser windows can show more information side by side; narrower windows and phone layouts stack content.
+
+- **Inbox:** Quick Task and Quick Brain Dump sit beside each other on wide screens and stack on narrow screens. The capture form stays outside the collapsible Brain Dump Notes list. Tasks, saved brain dumps, and recurring schedules use measured card grids with up to four columns. Cards stay near a readable 320–420 pixel width when space permits, wrapping from four to three, two, or one column instead of stretching across the entire window. Editing a card can expand it to the available grid width.
+- **Daily:** Overdue tasks use up to four columns, and today's tasks use up to two. Brain dump notes remain in one column. The progress and streak sections keep their existing arrangement.
+- **Weekly:** The calendar measures its available width so all seven days fit on one row on wide screens, including the gaps and browser scrollbar. Narrower views reduce the column count. Guided Weekly Review appears before Weekly Commitments, which can be expanded or collapsed.
+- **History:** Wide web views place Search & Filters in roughly the left quarter and results in the remaining space. Phone and narrow layouts keep filters above the results.
+- **Settings:** The page uses the available width and includes account sign-out, API-backed counts, preferences, and JSON backup actions.
+
+These layout changes affect presentation; the screens continue to load and save domain data through their existing contexts and API clients.
 
 ## Requirements
 
@@ -511,7 +523,7 @@ Each successful use intentionally creates another task. Editing or deleting a te
 | `POST` | `/api/v1/backups/export` | Export all current server collections as an importable JSON backup |
 | `POST` | `/api/v1/backups/import/preview` | Validate and compare a complete backup without changing data |
 | `POST` | `/api/v1/backups/import` | Import new records and reject changed existing records |
-| `POST` | `/api/v1/backups/import/refresh` | Create new records and update matching records from the backup |
+| `POST` | `/api/v1/backups/import/refresh` | Create/update backup records and reconcile explicit recurring skips atomically |
 
 Successful creates return `201`, reads and updates normally return `200`, and deletes return `204` without a response body. Missing records return `404`, invalid requests return `422`, and conflicting writes return `409`.
 
@@ -587,7 +599,7 @@ To transfer logical app data:
 3. Choose the file, review its date, record counts, and any disclosed repairs, then select **Confirm import and update**.
 4. Check the result counts and refreshed data. The importer maps portable identities to destination PostgreSQL IDs; destination primary keys can differ from source primary keys.
 
-Phone and web clients pointing at the same API already share one instance. The JSON file includes application records, not PostgreSQL schema, roles, credentials, internal sync tracking, or device preferences. It excludes accounts, login sessions, setup-code state, and login-attempt counters; a destination installation creates its own owner independently. Importing a JSON file does not delete destination records that are absent from it. Existing uniqueness rules, including one active planning cycle, remain enforced; incompatible data returns a conflict rather than a partial import.
+Phone and web clients pointing at the same API already share one instance. The JSON file includes application records, not PostgreSQL schema, roles, credentials, internal sync tracking, or device preferences. It excludes accounts, login sessions, setup-code state, and login-attempt counters; a destination installation creates its own owner independently. A missing record alone does not delete a destination record. The confirmed refresh additionally applies explicit recurring skips as described below. Existing uniqueness rules, including one active planning cycle, remain enforced; incompatible data returns a conflict rather than a partial import.
 
 ### Preview
 
@@ -610,14 +622,31 @@ The backup is authoritative for matching records in this operation:
 - New source identities create new records.
 - Changed matching records are updated in place, including completion state and supported relationships.
 - Existing PostgreSQL primary keys are preserved.
-- PostgreSQL records absent from the backup are retained.
+- PostgreSQL records absent from the backup are retained, except matching unfinished recurring occurrences explicitly marked skipped.
 - SQLite records are not changed or deleted.
-- Repeating an identical refresh creates and updates nothing.
+- After a successful refresh, repeating the same file without intervening changes creates, updates, or removes nothing.
 - Any invalid relationship or remaining uniqueness conflict rolls back the entire refresh.
 
 Recurring identity changes release old occurrence keys and update existing tasks before new occurrences are inserted, within the same transaction. This handles a moved or replaced occurrence even when the backup lists its replacement first. It does not disable duplicate protection or delete conflicting tasks.
 
 The response reports created, updated, and unchanged counts, both overall and by collection. `already_imported_count` represents unchanged records in refresh results. A full-backup record count includes the other collections and is therefore larger than the task count alone.
+
+### Deleted recurring occurrences during refresh
+
+Deleting one recurring task saves a skip for its schedule and original occurrence date. The task can be absent from a later backup while that skip remains in `recurringExceptions`. Previously, importing the skip kept an old unfinished task already stored on the destination, making the deleted occurrence appear overdue again.
+
+`reconcile_skipped_occurrences()` in `app/services/backup_refresh.py` now runs after the incoming records have been applied and before the transaction commits:
+
+1. Read the final stored skip markers and unfinished recurring tasks.
+2. Match by native schedule ID and `recurrence_occurrence_date`, using source schedule metadata only when the native link is absent. Titles and editable due dates do not identify an occurrence.
+3. Remove a matching unfinished destination task only when it is absent from the incoming task list. Ordinary missing records and completed task history remain.
+4. Retain the skip so later generation cannot recreate that occurrence. Weekly commitment and decision records keep their saved history, with deleted tasks' live links cleared.
+
+An incoming unfinished task that occupies a skipped slot is contradictory, including an older backup trying to revive a deleted occurrence. Refresh returns `409` with an explanation and rolls back every change. It does not silently remove the skip or accept a duplicate. Restore the occurrence explicitly before importing it, or use a backup made after deletion. Completed tasks may coexist with a skip as retained history.
+
+The response adds `removed_recurring_tasks_count`, separate from the incoming file's record totals and per-collection create/update/unchanged counts. `database_changed` is true when any records were created, updated, or removed. A deletion-only refresh therefore reports a real database change. This is a response-field addition and service change; it requires no database migration.
+
+`lib/api/backupMigrationApi.ts` validates the new count and the change flag. Settings explains skip removal before confirmation, displays the actual removal count when nonzero, and reloads the providers after success. Import, updates, skip cleanup, and history-link changes commit together or roll back together.
 
 ## Run checks
 
@@ -657,7 +686,7 @@ Useful focused business checks:
 
 ```bash
 python -m pytest tests/test_task_model.py tests/test_task_relationship_schemas.py tests/test_task_relationships_api.py -q
-python -m pytest tests/test_backup_refresh_api.py tests/test_backup_refresh_order.py tests/test_backup_refresh_generated_tasks.py -q
+python -m pytest tests/test_backup_refresh_api.py tests/test_backup_refresh_order.py tests/test_backup_refresh_generated_tasks.py tests/test_backup_refresh_skips.py -q
 python -m pytest tests/test_backup_import_write_api.py tests/test_weekly_history_models.py -q
 python -m pytest tests/test_backup_export_api.py -q
 python -m pytest tests/test_recurring_rules_api.py tests/test_recurring_exceptions_api.py -q
@@ -675,7 +704,26 @@ npm test -- --watchman=false
 npx tsc --noEmit
 ```
 
-The current authentication checkpoint passed **2,151 frontend tests across 74 suites**, plus `npx tsc --noEmit`. Authentication tests cover API contracts, storage isolation, provider state transitions, failed/uncertain requests, expiry, logout cleanup, browser-tab changes, the authentication boundary, and root-layout gating. Tests simulate HTTP/native storage and use disposable SQLite databases for legacy integration cases. The browser first-run setup/login was separately confirmed by the operator through private HTTPS; those results do not establish that all phone, lifecycle, deployment, and dependency-audit checks are complete.
+The earlier authentication checkpoint passed **2,151 frontend tests across 74 suites**, plus `npx tsc --noEmit`. Authentication tests cover API contracts, storage isolation, provider state transitions, failed/uncertain requests, expiry, logout cleanup, browser-tab changes, the authentication boundary, and root-layout gating. Tests simulate HTTP/native storage and use disposable SQLite databases for legacy integration cases. The browser first-run setup/login was separately confirmed by the operator through private HTTPS; those results do not establish that all phone, lifecycle, deployment, and dependency-audit checks are complete.
+
+### November 11, 2026 import-fix verification
+
+The recurring-skip fix passed **186 focused backend tests**, **80 frontend tests** across the import API and Settings suites, and the full-project TypeScript check. These are focused results, not a new full-suite total. The new `test_backup_refresh_skips.py` contributes 16 cases covering deletion propagation, completed history, native/source links, rescheduled tasks, unchanged retries, rollback, valid re-export, and generation after cleanup.
+
+The original importer failed the new delete/export/import regression because it left the stale task in place. The updated importer passed. The operator also confirmed the fix through the actual app after installing the backend and frontend changes.
+
+Backend regression tests create isolated PostgreSQL schemas and roll back their test data. Frontend import and Settings tests simulate HTTP responses and do not perform a real import.
+
+Run the frontend checks from the repository root:
+
+```bash
+npx jest __tests__/backupJsonImportApi.test.ts __tests__/SettingsScreen.test.ts --runInBand
+npx tsc --noEmit
+```
+
+The focused frontend command currently runs 80 tests. For the new backend regression alone, run `python -m pytest tests/test_backup_refresh_skips.py -q` from `server` and expect 16 cases.
+
+To check the complete app workflow, export a backup after deleting an occurrence, import it on the destination, check the removal count and overdue list, and import the same file again. Without intervening changes, the second import should remove no additional tasks. Completed history should remain visible.
 
 ## Stop and restart PostgreSQL
 
@@ -715,7 +763,7 @@ docker compose start db
 | `app/services/login_throttle.py` | Atomic attempt reservations and the throttled login entry point |
 | `app/services/task_import.py` | Task-batch comparison, strict import, and relationship mapping |
 | `app/services/backup_import.py` | Complete-backup comparison plan and strict import |
-| `app/services/backup_refresh.py` | Transactional create/update refresh with stable PostgreSQL IDs |
+| `app/services/backup_refresh.py` | Transactional create/update refresh and explicit recurring-skip cleanup, preserving retained PostgreSQL IDs and completed history |
 | `app/services/backup_export.py` | Complete server JSON snapshot, portable backup identities, and export validation |
 | `app/services/recurrence.py` | Calendar occurrence calculations and generation-window limits |
 | `app/services/recurrence_generation.py` | Standalone generation and a caller-owned transaction helper, with skip, duplicate, and history protection |
@@ -735,7 +783,7 @@ docker compose start db
 | `../app/_layout.tsx` | Fonts/theme, authentication provider/boundary, and private data/navigation composition |
 | `../components/ApiDataBoundary.tsx` | Initial API loading/error display and later refresh/error notices around navigation |
 | `../app/server-tasks.tsx` | Read-only server connection and task check |
-| `../app/settings.tsx` | API-backed inventory, data refresh, device preferences, web/native JSON export, and confirmed JSON import |
+| `../app/settings.tsx` | Account sign-out, API-backed inventory, data refresh, device preferences, web/native JSON export, and confirmed JSON import with skip-removal counts |
 
 ## Authentication walkthrough
 

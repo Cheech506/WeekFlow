@@ -7,6 +7,7 @@ jest.mock('expo-router', () => ({ router: { push: jest.fn() } }));
 jest.mock('@/components/Themed', () => ({ Text: 'Text', View: 'View' }));
 jest.mock('@/components/ScreenIntro', () => ({ ScreenIntro: () => null }));
 jest.mock('@/components/useColorScheme', () => ({ useColorScheme: () => 'light' }));
+jest.mock('@/context/AuthContext', () => ({ useAuth: jest.fn() }));
 jest.mock('@/context/TaskContext', () => ({ useTasks: jest.fn() }));
 jest.mock('@/context/GoalContext', () => ({ useGoals: jest.fn() }));
 jest.mock('@/context/CycleContext', () => ({ useCycle: jest.fn() }));
@@ -23,6 +24,7 @@ jest.mock('expo-sharing', () => ({ isAvailableAsync: jest.fn(), shareAsync: jest
 jest.mock('@/lib/api/backupExportApi', () => ({ exportApiBackup: jest.fn() }));
 jest.mock('@/lib/api/backupMigrationApi', () => ({ refreshApiBackup: jest.fn() }));
 import SettingsScreen from '@/app/settings';
+import { useAuth, type AuthContextValue } from '@/context/AuthContext';
 import { useBrainDumps } from '@/context/BrainDumpContext';
 import { useCelebrations } from '@/context/CelebrationContext';
 import { useCycle } from '@/context/CycleContext';
@@ -49,6 +51,9 @@ let refreshes: Array<jest.Mock<Promise<void>, []>>;
 const setCelebrationsEnabled = jest.fn<Promise<void>, [boolean]>();
 let root: ReturnType<typeof createRoot> | undefined;
 let busy = false;
+let auth: AuthContextValue;
+const signOut = jest.fn<Promise<void>, []>();
+const SIGN_OUT = 'Sign out of WeekFlow';
 const EXPORT = 'Export WeekFlow JSON backup';
 const IMPORT = 'Import WeekFlow JSON backup';
 const CONFIRM = 'Confirm JSON import to PostgreSQL';
@@ -129,6 +134,12 @@ beforeEach(() => {
   jest.mocked(exportApiBackup).mockResolvedValue(backup());
   jest.mocked(refreshApiBackup).mockResolvedValue(importResult());
   busy = false;
+  signOut.mockResolvedValue(undefined);
+  auth = { status: 'authenticated', identity: { sessionId: 'db24bdc4-d32a-4cd2-8ec6-2454e07b2b18',
+    accountId: 1, username: 'corey', clientType: 'web', expiresAt: '2099-01-01T00:00:00Z' },
+    setupReady: false, isSubmitting: false, errorMessage: null, noticeMessage: null, suggestedUsername: '',
+    refreshAuthentication: jest.fn(), createOwner: jest.fn(), signIn: jest.fn(), signOut };
+  jest.mocked(useAuth).mockImplementation(() => auth);
   refreshes = Array.from({ length: 6 }, () => jest.fn(async () => undefined));
   const ready = { isLoading: false, isSaving: false, error: null };
   jest.mocked(useTasks).mockImplementation(() => ({ ...ready, isSaving: busy,
@@ -173,9 +184,7 @@ test('shows API-backed metrics and accurate storage without executing legacy bac
 
 test('connection button navigates to the read-only server check', async () => {
   await mount();
-  const connect = root!.container.queryAll(node => node.type === 'Button')
-    .find(node => node.props.accessibilityLabel !== 'Refresh WeekFlow data counts');
-  await act(async () => { connect!.props.onPress(); });
+  await press('Check server connection');
   expect(router.push).toHaveBeenCalledWith('/server-tasks');
 });
 
@@ -432,6 +441,22 @@ test('confirmation sends the selected file once and reloads all six providers', 
   expect(text()).not.toContain('Confirm JSON import');
 });
 
+test('confirmation explains that explicit skips remove unfinished recurring tasks', async () => {
+  await mount(); await press(IMPORT);
+  expect(text()).toContain('explicitly marked skipped');
+  expect(text()).toContain('Completed history is preserved when applying skips');
+  expect(refreshApiBackup).not.toHaveBeenCalled();
+});
+
+test('successful import displays the removed recurring task count', async () => {
+  jest.mocked(refreshApiBackup).mockResolvedValue({
+    ...importResult(), removed_recurring_tasks_count: 7,
+  });
+  await mount(); await press(IMPORT); await press(CONFIRM);
+  expect(text()).toContain('Removed skipped recurring tasks: 7');
+  for (const refresh of refreshes) expect(refresh).toHaveBeenCalledTimes(1);
+});
+
 test('rapid confirmation taps and cancel cannot interrupt or duplicate the import', async () => {
   const request = pending<BackupRefreshResult>();
   jest.mocked(refreshApiBackup).mockReturnValue(request.promise);
@@ -516,4 +541,123 @@ test('an export response arriving after leaving Settings does not launch a downl
   await act(async () => { root!.unmount(); }); root = undefined;
   await act(async () => { request.resolve(backup()); });
   expect(objectUrl).not.toHaveBeenCalled();
+});
+
+
+test('shows the verified account and delegates sign-out without navigating or changing records', async () => {
+  await mount();
+  expect(text()).toContain('Signed in as');
+  expect(text()).toContain('corey');
+  await press(SIGN_OUT);
+  expect(signOut).toHaveBeenCalledTimes(1);
+  expect(signOut).toHaveBeenCalledWith();
+  expect(router.push).not.toHaveBeenCalled();
+  expect(refreshApiBackup).not.toHaveBeenCalled();
+  expect(exportApiBackup).not.toHaveBeenCalled();
+  for (const refresh of refreshes) expect(refresh).not.toHaveBeenCalled();
+});
+
+test('two immediate sign-out taps send one request and block other Settings actions', async () => {
+  const request = deferred();
+  signOut.mockReturnValueOnce(request.promise);
+  await mount();
+  const exportBefore = button(EXPORT).onPress;
+  const refreshBefore = refreshButton().onPress;
+  const preferenceBefore = toggle().onValueChange;
+  const connectionBefore = button('Check server connection').onPress;
+  await act(async () => {
+    const logout = button(SIGN_OUT).onPress;
+    logout(); logout(); exportBefore(); refreshBefore(); preferenceBefore(false); connectionBefore();
+  });
+  expect(signOut).toHaveBeenCalledTimes(1);
+  expect(button(SIGN_OUT).disabled).toBe(true);
+  expect(button(SIGN_OUT).accessibilityState.busy).toBe(true);
+  expect(button(EXPORT).disabled).toBe(true);
+  expect(button(IMPORT).disabled).toBe(true);
+  expect(refreshButton().disabled).toBe(true);
+  expect(toggle().disabled).toBe(true);
+  expect(button('Check server connection').disabled).toBe(true);
+  expect(exportApiBackup).not.toHaveBeenCalled();
+  expect(setCelebrationsEnabled).not.toHaveBeenCalled();
+  expect(router.push).not.toHaveBeenCalled();
+  for (const refresh of refreshes) expect(refresh).not.toHaveBeenCalled();
+  await act(async () => { request.resolve(); });
+});
+
+test('an unexpected logout rejection has a safe message and can be retried', async () => {
+  signOut.mockRejectedValueOnce(new Error('SECRET TOKEN AND INTERNAL DETAILS'));
+  await mount(); await press(SIGN_OUT);
+  expect(text()).toContain('Sign out could not be completed. Please try again.');
+  expect(text()).not.toContain('SECRET TOKEN');
+  expect(button(SIGN_OUT).disabled).toBe(false);
+  await press(SIGN_OUT);
+  expect(signOut).toHaveBeenCalledTimes(2);
+  expect(text()).not.toContain('Sign out could not be completed');
+});
+
+test.each(['setup', 'login', 'checking', 'error'] as const)('sign-out cannot run with auth status %s', async status => {
+  auth.status = status;
+  await mount(); await press(SIGN_OUT);
+  expect(button(SIGN_OUT).disabled).toBe(true);
+  expect(signOut).not.toHaveBeenCalled();
+});
+
+test('sign-out cannot run without a verified identity or during an auth operation', async () => {
+  const identity = auth.identity;
+  auth.identity = null;
+  await mount(); await press(SIGN_OUT);
+  expect(signOut).not.toHaveBeenCalled();
+  expect(text()).not.toContain('Signed in as');
+  auth.identity = identity;
+  auth.isSubmitting = true;
+  await act(async () => { root!.render(React.createElement(SettingsScreen)); });
+  await press(SIGN_OUT);
+  expect(signOut).not.toHaveBeenCalled();
+});
+
+test('sign-out waits for a provider save', async () => {
+  busy = true;
+  await mount(); await press(SIGN_OUT);
+  expect(button(SIGN_OUT).disabled).toBe(true);
+  expect(signOut).not.toHaveBeenCalled();
+});
+
+test('an export started in the same render prevents logout until it settles', async () => {
+  const request = pending<WeekFlowBackup>();
+  jest.mocked(exportApiBackup).mockReturnValueOnce(request.promise);
+  await mount();
+  await act(async () => {
+    const logout = button(SIGN_OUT).onPress;
+    button(EXPORT).onPress(); logout();
+  });
+  expect(signOut).not.toHaveBeenCalled();
+  expect(button(SIGN_OUT).disabled).toBe(true);
+  await act(async () => { request.resolve(backup()); });
+  await press(SIGN_OUT);
+  expect(signOut).toHaveBeenCalledTimes(1);
+});
+
+test('a preference save prevents logout until it settles', async () => {
+  const request = deferred();
+  setCelebrationsEnabled.mockReturnValueOnce(request.promise);
+  await mount();
+  await act(async () => {
+    const logout = button(SIGN_OUT).onPress;
+    toggle().onValueChange(false); logout();
+  });
+  expect(signOut).not.toHaveBeenCalled();
+  expect(button(SIGN_OUT).disabled).toBe(true);
+  await act(async () => { request.resolve(); });
+  await press(SIGN_OUT);
+  expect(signOut).toHaveBeenCalledTimes(1);
+});
+
+test('logout can settle after Settings unmounts without navigating', async () => {
+  const request = deferred();
+  signOut.mockReturnValueOnce(request.promise);
+  await mount(); await press(SIGN_OUT);
+  await act(async () => { root!.unmount(); }); root = undefined;
+  await act(async () => { request.resolve(); });
+  expect(signOut).toHaveBeenCalledTimes(1);
+  expect(router.push).not.toHaveBeenCalled();
 });

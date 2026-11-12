@@ -72,6 +72,41 @@ test('accepts an unchanged-file acknowledgement', async () => {
   await expect(refreshApiBackup(backup(), OPTIONS)).resolves.toEqual(unchanged);
 });
 
+test('accepts deletion-only reconciliation without counting removed destination tasks as input records', async () => {
+  const removed = { ...result(), created_count: 0, created_counts: counts(),
+    already_imported_count: 1, already_imported_counts: counts(1),
+    removed_recurring_tasks_count: 7, database_changed: true };
+  respond(removed);
+  await expect(refreshApiBackup(backup(), OPTIONS)).resolves.toEqual(removed);
+  expect(fetchSpy).toHaveBeenCalledTimes(1);
+});
+
+test('accepts an explicit zero removal count on an unchanged retry', async () => {
+  const unchanged = { ...result(), created_count: 0, created_counts: counts(),
+    already_imported_count: 1, already_imported_counts: counts(1),
+    removed_recurring_tasks_count: 0, database_changed: false };
+  respond(unchanged);
+  await expect(refreshApiBackup(backup(), OPTIONS)).resolves.toEqual(unchanged);
+});
+
+test.each([-1, 1.5, '7', null, Number.MAX_SAFE_INTEGER + 1])(
+  'rejects an invalid removal count %p without replaying the import', async count => {
+    respond({ ...result(), removed_recurring_tasks_count: count });
+    await expect(refreshApiBackup(backup(), OPTIONS)).rejects.toMatchObject({
+      kind: 'invalid-response', mutationMayHaveSucceeded: true,
+    });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+test('rejects deletion-only reconciliation incorrectly reported as unchanged', async () => {
+  respond({ ...result(), created_count: 0, created_counts: counts(),
+    already_imported_count: 1, already_imported_counts: counts(1),
+    removed_recurring_tasks_count: 7, database_changed: false });
+  await expect(refreshApiBackup(backup(), OPTIONS)).rejects.toMatchObject({
+    kind: 'invalid-response', mutationMayHaveSucceeded: true,
+  });
+});
+
 test.each([
   ['wrong file timestamp', { exported_at: '2026-10-26T12:00:00Z' }],
   ['wrong app version', { app_version: 'different-version' }],

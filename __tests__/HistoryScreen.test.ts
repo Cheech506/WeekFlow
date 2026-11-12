@@ -1,4 +1,5 @@
 jest.mock('react-native', () => ({
+  Platform: { OS: 'web' }, useWindowDimensions: () => ({ width: 1200, height: 900 }),
   Pressable: 'Button', ScrollView: 'ScrollView',
   StyleSheet: { create: (styles: unknown) => styles },
 }));

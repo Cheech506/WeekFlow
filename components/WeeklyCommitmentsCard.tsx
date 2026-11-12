@@ -38,6 +38,7 @@ export function WeeklyCommitmentsCard({
   onToggle,
   onDelete,
 }: WeeklyCommitmentsCardProps) {
+  const [isExpanded, setIsExpanded] = useState(false);
   const [title, setTitle] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [isTaskPickerOpen, setIsTaskPickerOpen] = useState(false);
@@ -45,6 +46,7 @@ export function WeeklyCommitmentsCard({
   const [pendingRemovalId, setPendingRemovalId] = useState<number | null>(null);
 
   useEffect(() => {
+    setIsExpanded(false);
     setTitle('');
     setIsTaskPickerOpen(false);
     setAddingTaskId(null);
@@ -185,7 +187,13 @@ export function WeeklyCommitmentsCard({
 
   return (
     <View style={styles.card}>
-      <View style={styles.headerRow}>
+      <Pressable
+        style={styles.headerRow}
+        accessibilityRole="button"
+        accessibilityLabel="Weekly Commitments"
+        accessibilityState={{ expanded: isExpanded }}
+        onPress={() => setIsExpanded(current => !current)}
+      >
         <View style={styles.transparentView}>
           <Text style={styles.title}>Weekly Commitments</Text>
           <Text style={styles.subtitle}>
@@ -196,8 +204,11 @@ export function WeeklyCommitmentsCard({
         <Text style={styles.progressBadge}>
           {completedCount} of {commitments.length}
         </Text>
-      </View>
+        <Text style={styles.chevron}>{isExpanded ? '▼' : '▶'}</Text>
+      </Pressable>
 
+      {isExpanded ? (
+      <View style={styles.expandedBody}>
       {canPlanCommitments ? (
         <>
           <View style={styles.addRow}>
@@ -366,11 +377,15 @@ export function WeeklyCommitmentsCard({
           })}
         </View>
       )}
+      </View>
+      ) : null}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  expandedBody: { backgroundColor: 'transparent' },
+  chevron: { color: '#6d28d9', fontSize: 16, fontWeight: '900' },
   card: {
     padding: 16,
     borderRadius: 16,

@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
+  useWindowDimensions,
 } from 'react-native';
 
 import { EmptyStateCard } from '@/components/EmptyStateCard';
@@ -258,6 +260,8 @@ function HistoryDetailField({
 }
 
 export default function HistoryScreen() {
+  const { width } = useWindowDimensions();
+  const isWideWeb = Platform.OS === 'web' && width >= 1100;
   const [actionError, setActionError] = useState<string | null>(null);
   const [pendingActionKeys, setPendingActionKeys] = useState<string[]>([]);
   const pendingActions = useRef(new Set<string>());
@@ -585,6 +589,8 @@ export default function HistoryScreen() {
         </Text>
       </View>
 
+      <View style={[styles.historyWorkspace, isWideWeb && styles.historyWorkspaceDesktop]}>
+      <View style={[styles.historyPane, isWideWeb && styles.filtersSidebarDesktop]}>
       <HistoryFilters
         filters={filters}
         goals={goals}
@@ -593,6 +599,9 @@ export default function HistoryScreen() {
         dateRangeError={dateRange.error}
         onChange={setFilters}
       />
+      </View>
+      <View style={[styles.historyPane, isWideWeb && styles.resultsPaneDesktop]}>
+
 
       {filters.content === 'all' || filters.content === 'tasks' ? (
         <View style={styles.section}>
@@ -1172,6 +1181,8 @@ export default function HistoryScreen() {
       ) : null}
 
 
+      </View>
+      </View>
     </ScrollView>
   );
 }
@@ -1186,11 +1197,19 @@ const styles = StyleSheet.create({
   },
   content: {
     width: '100%',
-    maxWidth: 1200,
     alignSelf: 'center',
     padding: 20,
     paddingBottom: 40,
   },
+  historyWorkspace: { width: '100%', backgroundColor: 'transparent' },
+  historyWorkspaceDesktop: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    columnGap: 24,
+  },
+  historyPane: { minWidth: 0, backgroundColor: 'transparent' },
+  filtersSidebarDesktop: { flex: 1 },
+  resultsPaneDesktop: { flex: 3 },
   progressCard: {
     padding: 18,
     borderRadius: 16,

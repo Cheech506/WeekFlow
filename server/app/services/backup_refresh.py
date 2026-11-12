@@ -6,6 +6,8 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.models import RecurringOccurrenceException, RecurringRule, Task
+
 from app.schemas import (
     BackupImportCounts,
     BackupRefreshResult,
@@ -197,6 +199,58 @@ def match_generated_occurrences(
     return claimed
 
 
+def reconcile_skipped_occurrences(
+    backup: WeekFlowBackupImportRequest,
+    db: Session,
+) -> int:
+    """Apply explicit recurring skips without treating absent rows as deletions.
+
+    Use the final imported schedule links and original occurrence dates. Native
+    links take precedence over legacy source metadata. Completed history stays.
+    An incoming unfinished task in a skipped slot is contradictory: reject the
+    entire refresh rather than silently discard a record or revive a deletion.
+    """
+
+    skipped = set(db.execute(select(
+        RecurringOccurrenceException.recurring_rule_id,
+        RecurringOccurrenceException.occurrence_date,
+    )).tuples())
+    source_to_native = dict(db.execute(select(
+        RecurringRule.source_recurring_rule_id,
+        RecurringRule.id,
+    ).where(RecurringRule.source_recurring_rule_id.is_not(None))).tuples().all())
+    incoming_ids = {item.source_task_id for item in backup.data.tasks}
+    stale_tasks = []
+    conflicts = []
+
+    for task in db.scalars(select(Task).where(
+        Task.completed.is_(False),
+        Task.completed_at.is_(None),
+        Task.recurrence_occurrence_date.is_not(None),
+    )):
+        rule_id = task.recurring_rule_id
+        if rule_id is None:
+            rule_id = source_to_native.get(task.source_recurring_rule_id)
+        if (rule_id, task.recurrence_occurrence_date) not in skipped:
+            continue
+        if task.source_task_id in incoming_ids:
+            conflicts.append(str(task.source_task_id))
+        else:
+            stale_tasks.append(task)
+
+    if conflicts:
+        raise BackupImportConflictError({"skipped_recurring_tasks": conflicts})
+
+    for task in stale_tasks:
+        # History foreign keys use SET NULL; their saved snapshots survive.
+        db.delete(task)
+    if stale_tasks:
+        db.flush()
+        # FK actions happen in PostgreSQL; refresh any cached history objects.
+        db.expire_all()
+    return len(stale_tasks)
+
+
 def refresh_backup(
     backup: WeekFlowBackupImportRequest,
     db: Session,
@@ -327,6 +381,8 @@ def refresh_backup(
                 db.flush()
                 updated[name] += 1
 
+        removed_count = reconcile_skipped_occurrences(backup, db)
+
         created_count = sum(created.values())
         updated_count = sum(updated.values())
         unchanged_count = sum(unchanged.values())
@@ -356,8 +412,9 @@ def refresh_backup(
             already_imported_counts=BackupImportCounts(
                 **unchanged
             ),
+            removed_recurring_tasks_count=removed_count,
             database_changed=(
-                created_count + updated_count > 0
+                created_count + updated_count + removed_count > 0
             ),
         )
 

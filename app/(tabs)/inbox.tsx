@@ -18,6 +18,7 @@ import {
   type BrainDump,
   useBrainDumps,
 } from '@/context/BrainDumpContext';
+import { useCycle } from '@/context/CycleContext';
 import { useGoals } from '@/context/GoalContext';
 import {
   type RecurrenceFrequency,
@@ -44,6 +45,22 @@ import {
   getSelectedInboxQuickFilter,
   type InboxQuickFilter,
 } from '@/lib/inboxOverviewUtils';
+
+const INBOX_CARD_GAP = 14;
+const INBOX_CARD_MAX_COLUMNS = 4;
+const INBOX_CARD_MIN_WIDTH = 320;
+const INBOX_CARD_MAX_WIDTH = 420;
+
+/** Keep all Inbox card grids within the same readable size range. */
+function getInboxCardWidth(availableWidth: number): number {
+  const available = Math.max(0, availableWidth);
+  const columns = Math.max(1, Math.min(INBOX_CARD_MAX_COLUMNS, Math.floor(
+    (available + INBOX_CARD_GAP) / (INBOX_CARD_MIN_WIDTH + INBOX_CARD_GAP)
+  )));
+  return Math.max(0, Math.min(INBOX_CARD_MAX_WIDTH, Math.floor(
+    (available - INBOX_CARD_GAP * (columns - 1)) / columns
+  )));
+}
 
 type RepeatChoice = 'none' | RecurrenceFrequency;
 type RepeatEndPreset =
@@ -253,6 +270,16 @@ export default function InboxScreen() {
 
   const isDesktop = width >= 1100;
   const isWideDesktop = width >= 1400;
+  const [taskGridWidth, setTaskGridWidth] = useState<number | null>(null);
+  const [brainDumpGridWidth, setBrainDumpGridWidth] = useState<number | null>(null);
+  const [recurringGridWidth, setRecurringGridWidth] = useState<number | null>(null);
+  // Each open section measures its own space, including browser scrollbars.
+  // Before that measurement, use the window width minus the page padding.
+  const fallbackGridWidth = Math.max(0, width - 40);
+  const taskCardWidth = getInboxCardWidth(taskGridWidth ?? fallbackGridWidth);
+  const brainDumpCardWidth = getInboxCardWidth(brainDumpGridWidth ?? fallbackGridWidth);
+  const recurringCardWidth = getInboxCardWidth(recurringGridWidth ?? fallbackGridWidth);
+  const [isBrainDumpsExpanded, setIsBrainDumpsExpanded] = useState(false);
 
   const [taskText, setTaskText] = useState('');
   const [notesText, setNotesText] = useState('');
@@ -383,6 +410,28 @@ export default function InboxScreen() {
   } = useBrainDumps();
 
   const { goals } = useGoals();
+  const { currentCycle } = useCycle();
+  const linkableGoals = goals.filter(goal => !goal.completed &&
+    goal.cycleId === (currentCycle?.id ?? null));
+  const goalLinkMessage = currentCycle
+    ? 'Choose an unfinished goal from the current planning cycle, or select None.'
+    : 'Choose an unfinished goal without a planning cycle, or select None.';
+
+  function goalAvailableForNewLink(goalId: number | null): boolean {
+    return goalId === null || linkableGoals.some(goal => goal.id === goalId);
+  }
+
+  function goalChangeAllowed(goalId: number | null, existingGoalId?: number | null): boolean {
+    return goalId === existingGoalId || goalAvailableForNewLink(goalId);
+  }
+
+  function goalChoices(existingGoalId: number | null) {
+    const existing = goals.find(goal => goal.id === existingGoalId);
+    // Show an unchanged historical link for context, but do not offer it
+    // as a new selection. Historical task/goal labels still use all goals.
+    return existing && !goalAvailableForNewLink(existing.id)
+      ? [...linkableGoals, existing] : linkableGoals;
+  }
 
   /*
    * Inbox defaults to unscheduled work, but WF-029 can temporarily show every
@@ -428,6 +477,10 @@ export default function InboxScreen() {
   }
 
   async function handleSaveCurrentAsTemplate() {
+    if (!goalAvailableForNewLink(selectedGoalId)) {
+      setTemplateMessage(goalLinkMessage);
+      return;
+    }
     if (!taskText.trim()) {
       setTemplateMessage(
         'Enter a task title before saving a template.'
@@ -481,6 +534,11 @@ export default function InboxScreen() {
     templateId: number,
     templateTitle: string
   ) {
+    const template = taskTemplates.find(item => item.id === templateId);
+    if (!template || !goalAvailableForNewLink(template.goalId)) {
+      setTemplateMessage('Update this template to use an available goal or None before creating a new task.');
+      return;
+    }
     try {
       await addTaskFromTemplate(templateId);
       setTemplateMessage(
@@ -522,6 +580,11 @@ export default function InboxScreen() {
       return;
     }
 
+    if (!goalChangeAllowed(editTemplateGoalId,
+      taskTemplates.find(item => item.id === editingTemplateId)?.goalId)) {
+      setTemplateMessage(goalLinkMessage);
+      return;
+    }
     try {
       await editTaskTemplate(
         editingTemplateId,
@@ -585,6 +648,10 @@ export default function InboxScreen() {
 
   async function handleAddTask() {
     if (!taskText.trim()) return;
+    if (!goalAvailableForNewLink(selectedGoalId)) {
+      setActionError(goalLinkMessage);
+      return;
+    }
 
     if (repeatChoice === 'none') {
       await addTask(
@@ -785,6 +852,13 @@ export default function InboxScreen() {
       return;
     }
 
+    // Turning a standalone task into a new schedule is a new goal link.
+    const createsSchedule = task.recurringRuleId === null && editRepeatChoice !== 'none';
+    if (!goalChangeAllowed(editGoalId, createsSchedule ? undefined : task.goalId)) {
+      setEditRepeatError(goalLinkMessage);
+      return;
+    }
+
     if (task.recurringRuleId !== null) {
       try {
         setEditRepeatError('');
@@ -955,6 +1029,11 @@ export default function InboxScreen() {
 
   async function handleSaveRecurringRule() {
     if (editingRuleId === null) return;
+    if (!goalChangeAllowed(editRuleGoalId,
+      recurringRules.find(rule => rule.id === editingRuleId)?.goalId)) {
+      setEditRuleError(goalLinkMessage);
+      return;
+    }
 
     if (!editRuleTitle.trim()) {
       setEditRuleError(
@@ -1049,10 +1128,11 @@ export default function InboxScreen() {
         />
       </View>
 
+      <View style={[styles.captureWorkspace, isDesktop && styles.captureWorkspaceDesktop]}>
       <View
         style={[
           styles.section,
-          isDesktop && styles.workspacePrimary,
+          isDesktop ? styles.captureTaskDesktop : styles.fullWidthPanel,
         ]}
       >
         <Text style={styles.sectionTitle}>Quick Task</Text>
@@ -1128,7 +1208,7 @@ export default function InboxScreen() {
               </Text>
             </Pressable>
 
-            {goals.map((goal) => (
+            {linkableGoals.map((goal) => (
               <Pressable
                 key={goal.id}
                 style={[
@@ -1153,6 +1233,9 @@ export default function InboxScreen() {
               </Pressable>
             ))}
           </ScrollView>
+          {!goalAvailableForNewLink(selectedGoalId) && (
+            <Text accessibilityRole="alert" style={styles.errorText}>{goalLinkMessage}</Text>
+          )}
 
           <Text style={styles.pickerLabel}>Repeat:</Text>
           <ScrollView
@@ -1452,6 +1535,36 @@ export default function InboxScreen() {
         </View>
       </View>
 
+      <View style={[
+        styles.section,
+        isDesktop ? styles.captureBrainDumpDesktop : styles.fullWidthPanel,
+      ]}>
+        <Text style={styles.sectionTitle}>Quick Brain Dump</Text>
+        <Text style={styles.sectionSubtitle}>
+          Capture a thought, reminder, or idea without creating a task.
+        </Text>
+        <View style={styles.form}>
+          <TextInput
+            style={[styles.input, styles.brainDumpInput]}
+            placeholder="Write anything here..."
+            value={brainDumpText}
+            onChangeText={setBrainDumpText}
+            multiline
+          />
+          <Pressable
+            style={styles.brainDumpButton}
+            disabled={isActionPending('note:create')}
+            onPress={() => void runInboxAction('note:create', handleAddBrainDump)}
+          >
+            <Text style={styles.buttonText}>
+              {isActionPending('note:create') ? 'Saving…' : 'Save Brain Dump'}
+            </Text>
+          </Pressable>
+        </View>
+      </View>
+
+      </View>
+
       <View
         style={[
           styles.section,
@@ -1593,9 +1706,11 @@ export default function InboxScreen() {
                           </Text>
                         </Pressable>
 
-                        {goals.map((goal) => (
+                        {goalChoices(template.goalId).map((goal) => (
                           <Pressable
                             key={goal.id}
+                            disabled={!goalAvailableForNewLink(goal.id)}
+                            accessibilityState={{ disabled: !goalAvailableForNewLink(goal.id) }}
                             style={[
                               styles.pill,
                               editTemplateGoalId === goal.id &&
@@ -1613,7 +1728,7 @@ export default function InboxScreen() {
                               ]}
                               numberOfLines={1}
                             >
-                              {goal.title}
+                              {goalAvailableForNewLink(goal.id) ? goal.title : `${goal.title} (existing link)`}
                             </Text>
                           </Pressable>
                         ))}
@@ -1764,7 +1879,10 @@ export default function InboxScreen() {
         </Pressable>
 
         {isRecurringManagerExpanded ? (
-          <View style={styles.list}>
+          <View
+            onLayout={event => setRecurringGridWidth(event.nativeEvent.layout.width)}
+            style={[styles.list, styles.cardGrid, styles.responsiveCardGrid]}
+          >
             {recurringRules.length === 0 ? (
               <EmptyStateCard
                 icon="repeat-outline"
@@ -1796,6 +1914,9 @@ export default function InboxScreen() {
                     key={rule.id}
                     style={[
                       styles.ruleCard,
+                      editingRuleId === rule.id
+                        ? styles.fullWidthPanel
+                        : { width: recurringCardWidth },
                       !rule.active &&
                         styles.ruleCardPaused,
                     ]}
@@ -1942,9 +2063,11 @@ export default function InboxScreen() {
                             </Text>
                           </Pressable>
 
-                          {goals.map((goal) => (
+                          {goalChoices(rule.goalId).map((goal) => (
                             <Pressable
                               key={goal.id}
+                            disabled={!goalAvailableForNewLink(goal.id)}
+                            accessibilityState={{ disabled: !goalAvailableForNewLink(goal.id) }}
                               style={[
                                 styles.pill,
                                 editRuleGoalId === goal.id &&
@@ -1961,7 +2084,7 @@ export default function InboxScreen() {
                                     styles.selectedText,
                                 ]}
                               >
-                                {goal.title}
+                                {goalAvailableForNewLink(goal.id) ? goal.title : `${goal.title} (existing link)`}
                               </Text>
                             </Pressable>
                           ))}
@@ -2285,37 +2408,31 @@ export default function InboxScreen() {
           isDesktop && styles.fullWidthPanel,
         ]}
       >
-        <Text style={styles.sectionTitle}>
-          Brain Dump Notes
-        </Text>
-        <Text style={styles.sectionSubtitle}>
-          Thoughts, reminders, and ideas that are not tasks yet.
-        </Text>
-
-        <View style={styles.form}>
-          <TextInput
-            style={[styles.input, styles.brainDumpInput]}
-            placeholder="Write anything here..."
-            value={brainDumpText}
-            onChangeText={setBrainDumpText}
-            multiline
-          />
-          <Pressable
-            style={styles.brainDumpButton}
-            disabled={isActionPending('note:create')}
-            onPress={() => void runInboxAction('note:create', handleAddBrainDump)}
-          >
-            <Text style={styles.buttonText}>
-              {isActionPending('note:create') ? 'Saving…' : 'Save Brain Dump'}
+        <Pressable
+          style={styles.managerHeader}
+          accessibilityRole="button"
+          accessibilityLabel="Brain Dump Notes"
+          accessibilityState={{ expanded: isBrainDumpsExpanded }}
+          onPress={() => setIsBrainDumpsExpanded(current => !current)}
+        >
+          <View style={styles.transparent}>
+            <Text style={styles.sectionTitle}>Brain Dump Notes</Text>
+            <Text style={styles.sectionSubtitleNoMargin}>
+              {activeBrainDumps.length} active note{activeBrainDumps.length === 1 ? '' : 's'}
             </Text>
-          </Pressable>
-        </View>
+          </View>
+          <Text style={styles.chevron}>{isBrainDumpsExpanded ? '▼' : '▶'}</Text>
+        </Pressable>
+
+        {isBrainDumpsExpanded ? (
+          <View style={styles.list}>
+            <Text style={styles.sectionSubtitleNoMargin}>
+              Thoughts, reminders, and ideas that are not tasks yet.
+            </Text>
 
         <View
-          style={[
-            styles.list,
-            isDesktop && styles.cardGrid,
-          ]}
+          onLayout={event => setBrainDumpGridWidth(event.nativeEvent.layout.width)}
+          style={[styles.list, styles.cardGrid, styles.responsiveCardGrid]}
         >
           {activeBrainDumps.length === 0 ? (
             <EmptyStateCard
@@ -2335,7 +2452,9 @@ export default function InboxScreen() {
                     styles.horizontalCard,
                     isEditingBrainDump &&
                       styles.brainDumpEditingCard,
-                    isDesktop && styles.halfWidthCard,
+                    isEditingBrainDump
+                      ? styles.fullWidthPanel
+                      : { width: brainDumpCardWidth },
                   ]}
                 >
                   {isEditingBrainDump ? (
@@ -2477,6 +2596,8 @@ export default function InboxScreen() {
             })
           )}
         </View>
+          </View>
+        ) : null}
       </View>
 
       <View
@@ -2505,10 +2626,8 @@ export default function InboxScreen() {
         />
 
         <View
-          style={[
-            styles.list,
-            isDesktop && styles.cardGrid,
-          ]}
+          onLayout={event => setTaskGridWidth(event.nativeEvent.layout.width)}
+          style={[styles.list, styles.cardGrid, styles.responsiveCardGrid]}
         >
           {activeTasks.length === 0 ? (
             <EmptyStateCard
@@ -2536,7 +2655,7 @@ export default function InboxScreen() {
                     key={task.id}
                     style={[
                       styles.taskCard,
-                      isDesktop && styles.halfWidthCard,
+                      styles.fullWidthPanel,
                     ]}
                   >
                     <Text style={styles.editTitle}>
@@ -2611,9 +2730,11 @@ export default function InboxScreen() {
                         </Text>
                       </Pressable>
 
-                      {goals.map((goal) => (
+                      {goalChoices(task.goalId).map((goal) => (
                         <Pressable
                           key={goal.id}
+                            disabled={!goalAvailableForNewLink(goal.id)}
+                            accessibilityState={{ disabled: !goalAvailableForNewLink(goal.id) }}
                           style={[
                             styles.pill,
                             editGoalId === goal.id &&
@@ -2630,7 +2751,7 @@ export default function InboxScreen() {
                                 styles.selectedText,
                             ]}
                           >
-                            {goal.title}
+                            {goalAvailableForNewLink(goal.id) ? goal.title : `${goal.title} (existing link)`}
                           </Text>
                         </Pressable>
                       ))}
@@ -3286,7 +3407,7 @@ export default function InboxScreen() {
                   key={task.id}
                   style={[
                     styles.taskCard,
-                    isDesktop && styles.halfWidthCard,
+                    { width: taskCardWidth },
                   ]}
                 >
                   <View style={styles.horizontalCardInner}>
@@ -3481,7 +3602,6 @@ const styles = StyleSheet.create({
   page: { flex: 1 },
   content: {
     width: '100%',
-    maxWidth: 1440,
     alignSelf: 'center',
     padding: 20,
     paddingBottom: 40,
@@ -3493,13 +3613,25 @@ const styles = StyleSheet.create({
     columnGap: 18,
   },
   fullWidthPanel: { width: '100%' },
-  workspacePrimary: { width: '58%' },
-  workspaceSecondary: { width: '40%' },
+  captureWorkspace: { width: '100%', backgroundColor: 'transparent' },
+  captureWorkspaceDesktop: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    columnGap: 18,
+  },
+  captureTaskDesktop: { flex: 3, minWidth: 0 },
+  captureBrainDumpDesktop: { flex: 2, minWidth: 0 },
+  workspaceSecondary: { width: '100%' },
   cardGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     alignItems: 'flex-start',
-    columnGap: 14,
+    columnGap: INBOX_CARD_GAP,
+  },
+  responsiveCardGrid: {
+    width: '100%',
+    maxWidth: INBOX_CARD_MAX_WIDTH * INBOX_CARD_MAX_COLUMNS +
+      INBOX_CARD_GAP * (INBOX_CARD_MAX_COLUMNS - 1),
   },
   halfWidthCard: { width: '49%' },
   progressCard: {

@@ -67,23 +67,18 @@ export default function WeeklyScreen() {
   const [datePickerRequest, setDatePickerRequest] =
     useState<DatePickerRequest | null>(null);
 
-  const columnCount = getColumnCount(width);
-  const isDesktopWeek = columnCount === 7;
-  const isCompactTaskCard = columnCount >= 4;
-
-  /*
-   * The page has 40px of horizontal padding. The remaining width is split
-   * between the active columns, including the gaps between day cards.
-   */
+  const [weekGridWidth, setWeekGridWidth] = useState<number | null>(null);
   const gridGap = 12;
   const pageHorizontalPadding = width < 700 ? 24 : 40;
-  const availableGridWidth = Math.max(
-    width - pageHorizontalPadding,
-    280
-  );
-  const dayColumnWidth =
-    (availableGridWidth - gridGap * (columnCount - 1)) /
-    columnCount;
+  // Measure the calendar itself so scrollbars do not push Sunday onto a
+  // second row. Seven days share the full available width on wide screens.
+  const availableGridWidth = Math.max(0, weekGridWidth ?? width - pageHorizontalPadding);
+  const columnCount = getColumnCount(availableGridWidth + pageHorizontalPadding);
+  const isDesktopWeek = columnCount === 7;
+  const isCompactTaskCard = columnCount >= 4;
+  const dayColumnWidth = Math.max(0, Math.floor(
+    (availableGridWidth - gridGap * (columnCount - 1)) / columnCount
+  ));
 
   const {
     tasks,
@@ -505,6 +500,14 @@ export default function WeeklyScreen() {
         ) : null}
       </View>
 
+      <GuidedWeeklyReviewCard
+        weekLabel={weekLabel}
+        status={weeklyReview.status}
+        review={weeklyReview}
+        storedReview={storedWeeklyReview}
+        onSave={handleSaveWeeklyReview}
+      />
+
       <WeeklyCommitmentsCard
         weekLabel={weekLabel}
         status={weeklyReview.status}
@@ -519,14 +522,6 @@ export default function WeeklyScreen() {
         }
         onToggle={toggleCommitment}
         onDelete={deleteCommitment}
-      />
-
-      <GuidedWeeklyReviewCard
-        weekLabel={weekLabel}
-        status={weeklyReview.status}
-        review={weeklyReview}
-        storedReview={storedWeeklyReview}
-        onSave={handleSaveWeeklyReview}
       />
 
       <UnfinishedTaskDecisionsCard
@@ -555,7 +550,10 @@ export default function WeeklyScreen() {
         scheduleChoices={['all', 'overdue', 'today', 'upcoming']}
       />
 
-      <View style={[styles.weekGrid, { gap: gridGap }]}>
+      <View
+        onLayout={event => setWeekGridWidth(event.nativeEvent.layout.width)}
+        style={[styles.weekGrid, { width: '100%', gap: gridGap }]}
+      >
         {weekDays.map((calendarDay) => {
           const unfilteredDayTasks = getActiveTasksByDate(
             calendarDay.dateKey
@@ -735,7 +733,6 @@ const styles = StyleSheet.create({
   page: { flex: 1 },
   content: {
     width: '100%',
-    maxWidth: 1440,
     alignSelf: 'center',
     padding: 20,
     paddingBottom: 40,
