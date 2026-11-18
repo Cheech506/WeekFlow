@@ -1,0 +1,34 @@
+# This file applies when server/ is the Docker build context.
+# Start with an allowlist of the backend's runtime and migration files.
+**
+!Dockerfile
+!.dockerignore
+!requirements.txt
+!alembic.ini
+!app/
+!app/**
+!alembic/
+!alembic/**
+
+# Exclude local settings, caches, and private files even inside allowed folders.
+**/.env
+**/.env.*
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/*.log
+**/*.db
+**/*.db-*
+**/*.sqlite
+**/*.sqlite3
+**/*.sqlite-*
+**/*.sqlite3-*
+**/*.sql
+**/*.dump
+**/*.backup
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx

@@ -1,6 +1,7 @@
 /** Persist login material, scoped to one HTTPS WeekFlow server. */
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
+import { resolveApiBaseUrl } from './api/apiBaseUrl';
 import type { AuthCredentials, AuthLoginResult } from './api/authApi';
 
 export type AuthSessionStorageOptions = { baseUrl?: string };
@@ -51,7 +52,7 @@ function onlyKeys(value: unknown, allowed: readonly string[]): value is Record<s
 function token(value: unknown): value is string { return typeof value === 'string' && TOKEN.test(value); }
 
 function scopeFor(options: AuthSessionStorageOptions): Scope {
-  const raw = options.baseUrl ?? process.env.EXPO_PUBLIC_API_BASE_URL;
+  const raw = resolveApiBaseUrl(options.baseUrl);
   let url: URL;
   try {
     if (typeof raw !== 'string' || !raw.trim()) throw new Error();

@@ -241,6 +241,34 @@ test('iOS enables keyboard avoidance', async () => {
   (Platform as { OS: string }).OS = 'ios'; await mount();
   expect(nodes('Keyboard')[0].props.behavior).toBe('padding');
 });
+
+test('server selection displays the selected address and clears password fields before changing', async () => {
+  screen.serverAddress = 'https://selected.example.test:9443';
+  screen.onChangeServer = jest.fn(async () => undefined);
+  await mount(); await fill(); await press('Change server');
+  expect(text()).toContain(screen.serverAddress);
+  expect(screen.onChangeServer).toHaveBeenCalledTimes(1);
+  expect(control('Password').value).toBe('');
+  expect(screen.onLogin).not.toHaveBeenCalled();
+});
+test('server selection is unavailable while checking or submitting credentials', async () => {
+  screen.serverAddress = 'https://selected.example.test';
+  screen.onChangeServer = jest.fn(async () => undefined);
+  screen.status = 'checking'; await mount();
+  expect(nodes('Button').filter(node => node.props.accessibilityLabel === 'Change server')).toHaveLength(0);
+  screen.status = 'login'; screen.isSubmitting = true; await render();
+  expect(control('Change server').disabled).toBe(true);
+  await press('Change server');
+  expect(screen.onChangeServer).not.toHaveBeenCalled();
+});
+test('a failed connection still permits choosing another server', async () => {
+  screen.status = 'error';
+  screen.serverAddress = 'https://old.example.test';
+  screen.onChangeServer = jest.fn(async () => undefined);
+  await mount(); await press('Change server');
+  expect(screen.onChangeServer).toHaveBeenCalledTimes(1);
+  expect(screen.onRetry).not.toHaveBeenCalled();
+});
 test('unmounting while login is pending ignores its eventual failure', async () => {
   const pending = deferred(); jest.mocked(screen.onLogin).mockReturnValueOnce(pending.promise);
   await mount(); await fill(); await press('Sign in');

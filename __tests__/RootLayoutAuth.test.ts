@@ -3,7 +3,15 @@ jest.mock('expo-font', () => ({ useFonts: jest.fn() }));
 jest.mock('expo-splash-screen', () => ({ preventAutoHideAsync: jest.fn(async () => undefined), hideAsync: jest.fn(async () => undefined) }));
 jest.mock('react-native-reanimated', () => ({}));
 jest.mock('../assets/fonts/SpaceMono-Regular.ttf', () => 123);
-jest.mock('react-native', () => ({ Pressable: 'Button', Text: 'Text' }));
+jest.mock('react-native', () => ({ Pressable: 'Button', Text: 'Text', Platform: { OS: 'web' } }));
+jest.mock('@/lib/serverAddressStorage', () => ({
+  loadServerAddress: jest.fn(), saveServerAddress: jest.fn(), clearServerAddress: jest.fn(),
+  normalizeServerAddress: (address: string) => new URL(address).origin,
+  ServerAddressStorageError: class extends Error {},
+}));
+jest.mock('@/components/ServerAddressScreen', () => ({
+  ServerAddressScreen: (props: unknown) => require('react').createElement('AddressScreen', props),
+}));
 jest.mock('expo-router', () => {
   const React = require('react');
   const Stack = ({ children }: { children: unknown }) => React.createElement('Navigation', null, children);
@@ -29,10 +37,13 @@ jest.mock('@/components/CompletionCelebration', () => ({ CompletionCelebration: 
 
 import { useColorScheme } from '@/components/useColorScheme';
 import { useAuth, type AuthContextValue, type AuthStatus } from '@/context/AuthContext';
+import { resolveApiBaseUrl } from '@/lib/api/apiBaseUrl';
+import * as addressStorage from '@/lib/serverAddressStorage';
 import { useFonts } from 'expo-font';
 import { router } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import React, { act, useEffect } from 'react';
+import { Platform } from 'react-native';
 import { createRoot } from 'test-renderer';
 import RootLayout, { unstable_settings } from '../app/_layout';
 
@@ -58,6 +69,9 @@ async function render() { await act(async () => { root!.render(React.createEleme
 async function mount() { root = createRoot(); await render(); }
 function signIn() { auth.status = 'authenticated'; auth.identity = identity(); }
 beforeEach(() => {
+  (Platform as { OS: string }).OS = 'web';
+  jest.mocked(addressStorage.loadServerAddress).mockResolvedValue(null);
+  jest.mocked(addressStorage.saveServerAddress).mockResolvedValue(undefined);
   jest.clearAllMocks(); mounted = jest.fn(); removed = jest.fn();
   jest.mocked(useFonts).mockReturnValue([true, null]);
   jest.mocked(useColorScheme).mockReturnValue('light');
@@ -69,6 +83,7 @@ beforeEach(() => {
 });
 afterEach(async () => {
   if (root) await act(async () => { root!.unmount(); }); root = undefined;
+  (Platform as { OS: string }).OS = 'web';
 });
 
 test.each<AuthStatus>(['checking', 'setup', 'login', 'error'])('%s mounts authentication without mounting private data providers', async status => {
@@ -137,4 +152,36 @@ test.each([true, false])('the Settings back button handles existing history %s',
   button.props.onPress();
   if (canGoBack) { expect(navigation.goBack).toHaveBeenCalledTimes(1); expect(router.replace).not.toHaveBeenCalled(); }
   else { expect(navigation.goBack).not.toHaveBeenCalled(); expect(router.replace).toHaveBeenCalledWith('/'); }
+});
+
+test('mobile startup keeps authentication and private providers closed while loading the server', async () => {
+  (Platform as { OS: string }).OS = 'ios';
+  let finish!: (address: string | null) => void;
+  jest.mocked(addressStorage.loadServerAddress).mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+  signIn(); await mount();
+  expect(nodes('AddressScreen')[0].props.isLoading).toBe(true);
+  expect(mounted).not.toHaveBeenCalledWith('AuthProvider');
+  for (const name of PRIVATE) expect(mounted).not.toHaveBeenCalledWith(name);
+  await act(async () => { finish('https://selected.example.test:9443'); });
+  expect(mounted).toHaveBeenCalledWith('AuthProvider');
+  expect(resolveApiBaseUrl()).toBe('https://selected.example.test:9443');
+  expect(nodes('Navigation')).toHaveLength(1);
+});
+
+test('a mobile server selection opens login while private providers remain closed', async () => {
+  (Platform as { OS: string }).OS = 'ios';
+  auth.status = 'login'; await mount();
+  expect(mounted).not.toHaveBeenCalledWith('AuthProvider');
+  await act(async () => { await nodes('AddressScreen')[0].props.onContinue('https://selected.example.test:9443'); });
+  expect(addressStorage.saveServerAddress).toHaveBeenCalledWith('https://selected.example.test:9443');
+  expect(mounted).toHaveBeenCalledWith('AuthProvider');
+  expect(nodes('AccountScreen')[0].props.status).toBe('login');
+  for (const name of PRIVATE) expect(mounted).not.toHaveBeenCalledWith(name);
+});
+
+test('web startup never loads the phone server setting', async () => {
+  await mount();
+  expect(addressStorage.loadServerAddress).not.toHaveBeenCalled();
+  expect(nodes('AddressScreen')).toHaveLength(0);
+  expect(mounted).toHaveBeenCalledWith('AuthProvider');
 });

@@ -1,9 +1,11 @@
 /** Verify that protected data providers cannot mount before authentication. */
 jest.mock('@/context/AuthContext', () => ({ useAuth: jest.fn() }));
+jest.mock('@/components/ServerAddressBoundary', () => ({ useServerAddress: jest.fn() }));
 jest.mock('@/components/AuthScreen', () => ({
   AuthScreen: jest.fn((props: unknown) => require('react').createElement('AccountScreen', props)),
 }));
 import { AuthScreen } from '@/components/AuthScreen';
+import { useServerAddress } from '@/components/ServerAddressBoundary';
 import { useAuth, type AuthContextValue, type AuthStatus } from '@/context/AuthContext';
 import React, { act, useEffect, useState } from 'react';
 import { createRoot } from 'test-renderer';
@@ -33,6 +35,7 @@ async function render() {
 }
 async function mount() { root = createRoot(); await render(); }
 beforeEach(() => {
+  jest.mocked(useServerAddress).mockReturnValue(null);
   jest.clearAllMocks(); mounts = jest.fn(); cleanups = jest.fn();
   auth = { status: 'checking', identity: null, setupReady: false, isSubmitting: false,
     errorMessage: null, noticeMessage: null, suggestedUsername: '',
@@ -119,4 +122,39 @@ test('ordinary updates to the same session preserve the private screen tree', as
   auth.identity = { ...identity(), expiresAt: '2026-11-08T19:00:00Z' }; await render();
   expect(mounts).toHaveBeenCalledTimes(1); expect(cleanups).not.toHaveBeenCalled();
   expect(nodes('PrivateApp')[0].props.text).toBe('Current unsaved edit');
+});
+
+test('mobile login receives the selected server and its change action', async () => {
+  const server = { address: 'https://selected.example.test:9443', changeServer: jest.fn(async () => undefined) };
+  jest.mocked(useServerAddress).mockReturnValue(server);
+  auth.status = 'login'; await mount();
+  expect(screenProps().serverAddress).toBe(server.address);
+  expect(screenProps().onChangeServer).toBe(server.changeServer);
+  await screenProps().onChangeServer();
+  expect(server.changeServer).toHaveBeenCalledTimes(1);
+  expect(mounts).not.toHaveBeenCalled();
+});
+
+test('a failed mobile connection still receives a change-server action', async () => {
+  const server = { address: 'https://old.example.test', changeServer: jest.fn(async () => undefined) };
+  jest.mocked(useServerAddress).mockReturnValue(server);
+  auth.status = 'error'; await mount();
+  expect(screenProps().serverAddress).toBe(server.address);
+  await screenProps().onChangeServer();
+  expect(server.changeServer).toHaveBeenCalledTimes(1);
+});
+
+test('web login does not offer a native server selection action', async () => {
+  auth.status = 'login'; await mount();
+  expect(screenProps().serverAddress).toBeUndefined();
+  expect(screenProps().onChangeServer).toBeUndefined();
+});
+
+test('an authenticated mobile session shows the private app instead of server controls', async () => {
+  const server = { address: 'https://selected.example.test', changeServer: jest.fn(async () => undefined) };
+  jest.mocked(useServerAddress).mockReturnValue(server);
+  auth.status = 'authenticated'; auth.identity = identity(); await mount();
+  expect(nodes('AccountScreen')).toHaveLength(0);
+  expect(nodes('PrivateApp')).toHaveLength(1);
+  expect(server.changeServer).not.toHaveBeenCalled();
 });

@@ -1,0 +1,110 @@
+# Expo uses this file instead of .gitignore when preparing the build upload.
+# Keep the existing Git exclusions, plus files the mobile build does not need.
+
+# Upload only known mobile source/configuration at the repository root.
+# This also keeps unrecognized backup filenames and personal notes out.
+/*
+!/.easignore
+!/package.json
+!/package-lock.json
+!/app.json
+!/eas.json
+!/tsconfig.json
+!/metro.config.js
+!/babel.config.js
+!/.nvmrc
+!/app
+!/app/**
+!/assets
+!/assets/**
+!/components
+!/components/**
+!/constants
+!/constants/**
+!/context
+!/context/**
+!/hooks
+!/hooks/**
+!/lib
+!/lib/**
+!/public
+!/public/**
+
+# Dependencies and generated frontend files
+node_modules/
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+.metro-health-check*
+*.tsbuildinfo
+coverage/
+eas-archive/
+
+# Native projects are generated from app.json during this managed Expo build.
+/ios
+/android
+.kotlin/
+*.orig.*
+
+# Local configuration and signing material
+.env
+.env.*
+*.jks
+*.p8
+*.p12
+*.pfx
+*.key
+*.mobileprovision
+*.pem
+*.crt
+*.cer
+/credentials.json
+/secrets/
+
+# Python backend and Docker deployment belong on the server, not in this app.
+/server/
+/deploy/
+/compose.yaml
+/compose.yml
+/docker-compose*.yml
+/docker-compose*.yaml
+/Dockerfile*
+/Caddyfile*
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Database files, dumps, and exported user backups
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+*.sql
+*.dump
+*.backup
+weekflow-backup*.json
+/backups/
+/exports/
+/output/
+/outputs/
+
+# Tests and project documentation are not needed to compile the mobile app.
+/__tests__/
+/docs/
+/sources/
+/jest.config.js
+/jest.transformer.js
+
+# Editor, version-control, and diagnostic files
+.git/
+.idea/
+.vscode/
+.DS_Store
+*.log
+npm-debug.*
+yarn-debug.*
+yarn-error.*

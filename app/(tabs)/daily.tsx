@@ -75,6 +75,8 @@ export default function DailyScreen() {
   }, []);
 
   const isDesktop = width >= 1100;
+  // Narrow screens use a normal vertical list; wider screens keep the grid.
+  const hasTaskColumns = width >= 720;
   const [overdueGridWidth, setOverdueGridWidth] = useState<number | null>(null);
   const [todayGridWidth, setTodayGridWidth] = useState<number | null>(null);
   const pageWidth = Math.max(0, width - 40);
@@ -234,7 +236,7 @@ export default function DailyScreen() {
 
           <View
             onLayout={event => setOverdueGridWidth(event.nativeEvent.layout.width)}
-            style={[styles.overdueList, styles.cardGrid, styles.overdueGrid]}
+            style={[styles.overdueList, hasTaskColumns && styles.cardGrid, styles.overdueGrid]}
           >
             {filteredOverdueTasks.map((task) => {
               const linkedGoal = goals.find(
@@ -246,11 +248,11 @@ export default function DailyScreen() {
                   key={task.id}
                   style={[
                     styles.overdueCard,
-                    { width: overdueCardWidth },
+                    { width: hasTaskColumns ? overdueCardWidth : '100%' },
                   ]}
                 >
                   <View style={styles.overdueTopRow}>
-                    <View style={styles.taskTextWrap}>
+                    <View style={[styles.taskTextWrap, styles.overdueTextWrap]}>
                       <View style={styles.overdueTitleRow}>
                         <Text style={styles.taskTitle}>{task.title}</Text>
                         <Text style={styles.overdueBadge}>Overdue</Text>
@@ -404,7 +406,8 @@ export default function DailyScreen() {
 
         <ScrollView
           horizontal
-          showsHorizontalScrollIndicator={false}
+          style={styles.weekDaysScroll}
+          showsHorizontalScrollIndicator={!isDesktop}
           contentContainerStyle={[
             styles.weekDaysRow,
             isDesktop && styles.weekDaysRowDesktop,
@@ -424,6 +427,7 @@ export default function DailyScreen() {
                 key={day.dateKey}
                 style={[
                   styles.weekDayCard,
+                  isDesktop && styles.weekDayCardDesktop,
                   hasCompletion && styles.weekDayCardCompleted,
                   day.isToday && styles.weekDayCardToday,
                 ]}
@@ -463,6 +467,12 @@ export default function DailyScreen() {
           })}
         </ScrollView>
 
+        {!isDesktop ? (
+          <Text style={styles.weekScrollHint}>
+            Swipe to see all seven days.
+          </Text>
+        ) : null}
+
         <View style={styles.weekLegend}>
           <Text style={styles.weekLegendText}>✓ Completed day</Text>
           <Text style={styles.weekLegendText}>○ No completion</Text>
@@ -486,7 +496,7 @@ export default function DailyScreen() {
 
         <View
           onLayout={event => setTodayGridWidth(event.nativeEvent.layout.width)}
-          style={[styles.taskList, styles.cardGrid, styles.todayGrid]}
+          style={[styles.taskList, hasTaskColumns && styles.cardGrid, styles.todayGrid]}
         >
           {activeTasks.length === 0 ? (
             <EmptyStateCard
@@ -507,7 +517,7 @@ export default function DailyScreen() {
               );
 
               return (
-                <View key={task.id} style={[styles.taskCard, { width: todayCardWidth }]}>
+                <View key={task.id} style={[styles.taskCard, { width: hasTaskColumns ? todayCardWidth : '100%' }]}>
                   <View style={styles.taskTextWrap}>
                     <Text style={styles.taskTitle}>{task.title}</Text>
 
@@ -637,6 +647,7 @@ const styles = StyleSheet.create({
   secondaryColumn: { width: '34%' },
   cardGrid: {
     flexDirection: 'row',
+    alignContent: 'flex-start',
     flexWrap: 'wrap',
     alignItems: 'flex-start',
     columnGap: DAILY_CARD_GAP,
@@ -680,7 +691,7 @@ const styles = StyleSheet.create({
     lineHeight: 19,
     color: '#7f1d1d',
   },
-  overdueList: { gap: 12, backgroundColor: 'transparent' },
+  overdueList: { gap: 12, flexGrow: 0, flexShrink: 0, backgroundColor: 'transparent' },
   overdueCard: {
     padding: 16,
     borderRadius: 14,
@@ -817,13 +828,15 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     color: '#6b7280',
   },
-  weekDaysRow: { gap: 10, paddingBottom: 4 },
+  weekDaysScroll: { flexGrow: 0, flexShrink: 0 },
+  weekDaysRow: { flexDirection: 'row', gap: 10, paddingBottom: 4 },
   weekDaysRowDesktop: {
     minWidth: '100%',
     justifyContent: 'space-between',
   },
   weekDayCard: {
-    flexGrow: 1,
+    flexGrow: 0,
+    flexShrink: 0,
     minWidth: 72,
     minHeight: 112,
     paddingVertical: 12,
@@ -834,6 +847,8 @@ const styles = StyleSheet.create({
     backgroundColor: 'white',
     alignItems: 'center',
   },
+  weekDayCardDesktop: { flexGrow: 1 },
+  weekScrollHint: { marginTop: 8, fontSize: 12, color: '#6b7280' },
   weekDayCardCompleted: {
     backgroundColor: '#dcfce7',
     borderColor: '#86efac',
@@ -867,20 +882,20 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
   },
   weekLegendText: { fontSize: 11, color: '#6b7280' },
-  section: { marginBottom: 26, backgroundColor: 'transparent' },
+  section: { flexGrow: 0, flexShrink: 0, marginBottom: 26, backgroundColor: 'transparent' },
   sectionTitle: {
     fontSize: 22,
     fontWeight: '800',
-    color: '#111827',
+    // Themed Text supplies a readable color for the page's light/dark theme.
     marginBottom: 8,
   },
   sectionSubtitle: {
     fontSize: 14,
-    color: '#6b7280',
+    opacity: 0.7,
     marginBottom: 12,
     lineHeight: 20,
   },
-  taskList: { gap: 12 },
+  taskList: { gap: 12, flexGrow: 0, flexShrink: 0, backgroundColor: 'transparent' },
   taskCard: {
     padding: 16,
     borderRadius: 14,
@@ -889,7 +904,10 @@ const styles = StyleSheet.create({
     backgroundColor: 'white',
     gap: 12,
   },
-  taskTextWrap: { flex: 1, backgroundColor: 'transparent' },
+  // Vertical card text must keep its natural height inside a ScrollView.
+  taskTextWrap: { backgroundColor: 'transparent' },
+  // Only the horizontal overdue header needs to fill remaining row width.
+  overdueTextWrap: { flex: 1, minWidth: 0 },
   taskTitle: { fontSize: 17, fontWeight: '700', color: '#111827' },
   taskMeta: { marginTop: 4, fontSize: 13, color: '#6b7280' },
   taskNotes: {
@@ -898,7 +916,7 @@ const styles = StyleSheet.create({
     color: '#374151',
     lineHeight: 20,
   },
-  brainDumpList: { gap: 12 },
+  brainDumpList: { gap: 12, flexGrow: 0, flexShrink: 0, backgroundColor: 'transparent' },
   brainDumpCard: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -909,7 +927,7 @@ const styles = StyleSheet.create({
     borderColor: '#e5e7eb',
     backgroundColor: 'white',
   },
-  brainDumpTextWrap: { flex: 1, backgroundColor: 'transparent' },
+  brainDumpTextWrap: { flex: 1, minWidth: 0, backgroundColor: 'transparent' },
   brainDumpBody: {
     fontSize: 15,
     fontWeight: '600',

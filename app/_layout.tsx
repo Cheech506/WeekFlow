@@ -9,6 +9,7 @@ import 'react-native-reanimated';
 import { ApiDataBoundary } from '@/components/ApiDataBoundary';
 import { AuthBoundary } from '@/components/AuthBoundary';
 import { CompletionCelebration } from '@/components/CompletionCelebration';
+import { ServerAddressBoundary } from '@/components/ServerAddressBoundary';
 import { useColorScheme } from '@/components/useColorScheme';
 import { AuthProvider } from '@/context/AuthContext';
 import { BrainDumpProvider } from '@/context/BrainDumpContext';
@@ -61,14 +62,16 @@ function RootLayoutNav() {
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
       {/*
-       * Check authentication before mounting anything that loads private data.
-       * AuthBoundary shows setup/login until AuthProvider verifies a session.
+       * Select the mobile server first, then verify authentication before
+       * mounting anything that loads private data. Web skips server selection.
        */}
-      <AuthProvider>
-        <AuthBoundary>
-          <AuthenticatedApp />
-        </AuthBoundary>
-      </AuthProvider>
+      <ServerAddressBoundary>
+        <AuthProvider>
+          <AuthBoundary>
+            <AuthenticatedApp />
+          </AuthBoundary>
+        </AuthProvider>
+      </ServerAddressBoundary>
     </ThemeProvider>
   );
 }

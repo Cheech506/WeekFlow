@@ -1,0 +1,51 @@
+{
+	# Configuration changes will be applied by restarting the web container.
+	admin off
+
+	# IP-address clients can omit the TLS server name (SNI).
+	# Use the configured hostname or IP, without its scheme or port.
+	default_sni {$WF_TLS_SERVER_NAME:localhost}
+
+	# Trust local certificates on the client devices during installation.
+	# Installing trust inside this container would not trust clients' browsers.
+	skip_install_trust
+}
+
+# Compose supplies the installation's hostname. Default: local HTTPS testing.
+{$WF_SITE_ADDRESS:localhost} {
+	# The web Dockerfile will copy the built frontend into this directory.
+	root * /srv
+	encode zstd gzip
+
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		Cross-Origin-Opener-Policy same-origin
+		Cross-Origin-Embedder-Policy credentialless
+		-Server
+	}
+
+	# Keep API requests separate from frontend routing. Preserve the full path.
+	@backend path /api /api/* /health /docs /docs/* /redoc /openapi.json
+	handle @backend {
+		# "api" is the API service name on the Compose network.
+		reverse_proxy api:8000
+	}
+
+	handle {
+		# Missing compiled assets must return 404, not an HTML page.
+		@assets path /_expo/* /assets/*
+		handle @assets {
+			file_server
+		}
+
+		# Expo's single-page app handles browser routes such as /settings.
+		handle {
+			# Recheck frontend files after a deployment rather than using
+			# an old page that points to a previous build's JavaScript.
+			header Cache-Control "no-cache"
+			try_files {path} /index.html
+			file_server
+		}
+	}
+}

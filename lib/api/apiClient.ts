@@ -1,4 +1,5 @@
 /** Shared HTTP transport for WeekFlow's feature API clients. */
+import { resolveApiBaseUrl } from './apiBaseUrl';
 import type { AuthCredentials } from './authApi';
 
 export type ApiErrorKind =
@@ -44,7 +45,7 @@ export type ApiMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE';
 export type ApiRequestOptions = {
   method?: ApiMethod;
   body?: unknown;
-  /** Defaults to EXPO_PUBLIC_API_BASE_URL. */
+  /** Defaults to the configured API address, or the website origin on web. */
   baseUrl?: string;
   /** Covers both receiving the response and reading its JSON body. */
   timeoutMs?: number;
@@ -197,7 +198,7 @@ export async function apiRequest<T>(
   options: ApiRequestOptions = {}
 ): Promise<T> {
   const baseUrl = normalizedBaseUrl(
-    options.baseUrl ?? process.env.EXPO_PUBLIC_API_BASE_URL
+    resolveApiBaseUrl(options.baseUrl)
   );
   if (!path.startsWith('/') || path.startsWith('//') || path.includes('#') || /[\\\r\n\t]/.test(path)) {
     throw configurationError('API paths must start with one slash and must not contain a fragment.');

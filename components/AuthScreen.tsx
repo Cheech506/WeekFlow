@@ -1,8 +1,8 @@
 /** The account setup/login form. AuthProvider will supply the actions and state. */
 import { useEffect, useRef, useState } from 'react';
 import {
-    ActivityIndicator, KeyboardAvoidingView, Platform, Pressable,
-    ScrollView, StyleSheet, Text, TextInput, View,
+  ActivityIndicator, KeyboardAvoidingView, Platform, Pressable,
+  ScrollView, StyleSheet, Text, TextInput, View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -18,6 +18,8 @@ export type AuthScreenProps = {
   errorMessage?: string | null;
   noticeMessage?: string | null;
   suggestedUsername?: string;
+  serverAddress?: string;
+  onChangeServer?: () => Promise<void>;
   onRetry: () => Promise<void>;
   onLogin: (input: AuthLoginInput) => Promise<void>;
   onCreateOwner: (input: AuthOwnerSetupInput) => Promise<void>;
@@ -26,6 +28,7 @@ export type AuthScreenProps = {
 export function AuthScreen({
   status, setupReady = false, isSubmitting = false,
   errorMessage = null, noticeMessage = null, suggestedUsername = '',
+  serverAddress, onChangeServer,
   onRetry, onLogin, onCreateOwner,
 }: AuthScreenProps) {
   const dark = useColorScheme() === 'dark';
@@ -203,6 +206,22 @@ export function AuthScreen({
               </>
             ) : null}
             {status === 'error' ? retryButton('Try again') : null}
+            {serverAddress && onChangeServer && status !== 'checking' ? (
+              <>
+                <Text style={[styles.message, { color: muted }]}>Server: {serverAddress}</Text>
+                <Pressable accessibilityRole="button" accessibilityLabel="Change server"
+                  accessibilityState={{ disabled: busy, busy }} disabled={busy}
+                  onPress={() => {
+                    setPassword('');
+                    setConfirmation('');
+                    setSetupCode('');
+                    setShowPasswords(false);
+                    void perform(onChangeServer);
+                  }} style={[styles.toggle, busy && styles.disabled]}>
+                  <Text style={{ color: dark ? '#93c5fd' : '#1d4ed8' }}>Change server</Text>
+                </Pressable>
+              </>
+            ) : null}
           </View>
         </ScrollView>
       </KeyboardAvoidingView>

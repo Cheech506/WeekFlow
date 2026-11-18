@@ -1,5 +1,6 @@
 /** Setup and login requests. Session persistence and screens belong elsewhere. */
 import { Platform } from 'react-native';
+import { resolveApiBaseUrl } from './apiBaseUrl';
 import { ApiError, apiRequest, type ApiRequestOptions } from './apiClient';
 
 export type AuthClientType = 'web' | 'native';
@@ -52,7 +53,7 @@ function currentClientType(): AuthClientType {
 
 /** Enforce the HTTPS and browser-origin rules that Python already requires. */
 function requestOptions(options: AuthApiOptions, clientType: AuthClientType): AuthApiOptions {
-  const raw = options.baseUrl ?? process.env.EXPO_PUBLIC_API_BASE_URL;
+  const raw = resolveApiBaseUrl(options.baseUrl);
   let address: URL;
   try {
     if (typeof raw !== 'string' || !raw.trim()) throw new Error();

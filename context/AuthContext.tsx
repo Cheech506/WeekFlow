@@ -1,11 +1,12 @@
 /** Own the frontend login flow. A stored token alone never opens WeekFlow. */
+import { resolveApiBaseUrl } from '@/lib/api/apiBaseUrl';
 import { ApiError, configureApiSession, subscribeToApiSessionRejection } from '@/lib/api/apiClient';
 import {
-    createApiOwner, fetchApiAuthSession, fetchApiSetupStatus, loginApiOwner, logoutApiOwner,
-    type AuthLoginInput, type AuthLoginResult, type AuthOwnerSetupInput, type AuthSessionIdentity,
+  createApiOwner, fetchApiAuthSession, fetchApiSetupStatus, loginApiOwner, logoutApiOwner,
+  type AuthLoginInput, type AuthLoginResult, type AuthOwnerSetupInput, type AuthSessionIdentity,
 } from '@/lib/api/authApi';
 import {
-    AuthSessionStorageError, clearAuthSession, loadAuthSession, saveAuthSession,
+  AuthSessionStorageError, clearAuthSession, loadAuthSession, saveAuthSession,
 } from '@/lib/authSessionStorage';
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 
@@ -46,7 +47,7 @@ function copyLogin(login: AuthLoginResult): AuthLoginResult {
 export function AuthProvider({ children, baseUrl }: { children: ReactNode; baseUrl?: string }) {
   // Capture the address explicitly for each operation. Changing the configured
   // instance must not save or verify credentials against a different server.
-  const address = baseUrl ?? process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
+  const address = resolveApiBaseUrl(baseUrl) ?? '';
   const options = { baseUrl: address };
   const [state, setState] = useState<AuthState>(INITIAL);
   const stateRef = useRef<AuthState>(INITIAL);

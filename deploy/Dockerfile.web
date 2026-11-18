@@ -1,0 +1,32 @@
+# syntax=docker/dockerfile:1
+
+# Stage 1: compile the frontend using the repository root as the build context.
+FROM node:22-bookworm-slim AS frontend-build
+
+WORKDIR /app
+
+# Build without local .env files or interactive Expo prompts.
+# Leave EXPO_PUBLIC_API_BASE_URL unset so the browser can use its own origin.
+ENV CI=1 \
+    EXPO_NO_DOTENV=1 \
+    EXPO_NO_TELEMETRY=1
+
+# Install the exact lockfile dependencies, including frontend build tools.
+COPY package.json package-lock.json ./
+RUN npm ci --include=dev --no-audit --no-fund
+
+# The root .dockerignore controls which project files enter this stage.
+COPY . .
+RUN npx --no-install expo export --platform web \
+    && test -s dist/index.html
+
+# Stage 2: the shipped image contains Caddy and the compiled website.
+FROM caddy:2-alpine AS runtime
+
+COPY deploy/Caddyfile /etc/caddy/Caddyfile
+COPY --from=frontend-build /app/dist/ /srv/
+
+# Caddy uses these inside its container. Compose controls host-port publishing.
+EXPOSE 80 443 443/udp
+
+CMD ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]

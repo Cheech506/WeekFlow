@@ -1,11 +1,13 @@
 /** Keep account setup/login outside the tree that loads private app data. */
 import { AuthScreen } from '@/components/AuthScreen';
+import { useServerAddress } from '@/components/ServerAddressBoundary';
 import { useAuth } from '@/context/AuthContext';
 import { Fragment, type ReactNode } from 'react';
 
 /** Place inside AuthProvider, above every API-backed data provider. */
 export function AuthBoundary({ children }: { children: ReactNode }) {
   const auth = useAuth();
+  const server = useServerAddress();
 
   if (auth.status === 'authenticated' && auth.identity !== null) {
     // A replacement session gets a fresh provider/navigation tree, so arrays
@@ -24,6 +26,8 @@ export function AuthBoundary({ children }: { children: ReactNode }) {
       errorMessage={missingIdentity ? 'Your login could not be verified. Please try again.' : auth.errorMessage}
       noticeMessage={auth.noticeMessage}
       suggestedUsername={auth.suggestedUsername}
+      serverAddress={server?.address}
+      onChangeServer={server?.changeServer}
       onRetry={auth.refreshAuthentication}
       onLogin={auth.signIn}
       onCreateOwner={auth.createOwner}

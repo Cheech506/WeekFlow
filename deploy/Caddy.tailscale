@@ -1,0 +1,96 @@
+# Optional Docker gateway for Tailscale Serve.
+# Keep the Compose host bind address at 127.0.0.1.
+# WF_TAILSCALE_HOST must be this Mac's full .ts.net hostname, without a scheme,
+# path, or port. Serve forwards HTTPS requests to http://127.0.0.1:9080.
+# This file preserves the existing local HTTPS listener as well.
+{
+	# Configuration changes will be applied by restarting the web container.
+	admin off
+
+	# Trust local certificates on the client devices during installation.
+	# Installing trust inside this container would not trust clients' browsers.
+	skip_install_trust
+}
+
+# Compose supplies the installation's hostname. Default: local HTTPS testing.
+{$WF_SITE_ADDRESS:localhost} {
+	# The web Dockerfile will copy the built frontend into this directory.
+	root * /srv
+	encode zstd gzip
+
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		Cross-Origin-Opener-Policy same-origin
+		Cross-Origin-Embedder-Policy credentialless
+		-Server
+	}
+
+	# Keep API requests separate from frontend routing. Preserve the full path.
+	@backend path /api /api/* /health /docs /docs/* /redoc /openapi.json
+	handle @backend {
+		# "api" is the API service name on the Compose network.
+		reverse_proxy api:8000
+	}
+
+	handle {
+		# Missing compiled assets must return 404, not an HTML page.
+		@assets path /_expo/* /assets/*
+		handle @assets {
+			file_server
+		}
+
+		# Expo's single-page app handles browser routes such as /settings.
+		handle {
+			# Recheck frontend files after a deployment rather than using
+			# an old page that points to a previous build's JavaScript.
+			header Cache-Control "no-cache"
+			try_files {path} /index.html
+			file_server
+		}
+	}
+}
+
+# Private Tailscale entrance. Only the configured hostname matches this site.
+# The browser and native client both use the external HTTPS address.
+http://{$WF_TAILSCALE_HOST}:80 {
+	# The web Dockerfile will copy the built frontend into this directory.
+	root * /srv
+	encode zstd gzip
+
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		Cross-Origin-Opener-Policy same-origin
+		Cross-Origin-Embedder-Policy credentialless
+		-Server
+	}
+
+	# Keep API requests separate from frontend routing. Preserve the full path.
+	@backend path /api /api/* /health /docs /docs/* /redoc /openapi.json
+	handle @backend {
+		# "api" is the API service name on the Compose network.
+		reverse_proxy api:8000 {
+			# Serve terminates HTTPS before this host-local HTTP hop.
+			# Never expose this listener directly on the LAN or internet.
+			header_up X-Forwarded-Proto https
+		}
+	}
+
+	handle {
+		# Missing compiled assets must return 404, not an HTML page.
+		@assets path /_expo/* /assets/*
+		handle @assets {
+			file_server
+		}
+
+		# Expo's single-page app handles browser routes such as /settings.
+		handle {
+			# Recheck frontend files after a deployment rather than using
+			# an old page that points to a previous build's JavaScript.
+			header Cache-Control "no-cache"
+			try_files {path} /index.html
+			file_server
+		}
+	}
+}
