@@ -4,8 +4,9 @@ name: weekflow
 
 services:
   weekflow-server:
-    # PostgreSQL software only. User records live in the separate volume below.
-    image: weekflow-server:local
+    # Download the official PostgreSQL image on any new installation.
+    # WeekFlow records are stored separately in the database volume.
+    image: postgres:17-bookworm
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${WF_POSTGRES_DB:-weekflow}

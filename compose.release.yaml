@@ -1,0 +1,143 @@
+# Download-only installation: no source checkout or local build is required.
+# Keep this file and your installation-specific .env together.
+# Publish both images successfully before starting this installation.
+# Set WF_IMAGE_TAG in .env when choosing another published version.
+# Keep the project name stable so existing database/certificate volumes are reused.
+name: weekflow
+
+services:
+  weekflow-server:
+    # Download the official PostgreSQL image on any new installation.
+    # WeekFlow records are stored separately in the database volume.
+    image: postgres:17-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${WF_POSTGRES_DB:-weekflow}
+      POSTGRES_USER: ${WF_POSTGRES_USER:-weekflow}
+      POSTGRES_PASSWORD: ${WF_POSTGRES_PASSWORD:?Set WF_POSTGRES_PASSWORD in the root .env file}
+    volumes:
+      - packaged_postgres_data:/var/lib/postgresql/data
+    networks:
+      - database
+    # No published database port: the API reaches it over the private network.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  weekflow-migrate:
+    # A temporary container using the API image, not a fourth image.
+    image: ghcr.io/cheech506/weekflow-api:${WF_IMAGE_TAG:-0.1.0-preview.1}
+    command: ["python", "-m", "alembic", "upgrade", "head"]
+    restart: "no"
+    environment:
+      POSTGRES_HOST: weekflow-server
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${WF_POSTGRES_DB:-weekflow}
+      POSTGRES_USER: ${WF_POSTGRES_USER:-weekflow}
+      POSTGRES_PASSWORD: ${WF_POSTGRES_PASSWORD:?Set WF_POSTGRES_PASSWORD in the root .env file}
+    depends_on:
+      weekflow-server:
+        condition: service_healthy
+    networks:
+      - database
+    # The image's HTTP health check does not apply to this one-time command.
+    healthcheck:
+      disable: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+  weekflow-api:
+    image: ghcr.io/cheech506/weekflow-api:${WF_IMAGE_TAG:-0.1.0-preview.1}
+    restart: unless-stopped
+    environment:
+      POSTGRES_HOST: weekflow-server
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${WF_POSTGRES_DB:-weekflow}
+      POSTGRES_USER: ${WF_POSTGRES_USER:-weekflow}
+      POSTGRES_PASSWORD: ${WF_POSTGRES_PASSWORD:?Set WF_POSTGRES_PASSWORD in the root .env file}
+      # Only trusted app containers share these private networks. Caddy supplies
+      # the original HTTPS scheme. Do not publish this API's port directly.
+      FORWARDED_ALLOW_IPS: "*"
+    depends_on:
+      weekflow-server:
+        condition: service_healthy
+      weekflow-migrate:
+        condition: service_completed_successfully
+    networks:
+      database: {}
+      gateway:
+        # Preserve the existing Caddyfile's reverse_proxy api:8000 address.
+        aliases:
+          - api
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; from app.database import check_database_connection; response = urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3); assert response.status == 200; assert check_database_connection()"
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+  weekflow-web:
+    image: ghcr.io/cheech506/weekflow-web:${WF_IMAGE_TAG:-0.1.0-preview.1}
+    restart: unless-stopped
+    environment:
+      # Keep this address's explicit port equal to WF_HTTPS_PORT below.
+      WF_SITE_ADDRESS: ${WF_SITE_ADDRESS:-localhost:9443}
+      # Hostname or IP only, for clients that omit TLS SNI.
+      WF_TLS_SERVER_NAME: ${WF_TLS_SERVER_NAME:-localhost}
+    ports:
+      - "${WF_BIND_ADDRESS:-127.0.0.1}:${WF_HTTP_PORT:-9080}:80"
+      - "${WF_BIND_ADDRESS:-127.0.0.1}:${WF_HTTPS_PORT:-9443}:${WF_HTTPS_PORT:-9443}"
+      - "${WF_BIND_ADDRESS:-127.0.0.1}:${WF_HTTPS_PORT:-9443}:${WF_HTTPS_PORT:-9443}/udp"
+    volumes:
+      - packaged_caddy_data:/data
+      - packaged_caddy_config:/config
+    depends_on:
+      weekflow-api:
+        condition: service_healthy
+    networks:
+      - gateway
+      - edge
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  # Database and API traffic stays on app-owned, private Docker networks.
+  database:
+    internal: true
+  gateway:
+    internal: true
+  # Caddy can reach certificate services when a public hostname is configured.
+  edge: {}
+
+volumes:
+  # Records and HTTPS certificates live here, separately from software images.
+  # These names match the local-build Compose file for the same project.
+  packaged_postgres_data: {}
+  packaged_caddy_data: {}
+  packaged_caddy_config: {}

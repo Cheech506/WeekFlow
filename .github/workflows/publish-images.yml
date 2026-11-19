@@ -1,0 +1,106 @@
+name: Build WeekFlow images
+
+# Packaging changes pushed to dev run build checks without publishing images.
+# To publish a version, run this workflow manually and select publish.
+on:
+  push:
+    branches: [dev]
+    paths:
+      - .github/workflows/publish-images.yml
+      - compose.yaml
+      - compose.release.yaml
+      - .dockerignore
+      - deploy/**
+      - server/Dockerfile
+      - server/.dockerignore
+      - server/requirements.txt
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Image version, for example 0.1.0-preview.1"
+        required: true
+        default: "0.1.0-preview.1"
+        type: string
+      publish:
+        description: "Upload both images to GitHub Container Registry"
+        required: true
+        default: false
+        type: boolean
+
+# Queue manual publications of the same version; keep build checks separate.
+concurrency:
+  group: weekflow-images-${{ github.event_name }}-${{ inputs.version || github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.image }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: weekflow-api
+            context: ./server
+            dockerfile: ./server/Dockerfile
+          - image: weekflow-web
+            context: .
+            dockerfile: ./deploy/Dockerfile.web
+
+    steps:
+      - name: Download the selected repository revision
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Validate the version and prepare the image address
+        id: image
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version || '0.1.0-preview.1' }}
+          IMAGE_NAME: ${{ matrix.image }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]] || (( ${#VERSION} > 64 )); then
+            echo "::error::Use a version such as 0.1.0-preview.1 or 1.0.0."
+            exit 1
+          fi
+          # Docker registry names must be lowercase.
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          echo "tag=ghcr.io/$owner/$IMAGE_NAME:$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Enable builds for ARM and Intel/AMD processors
+        uses: docker/setup-qemu-action@v4
+
+      - name: Prepare the Docker image builder
+        uses: docker/setup-buildx-action@v4
+
+      - name: Sign in to GitHub Container Registry
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish }}
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build the image and optionally upload it
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name == 'workflow_dispatch' && inputs.publish }}
+          tags: ${{ steps.image.outputs.tag }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ inputs.version || '0.1.0-preview.1' }}
+          provenance: mode=min
+          sbom: true

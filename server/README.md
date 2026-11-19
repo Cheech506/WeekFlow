@@ -1,4 +1,4 @@
-# WeekFlow API
+# WeekFlow API and Docker deployment
 
 WeekFlow’s backend uses Python, FastAPI, Pydantic, SQLAlchemy, Psycopg, PostgreSQL, Alembic, and Docker Compose.
 
@@ -6,14 +6,15 @@ The core data API supports tasks, planning cycles, goals, goal milestones, recur
 
 **Current app storage:** The main app's six data providers use the Python API and PostgreSQL for everyday records. React contexts hold the loaded records for the screens. SQLite remains for device preferences, legacy migration tools, and deferred offline foundations; it is not an automatic fallback for failed API requests.
 
-**Authentication status:** Owner setup, password login, database-backed sessions, logout, login-attempt limits, and feature API protection are implemented. The frontend account form, session provider, native secure storage, browser cookie/CSRF handling, and authenticated startup boundary are connected. Saved login material is verified with the API before private data providers mount. First-run browser setup/login was confirmed through a shared private HTTPS address. Settings includes a sign-out control that ends the current device session. Remaining live phone/lifecycle checks and full deployment packaging are follow-up work.
+**Authentication status:** Owner setup, password login, database-backed sessions, logout, login-attempt limits, and feature API protection are implemented. The frontend account form, session provider, native secure storage, browser cookie/CSRF handling, and authenticated startup boundary are connected. Saved login material is verified with the API before private data providers mount. First-run browser setup/login was confirmed through a shared private HTTPS address. Settings includes a sign-out control that ends the current device session. A local Docker installation and a private standalone iPhone build have been used together successfully. The portable release files are prepared; publishing the images and verifying a fresh installation on a separate PC remain follow-up work.
 
 ## Frontend API clients and integration status
 
-The frontend has typed clients for all 13 domain record collections, recurring task actions, authentication, and the existing migration tools. They live in `lib/api/` at the repository root. Shared transport uses `EXPO_PUBLIC_API_BASE_URL` and receives a verified in-memory session from `AuthContext`. It adds native bearer credentials or CSRF headers for protected browser writes, scopes credentials to the configured HTTPS server, rejects credential overrides, and notifies the provider when that session receives HTTP 401. Feature clients validate request fields, translate camelCase app fields to snake_case API fields, and validate/map responses into UI shapes.
+The frontend has typed clients for all 13 domain record collections, recurring task actions, authentication, and the existing migration tools. They live in `lib/api/` at the repository root. Shared transport uses `apiBaseUrl.ts` to resolve the selected native server, explicit development configuration, or the packaged website's browser origin. It receives a verified in-memory session from `AuthContext`. It adds native bearer credentials or CSRF headers for protected browser writes, scopes credentials to the configured HTTPS server, rejects credential overrides, and notifies the provider when that session receives HTTP 401. Feature clients validate request fields, translate camelCase app fields to snake_case API fields, and validate/map responses into UI shapes.
 
 | Client in `../lib/api/` | Responsibility |
 |---|---|
+| `apiBaseUrl.ts` | Resolve a selected native server, explicit configuration, or the packaged browser origin |
 | `apiClient.ts` | Shared transport, scoped authentication headers, session rejection, cancellation, timeouts, HTTP errors, and response validation |
 | `authApi.ts` | Setup status, first-owner creation, browser/native login, session verification, and logout |
 | `taskApi.ts` | Task CRUD, native goal/schedule links, and task response decoding |
@@ -59,20 +60,203 @@ Task-sync database, cache, outbox, and backend tracking-table foundations exist,
 The Dashboard, Inbox, Daily, Weekly, History, and Settings pages use the available page width with consistent outer padding. Wider browser windows can show more information side by side; narrower windows and phone layouts stack content.
 
 - **Inbox:** Quick Task and Quick Brain Dump sit beside each other on wide screens and stack on narrow screens. The capture form stays outside the collapsible Brain Dump Notes list. Tasks, saved brain dumps, and recurring schedules use measured card grids with up to four columns. Cards stay near a readable 320–420 pixel width when space permits, wrapping from four to three, two, or one column instead of stretching across the entire window. Editing a card can expand it to the available grid width.
-- **Daily:** Overdue tasks use up to four columns, and today's tasks use up to two. Brain dump notes remain in one column. The progress and streak sections keep their existing arrangement.
+- **Daily:** Overdue tasks use up to four columns, and today's tasks use up to two. Narrow phone layouts use naturally sized stacked cards rather than desktop grid sizing. Brain dump notes remain in one column. The progress and streak sections keep their existing arrangement; the seven-day strip can scroll horizontally on narrow screens.
 - **Weekly:** The calendar measures its available width so all seven days fit on one row on wide screens, including the gaps and browser scrollbar. Narrower views reduce the column count. Guided Weekly Review appears before Weekly Commitments, which can be expanded or collapsed.
 - **History:** Wide web views place Search & Filters in roughly the left quarter and results in the remaining space. Phone and narrow layouts keep filters above the results.
 - **Settings:** The page uses the available width and includes account sign-out, API-backed counts, preferences, and JSON backup actions.
 
 These layout changes affect presentation; the screens continue to load and save domain data through their existing contexts and API clients.
 
-## Requirements
+## Docker packaging and installation
+
+WeekFlow can run as one Docker Compose application with separate containers for the website, API, and database. Caddy serves the built website over HTTPS and forwards API requests to Python. Expo and Uvicorn do not need separate development terminals for normal use of the packaged installation.
+
+### Current packaging status
+
+| Area | Status |
+|---|---|
+| Local API and web images | Built and used in the local Docker installation |
+| Packaged account setup and iPhone connection | Confirmed in the maintainer's local installation |
+| Download-only installation file | Prepared in `compose.release.yaml` |
+| ARM64 and Intel/AMD image workflow | Prepared; the first GitHub build still needs to run |
+| Published images and anonymous downloads | Not yet verified; both images must be published and accessible first |
+| Fresh installation on a separate Linux PC | Still needs end-to-end testing |
+| Public iPhone app distribution | Not available; the current standalone build uses private registered-device distribution |
+
+The release instructions below use the example version `0.1.0-preview.1`. Both images must be published and accessible before those installation commands will work.
+
+### Containers, images, and saved data
+
+| Compose service | Purpose | Image |
+|---|---|---|
+| `weekflow-server` | PostgreSQL database | Official `postgres:17-bookworm` image |
+| `weekflow-migrate` | Apply Alembic database migrations, then exit | Same image as `weekflow-api` |
+| `weekflow-api` | Python/FastAPI backend | WeekFlow API image |
+| `weekflow-web` | Built website and Caddy HTTPS gateway | WeekFlow web image |
+
+There are four services and three distinct images. The migration container is expected to show **Exited (0)** after a successful startup. The API waits for the database to be healthy and the migration command to finish successfully; the web service waits for API health. See [Docker's startup-order documentation](https://docs.docker.com/compose/how-tos/startup-order/).
+
+Only the web gateway publishes host ports. PostgreSQL and the API are reached through private Docker networks. Published images contain application software; accounts, records, and certificate keys live in installation-specific named volumes. The Docker build exclusions keep local environment files, database files, and private keys out of the build contexts.
+
+### Choose an installation file
+
+All Docker commands in this section run from the repository root, one level above this README. A download-only installation can instead use a separate directory containing its Compose file and `.env`.
+
+| File at the repository root | Use |
+|---|---|
+| `compose.yaml` | Build the API and website from the local source checkout |
+| `compose.release.yaml` | Download versioned API and web images from GitHub Container Registry |
+| `deploy/.env.example` | Settings template for an installation |
+| `server/compose.yaml` | Database-only setup for backend development |
+
+Choose one of the root Compose files for an installation. They use matching project/service/storage names, so they are alternative definitions for the same installation when the project name is unchanged. A fresh test alongside an existing installation needs a different project name and unused ports. A different folder or port by itself does not guarantee separate database storage.
+
+### Configure a new installation
+
+Use Docker with the Compose plugin and Linux-container support. The release workflow targets `linux/amd64` and `linux/arm64`; successful builds and runtime checks on those targets still need confirmation. Running prebuilt images does not require Python, Node.js, or Expo on the host.
+
+For a new source checkout, copy `deploy/.env.example` to `.env` at the repository root. For a download-only installation, place the template and `compose.release.yaml` together and save your completed settings as `.env`. Keep an existing installation's `.env` instead of replacing it.
+
+Set these values in your `.env`:
+
+| Setting | Purpose |
+|---|---|
+| `COMPOSE_PROJECT_NAME` | Installation identity; keep it stable to reuse its storage |
+| `WF_IMAGE_TAG` | Published API/web version used by the release Compose file |
+| `WF_SERVER_HOST` | Your server's hostname or IPv4 address, without a scheme, port, or path |
+| `WF_HTTPS_PORT` | HTTPS access port; defaults to `9443` |
+| `WF_HTTP_PORT` | HTTP redirect port; defaults to `9080`; sign-in uses HTTPS |
+| `WF_BIND_ADDRESS` | `127.0.0.1` for host-only access, or `0.0.0.0` for IPv4 access through the host's network interfaces |
+| `WF_SITE_ADDRESS` | Caddy address, calculated from the server host and HTTPS port in the template |
+| `WF_TLS_SERVER_NAME` | Certificate hostname/IP, calculated from the server host in the template |
+| `WF_POSTGRES_DB`, `WF_POSTGRES_USER` | Database name and login used by the backend |
+| `WF_POSTGRES_PASSWORD` | Required private database password; separate from the WeekFlow owner password |
+
+For example, to use your server from other devices on the same local network:
+
+```dotenv
+WF_SERVER_HOST=192.168.1.50
+WF_BIND_ADDRESS=0.0.0.0
+WF_HTTPS_PORT=9443
+```
+
+Replace the example address with your server's actual address. Keep the template's calculated `WF_SITE_ADDRESS` and `WF_TLS_SERVER_NAME` lines. `localhost` and `127.0.0.1` refer to the device using them, so they are not the server address to enter on another computer or phone. Firewall rules and network isolation can still prevent devices from connecting.
+
+Generate a database password locally, using a password manager or `openssl rand -hex 32`, and put it only in your private `.env`. Do not commit the completed `.env`. Editing the password in that file after database initialization does not change the password stored inside PostgreSQL.
+
+### Validate and start
+
+Validate the release configuration without starting containers:
+
+```bash
+docker compose -f compose.release.yaml config --quiet
+```
+
+For the release installation, continue only after both images are available with the selected version and your Docker host has permission to download them:
+
+```bash
+docker compose -f compose.release.yaml pull
+docker compose -f compose.release.yaml up -d
+docker compose -f compose.release.yaml ps -a
+```
+
+Public GitHub Container Registry packages support downloads without signing in. Package visibility is configured separately from repository visibility; a public GitHub repository does not automatically make its image packages public. See [GitHub's package visibility documentation](https://docs.github.com/en/packages/learn-github-packages/configuring-a-packages-access-control-and-visibility).
+
+To build from the source checkout instead, use the root local-build file:
+
+```bash
+docker compose -f compose.yaml build
+docker compose -f compose.yaml up -d
+docker compose -f compose.yaml ps -a
+```
+
+Use the same Compose filename for later commands against that installation. Initial setup uses Compose so it can apply its startup and migration dependencies.
+
+### HTTPS, owner setup, and phone access
+
+Open `https://<your-server-host>:<your-HTTPS-port>`, for example `https://192.168.1.50:9443`. Use the same HTTPS origin for the website and API. Caddy routes them through that one address; do not publish the database or API ports to work around a connection failure.
+
+For local addresses, Caddy creates certificates through its own local certificate authority. Install and trust that installation's public root certificate on each client device. Once the web container has generated it, copy the certificate out with:
+
+```bash
+docker compose -f compose.release.yaml cp weekflow-web:/data/caddy/pki/authorities/local/root.crt ./weekflow-root.crt
+```
+
+Use `compose.yaml` instead if that is your installation file. Transfer only `root.crt`, never `root.key`. On iPhone, install the certificate profile and enable its full trust under **Settings → General → About → Certificate Trust Settings**. See [Apple's certificate trust instructions](https://support.apple.com/en-us/102390). Trust the certificate only after confirming it belongs to your own installation. Browser trust can also depend on the browser's certificate settings.
+
+Keep the Caddy data volume. With the same certificate authority retained, changing the configured IP does not normally require reinstalling the root certificate; Caddy must still issue a certificate for the new address. A fresh installation with a new Caddy authority needs its own trust setup. A publicly trusted certificate for a suitable hostname is another deployment option; Tailscale is optional and is not required for local-network access.
+
+For a new installation, issue the one-time account setup code in an interactive terminal:
+
+```bash
+docker compose -f compose.release.yaml exec weekflow-api python -m app.issue_setup_code
+```
+
+Enter the code on the HTTPS setup screen, choose your username and password, and sign in. The command refuses to replace an existing owner. The setup code is issued through the server terminal, not a public web endpoint. Automatic setup-code output at container startup is not implemented.
+
+In the standalone iPhone app, enter the same server origin, then complete setup or sign in. Allow local-network access for WeekFlow when iOS requests it. The phone must be able to reach the server and trust its HTTPS certificate.
+
+### Start, stop, and update the server address
+
+After initial setup, Docker Desktop can start and stop the WeekFlow Compose group. Terminal equivalents for a release installation are:
+
+```bash
+docker compose -f compose.release.yaml stop
+docker compose -f compose.release.yaml start
+```
+
+The server computer must remain awake and Docker must remain running for connected clients to use WeekFlow. The restart policy can restart services when Docker runs again; it does not turn on the host or keep a sleeping computer available.
+
+When the server IP changes, update `WF_SERVER_HOST` in the `.env` created from the current template. If your older configuration binds to a specific IP rather than `0.0.0.0`, update `WF_BIND_ADDRESS` too. Recreate the web service to load the new settings:
+
+```bash
+docker compose -f compose.release.yaml up -d --no-deps weekflow-web
+```
+
+Update the address entered in the iPhone app and the browser URL. Simply restarting an existing container does not load changed Compose environment settings.
+
+The named volumes retain PostgreSQL records, accounts, and Caddy certificate state. Keep the project name stable. `docker compose down -v` deletes the installation's declared named volumes and is not a normal stop command. Before moving to a replacement installation, export the latest application JSON and preserve the old database volumes until import and persistence checks pass. JSON transfer does not transfer the owner account or replace a full PostgreSQL backup strategy.
+
+### Building and publishing images
+
+The workflow in `.github/workflows/publish-images.yml` builds the API and web images for `linux/amd64` and `linux/arm64`. Packaging-related pushes to `dev` run build checks without publishing. Once the workflow exists on the default branch, the manual **Run workflow** form can select a version and enable publishing. Publishing is off by default.
+
+For the current repository, the example image names are:
+
+```text
+ghcr.io/cheech506/weekflow-api:0.1.0-preview.1
+ghcr.io/cheech506/weekflow-web:0.1.0-preview.1
+```
+
+The workflow uses GitHub's temporary `GITHUB_TOKEN` with package-write permission, rather than a database password or a password stored in the workflow. Both image jobs must succeed for a release to be complete; one job can finish even if the other fails. Use a new version for each release, verify package access, and confirm a fresh installation before marking that version ready for other users. Source code on GitHub and built images in the registry are separate deliverables.
+
+## Standalone iPhone app
+
+The standalone app runs without Expo Go or a running Metro development server. Docker provides the server side; the installed iPhone app contains its own frontend code and talks to the selected HTTPS server.
+
+Startup follows this order:
+
+1. `ServerAddressBoundary` loads the saved phone server address or shows `ServerAddressScreen`.
+2. `serverAddressStorage.ts` validates and saves an HTTPS origin in SecureStore. `apiBaseUrl.ts` makes the selection available to the shared API clients.
+3. `AuthProvider` verifies any saved login for that server, or shows account setup/login.
+4. After authentication, the private data providers mount and load records through the API.
+
+Server selection and login are separate. Saving an address does not log in a user. The login screen offers **Change server**; choosing it removes the current private data tree before another server is selected. Login material remains scoped to its server. Changing the phone's server does not require rebuilding the app or editing `.env.local`.
+
+For packaged web builds, `apiBaseUrl.ts` uses the browser's own origin when no explicit `EXPO_PUBLIC_API_BASE_URL` is configured. The web Docker build disables local dotenv loading so a developer's private server address is not compiled into the distributed website. Explicit development configuration still takes precedence when present.
+
+`eas.json` defines the `preview` iOS profile as an internal Release build with `developmentClient: false` and `simulator: false`. It is built through Expo EAS Build, not through Expo Go. `.easignore` limits the upload to mobile source/configuration and excludes the backend, deployment files, local environment files, databases, and signing material. The build archive exclusions were checked separately from the Docker build exclusions.
+
+The maintainer has installed and connected the private standalone build on a registered iPhone. This is not an App Store release or an unrestricted download for other iPhones. Wider distribution through TestFlight or the App Store is separate work. No native macOS app is supplied; the web app is the current desktop interface.
+
+
+## Development requirements
 
 - Python 3.12
 - Docker Engine or Docker Desktop with Docker Compose
 - For the Expo web app: Node.js 22 and the repository’s npm dependencies
 
-## First-time setup
+## First-time development setup
 
 From the WeekFlow repository root:
 
@@ -93,7 +277,7 @@ Replace the placeholder password in `server/.env` with a private local password.
 
 Unless a section says otherwise, the commands below run from the `server` directory.
 
-## Start PostgreSQL and apply migrations
+## Start development PostgreSQL and apply migrations
 
 ```bash
 docker compose up --detach --wait db
@@ -169,9 +353,9 @@ Authentication and protected requests require HTTPS. Browser pages and the API m
 
 API responses carry `Cache-Control: no-store` and other privacy headers. Authentication errors use fixed messages rather than returning raw validation inputs or credential-bearing exceptions. A `401` means the session is unavailable or invalid; `403` can indicate HTTPS, origin, or CSRF rejection; `429` means login capacity is exhausted; `503` means authentication/storage could not be confirmed. A connection loss during a commit can leave an uncertain outcome, so writes are not automatically retried.
 
-Keep the API behind the intended private HTTPS gateway and configure its proxy trust explicitly. Tailscale network access and application authentication are separate layers. PostgreSQL is published on loopback in the supplied Compose configuration. The Compose file starts the database only; it does not deploy a complete frontend/API stack.
+Keep the API behind the intended HTTPS gateway and configure its proxy trust explicitly. Tailscale network access and application authentication are separate layers. The root packaged Compose files publish only the web gateway. Their API accepts forwarded headers from its private container networks and must not be exposed directly. The separate `server/compose.yaml` development file publishes PostgreSQL on loopback and starts only the database.
 
-## Start the API and Expo web app
+## Start the development API and Expo web app
 
 Start Uvicorn in a terminal in `server`, with a private HTTPS reverse proxy forwarding to its loopback listener:
 
@@ -190,7 +374,7 @@ At the WeekFlow repository root, configure the API's real private HTTPS address 
 EXPO_PUBLIC_API_BASE_URL=https://your-private-weekflow-host
 ```
 
-Replace the example host with your own reachable HTTPS address. `EXPO_PUBLIC_*` values are bundled client configuration, not secret storage; never place passwords or session tokens there. The current frontend uses its configured API address; automatic web-origin selection and a native server-address setup screen are still follow-up work. On a phone, `127.0.0.1` refers to that phone, not the API computer. An Expo tunnel delivers the frontend bundle and does not tunnel the Python API. Each device must be able to reach and resolve the chosen API address.
+Replace the example host with your own reachable HTTPS address. `EXPO_PUBLIC_*` values are bundled client configuration, not secret storage; never place passwords or session tokens there. Explicit development configuration overrides browser-origin inference. The native server-selection screen takes priority over the compiled environment address on phones; the environment address is only an initial suggestion. Packaged web builds leave the variable unset and use their browser origin. On a phone, `127.0.0.1` refers to that phone, not the API computer. An Expo tunnel delivers the development frontend bundle and does not tunnel the Python API. Each device must be able to reach and resolve its selected API address.
 
 Start the existing frontend development server from the repository root:
 
@@ -213,11 +397,11 @@ WF_TAILSCALE=/Applications/Tailscale.app/Contents/MacOS/Tailscale
 
 On Linux, use `WF_TAILSCALE=tailscale` when the CLI is on PATH. These commands update this node's root, API, and health routes; inspect existing routes first if the node hosts other services. Serve removes its mount prefix, so the API target includes `/api` to preserve FastAPI's `/api/v1/...` paths. Open the HTTPS hostname printed by Serve and configure that same origin in `.env.local`. The commands above leave documentation paths on the frontend route; forward `/docs`, `/redoc`, and `/openapi.json` separately when using those protected backend pages.
 
-Tailscale is the currently tested private access method, not a requirement embedded in authentication. Other deployments can provide the same HTTPS frontend/API origin through a correctly configured reverse proxy such as Caddy. A packaged non-Tailscale deployment is not yet supplied. Plain HTTP is rejected by the current authentication flow.
+Tailscale is an optional private access method, not a requirement embedded in authentication. The packaged Caddy setup also provides the shared HTTPS frontend/API origin on a local network. Local certificate trust and network reachability must be configured on each client. Plain HTTP is rejected by the current authentication flow.
 
 For first-run browser setup, issue the code with `python -m app.issue_setup_code` in a separate interactive server terminal, refresh the HTTPS account page, and select **Check setup again** if needed. Enter the code, username, password, and confirmation; account creation then leads to sign-in. The code is not printed through a web endpoint or included in application backups.
 
-Keep the database, API, HTTPS gateway, and frontend available during an end-to-end check. Docker Compose starts PostgreSQL; Uvicorn starts the API; Expo starts the frontend. Press Control+C to stop the foreground process. In tmux, detach with Control+B, release both keys, then D. Detaching preserves a running process, but tmux does not restart a crashed service or keep the computer awake.
+Keep the database, API, HTTPS gateway, and frontend available during an end-to-end check. In this development arrangement, `server/compose.yaml` starts PostgreSQL, Uvicorn starts the API, and Expo starts the frontend. The root packaged installation instead runs these services through Docker. Press Control+C to stop the foreground process. In tmux, detach with Control+B, release both keys, then D. Detaching preserves a running process, but tmux does not restart a crashed service or keep the computer awake.
 
 ## Available endpoints
 
@@ -650,6 +834,14 @@ The response adds `removed_recurring_tasks_count`, separate from the incoming fi
 
 ## Run checks
 
+### Latest local application checkpoint
+
+The last full local application check passed **2,542 backend tests**, **2,323 frontend tests across 79 suites**, the TypeScript check, and the Git whitespace check. These are application-check results from before the portable release workflow was run. They do not establish that multi-platform image builds, registry publishing, dependency-audit remediation, or installation on a fresh PC have passed.
+
+The earlier dated results below are retained as previous checkpoints.
+
+### Backend development checks
+
 Start PostgreSQL and apply migrations if needed, then run from `server`:
 
 ```bash
@@ -725,7 +917,7 @@ The focused frontend command currently runs 80 tests. For the new backend regres
 
 To check the complete app workflow, export a backup after deleting an occurrence, import it on the destination, check the removal count and overdue list, and import the same file again. Without intervening changes, the second import should remove no additional tasks. Completed history should remain visible.
 
-## Stop and restart PostgreSQL
+## Stop and restart development PostgreSQL
 
 Stop the database without deleting its data:
 
@@ -772,7 +964,18 @@ docker compose start db
 | `app/services/cycle_reviews.py` | Atomic draft saves and finalization, goal outcomes, successor cycles, and first commitments |
 | `alembic/versions/` | Versioned database structure changes |
 | `tests/` | Backend business, authentication, migration, concurrency, and assembled-app protection tests |
+| `../compose.yaml` | Source-build Docker installation with web/Caddy, API, migrations, and PostgreSQL |
+| `../compose.release.yaml` | Download-only installation using published versioned images |
+| `../deploy/.env.example` | Installation settings template, without real credentials |
+| `../deploy/Dockerfile.web`, `../deploy/Caddyfile` | Frontend build and same-origin HTTPS routing |
+| `Dockerfile`, `.dockerignore` | Backend image build and private-file exclusions |
+| `../.github/workflows/publish-images.yml` | Multi-platform image build checks and optional manual publishing |
+| `../eas.json`, `../.easignore` | Standalone iOS build profiles and mobile upload exclusions |
 | `../lib/api/` | Shared HTTP transport, feature clients, and migration clients with runtime response validation |
+| `../lib/api/apiBaseUrl.ts` | Shared native server selection and packaged browser-origin resolution |
+| `../lib/serverAddressStorage.ts` | Validate and remember the selected native HTTPS server |
+| `../components/ServerAddressScreen.tsx` | Phone server-address entry form |
+| `../components/ServerAddressBoundary.tsx` | Select the phone server before authentication and private-data loading |
 | `../lib/taskSync*.ts` | Deferred offline cache, outbox, database, and type foundations |
 | `app/models/task_sync.py` | Persistent server identity, client-task mappings, and sync receipt table definitions |
 | `../context/` | API-backed domain providers and device-level celebration preferences |
@@ -780,16 +983,16 @@ docker compose start db
 | `../lib/authSessionStorage.ts` | Server-scoped SecureStore bearer material and browser CSRF/session metadata |
 | `../components/AuthScreen.tsx` | Account setup/login form, safe errors, password masking, and submission guards |
 | `../components/AuthBoundary.tsx` | Account screen before verification; private provider tree after authentication |
-| `../app/_layout.tsx` | Fonts/theme, authentication provider/boundary, and private data/navigation composition |
+| `../app/_layout.tsx` | Fonts/theme, server selection, authentication, and private data/navigation composition |
 | `../components/ApiDataBoundary.tsx` | Initial API loading/error display and later refresh/error notices around navigation |
 | `../app/server-tasks.tsx` | Read-only server connection and task check |
 | `../app/settings.tsx` | Account sign-out, API-backed inventory, data refresh, device preferences, web/native JSON export, and confirmed JSON import with skip-removal counts |
 
 ## Authentication walkthrough
 
-Use this order when explaining the implementation or reviewing the files together:
+The following files show how server selection, login, and protected requests work:
 
-1. **`app/_layout.tsx` arranges the app.** It loads fonts, supplies the theme, mounts `AuthProvider`, and places `AuthBoundary` above the six data providers. `AuthenticatedApp` contains the private provider/navigation tree.
+1. **`app/_layout.tsx` arranges the app.** It loads fonts, supplies the theme, and places `ServerAddressBoundary` before `AuthProvider`. Phones select or restore an HTTPS server before authentication begins; web uses its configured address or browser origin. `AuthBoundary` stays above the six data providers, and `AuthenticatedApp` contains the private provider/navigation tree.
 2. **`AuthContext.tsx` decides the current account state.** It checks setup status and moves between `checking`, `setup`, `login`, `authenticated`, and `error`. It holds safe identity/status for screens and keeps credential material outside the public context value.
 3. **`AuthBoundary.tsx` controls what mounts.** Setup/login/error states render `AuthScreen`. Only an authenticated state with a verified identity mounts the private app. Logout or expiry removes that tree. A replacement session gets a fresh tree so old private screen/context state does not carry across.
 4. **`AuthScreen.tsx` collects the form.** It calls the provider actions rather than handling database access. It masks passwords, checks confirmation, blocks repeated taps, and clears submitted secrets. It does not persist passwords or decide whether login credentials are valid.
@@ -800,20 +1003,21 @@ Use this order when explaining the implementation or reviewing the files togethe
 9. **The client restores a login carefully.** Phone bearer tokens are kept in SecureStore. The browser's session token remains in an HttpOnly cookie; localStorage holds the separate CSRF value, session reference, and deadline. Entries are scoped to the server address. On startup, the provider checks the saved material with Python and matches the session ID before opening the app.
 10. **Every protected request is checked again by Python.** The frontend boundary controls display and lifecycle. The backend session dependency authorizes access even if someone skips the normal UI and calls an endpoint directly. After authentication, domain API requests follow the existing router → service/model → SQLAlchemy → PostgreSQL flow. `ApiDataBoundary` then handles ordinary data loading/errors.
 
-For a presentation: **“WeekFlow uses a single-owner account and database-backed sessions. The client verifies its session before loading private data, and the backend independently checks protected requests. HTTPS protects the connection; Tailscale supplies private network access in our tested deployment.”**
+The request path is **phone server selection or browser origin → account/session verification → screen/context → typed API client → HTTPS gateway → FastAPI router/service → PostgreSQL**. HTTPS protects the connection, application authentication controls access to records, and optional Tailscale access adds a separate private-network boundary.
 
 ## Remaining work
 
-The core data APIs, provider integration, backend authentication, frontend account flow, secure native persistence, authenticated shared transport, and root gate are implemented. This checkpoint records owner setup and session-authenticated app startup. Remaining work includes:
+The core data APIs, connected providers, account/session flow, local Docker packaging, and private standalone iPhone server selection are implemented. Portable deployment configuration and the image workflow are prepared. Before calling the downloadable package ready for other users:
 
-- Add the Settings sign-out button using the implemented provider action, and verify the complete visible logout workflow.
-- Finish live phone/browser checks for repeat login, reload/app restart, idle/absolute expiry, logout, rejected direct access, cross-device feature updates, and JSON transfer with authentication enabled.
-- Migrate or retire remaining legacy helpers that use direct `fetch` instead of the shared authenticated transport. Settings JSON export/refresh already use shared transport; do not assume all old migration helpers support native authentication.
-- Review the reported npm dependency-audit findings before a production deployment. Successful installation/tests do not classify those findings.
-- Add password change/recovery, broader session-management actions, and operational cleanup of expired sessions/counters.
-- Package a built frontend, API, gateway, and PostgreSQL with durable restart, trusted proxy settings, least-privilege database access, and operator backup/recovery documentation. Current Compose runs PostgreSQL only; Expo/Uvicorn are development processes.
-- Keep Tailscale optional in deployment design. Add the packaged standard-HTTPS deployment, automatic browser-origin configuration, and a native server-address setup experience as separate work. Automatic container-start setup-code issuance is not implemented.
+- Run the first GitHub builds and resolve failures on either processor architecture.
+- Publish both versioned images, configure package access, and verify downloads from a clean machine.
+- Test a fresh Linux-PC installation using the documented settings, HTTPS trust, one-time owner setup, and phone/browser connections.
+- Import an up-to-date application backup and verify completion history, recurring skips, links, and review records. Keep the old installation and its storage until verification finishes.
+- Verify container restart and host reboot behavior, data/certificate persistence, and the operator backup and upgrade process.
+- Finish live lifecycle checks for repeat login, app restart, expiry, logout, rejected direct API access, and cross-device updates.
+- Review the reported dependency-audit findings. Passing application tests or building an image does not establish that those findings are resolved.
+- Document and test least-privilege database roles, password change/recovery, broader session management, and cleanup of expired session/counter records.
+- Decide how to distribute the iPhone app beyond registered private test devices. App Store and TestFlight distribution are not included in this checkpoint.
+- Migrate or retire remaining legacy helpers that use direct `fetch` instead of the authenticated shared transport.
 
-Keep backend PostgreSQL tests, migration checks, dependency checks, frontend tests/type checking, and live checks as distinct validation evidence. Portable application JSON backups exclude owner accounts, sessions, setup codes, and login counters.
-
-Other follow-up work includes full replacement restore, deferred offline fallback/upload and reconciliation, and any agreed extension beyond twelve-week cycles. JSON export and merge/update import are implemented. The offline tracking tables do not provide an active synchronization feature.
+Tailscale remains optional. Automatic setup-code issuance at container startup is not implemented; an operator issues the code from an interactive server terminal. Offline fallback/upload, reconciliation, and full replacement restore remain separate future work. JSON export and confirmed merge/update import are implemented, and their backups exclude owner accounts, sessions, setup codes, and login counters.
